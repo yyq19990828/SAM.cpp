@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "sam3_revision": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+  "path_base": "repository root",
+  "provenance": {
+    "source": "https://github.com/facebookresearch/sam3/tree/2345a4ad109ac29c569da749c91d84f10dc08c40/assets/images",
+    "rights": "Source media is not redistributed here. Fetch only into ignored models/fixtures; see the pinned upstream LICENSE and Meta model terms."
+  },
+  "acceptance": {
+    "normalized_l2_f32": 0.001,
+    "normalized_l2_f16": 0.02,
+    "zero_norm_limit": 1e-12,
+    "zero_norm_max_abs": 1e-05,
+    "preprocessed_max_abs": 0.00784313725490196,
+    "high_score_min": 0.6,
+    "mask_iou_f32": 0.98,
+    "mask_iou_f16": 0.95,
+    "score_max_abs": 0.02,
+    "box_dimension_fraction": 0.01,
+    "low_score_max": 0.4,
+    "score_threshold": 0.5
+  },
+  "cases": [
+    {
+      "id": "truck-truck",
+      "image": "models/fixtures/truck.jpg",
+      "source_sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "prompt": "truck",
+      "score_threshold": 0.5,
+      "transform": null
+    },
+    {
+      "id": "truck-wheel",
+      "image": "models/fixtures/truck.jpg",
+      "source_sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "prompt": "wheel",
+      "score_threshold": 0.5,
+      "transform": null
+    },
+    {
+      "id": "truck-purple-elephant",
+      "image": "models/fixtures/truck.jpg",
+      "source_sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "prompt": "purple elephant",
+      "score_threshold": 0.5,
+      "transform": null
+    },
+    {
+      "id": "groceries-fruit",
+      "image": "models/fixtures/groceries.jpg",
+      "source_sha256": "7073dfecb5a3ecafb6152124113163a0ea1c1c70f92999ec892b519eca63e3d3",
+      "prompt": "fruit",
+      "score_threshold": 0.5,
+      "transform": null
+    },
+    {
+      "id": "groceries-bottle",
+      "image": "models/fixtures/groceries.jpg",
+      "source_sha256": "7073dfecb5a3ecafb6152124113163a0ea1c1c70f92999ec892b519eca63e3d3",
+      "prompt": "bottle",
+      "score_threshold": 0.5,
+      "transform": null
+    },
+    {
+      "id": "groceries-purple-elephant",
+      "image": "models/fixtures/groceries.jpg",
+      "source_sha256": "7073dfecb5a3ecafb6152124113163a0ea1c1c70f92999ec892b519eca63e3d3",
+      "prompt": "purple elephant",
+      "score_threshold": 0.5,
+      "transform": null
+    },
+    {
+      "id": "truck-crop-resize-truck",
+      "image": "models/fixtures/truck.jpg",
+      "source_sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "prompt": "truck",
+      "score_threshold": 0.5,
+      "transform": {
+        "crop_xyxy": [
+          80,
+          50,
+          1100,
+          750
+        ],
+        "resize_wh": [
+          640,
+          384
+        ],
+        "resampling": "Pillow.Resampling.BILINEAR"
+      }
+    }
+  ]
+}

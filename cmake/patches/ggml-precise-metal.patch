@@ -1,0 +1,495 @@
+diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-device.cpp
+--- a/src/ggml-metal/ggml-metal-device.cpp
++++ b/src/ggml-metal/ggml-metal-device.cpp
+@@ -798,6 +798,9 @@
+     const ggml_type tsrc0 = op->src[0]->type;
+     const ggml_type tsrc1 = op->src[1]->type;
+ 
++    const bool prec_f32 = ggml_get_op_params_i32(op, 0) == GGML_PREC_F32 &&
++        (tsrc0 == GGML_TYPE_F32 || tsrc0 == GGML_TYPE_F16) && tsrc1 == GGML_TYPE_F32;
++
+     const bool bc_inp = op->src[0]->ne[0] % 32 != 0;
+ 
+     constexpr int NRA = SZ_SIMDGROUP * N_MM_BLOCK_Y * N_MM_SIMD_GROUP_Y;
+@@ -815,7 +818,7 @@
+     const int16_t r2   = (int16_t) (ne12 / op->src[0]->ne[2]);
+     const int16_t r3   = (int16_t) (ne13 / op->src[0]->ne[3]);
+ 
+-    snprintf(base, 256, "kernel_mul_mm_%s_%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1));
++    snprintf(base, 256, "kernel_mul_mm_%s_%s%s", ggml_type_name(tsrc0), ggml_type_name(tsrc1), prec_f32 ? "_prec_f32" : "");
+     snprintf(name, 256, "%s_bci=%d_bco=%d_ne12=%d_ne13=%d_r2=%d_r3=%d",
+              base, bc_inp, bc_out, ne12, ne13, r2, r3);
+ 
+@@ -839,13 +842,13 @@
+         res.nr0 = NRA;
+         res.nr1 = NRB;
+ 
+-        const size_t smem_a = NRA * N_MM_NK_TOTAL * sizeof(ggml_fp16_t);
++        const size_t smem_a = NRA * N_MM_NK_TOTAL * (prec_f32 ? sizeof(float) : sizeof(ggml_fp16_t));
+         res.smem = smem_a;
+     } else {
+         res.nr0 = 64;
+         res.nr1 = 32;
+ 
+-        res.smem = bc_out ? 8192 : (4096 + 2048);
++        res.smem = prec_f32 ? (64*32 + 32*32)*sizeof(float) : (bc_out ? 8192 : (4096 + 2048));
+     }
+ 
+     res.nsg = N_MM_SIMD_GROUP_X * N_MM_SIMD_GROUP_Y;
+@@ -1737,14 +1740,18 @@
+ 
+     const char * type = use_kv_f16 ? "f16" : ggml_type_name(op->src[1]->type);
+ 
++    const bool prec_f32 = ggml_flash_attn_ext_get_prec(op) == GGML_PREC_F32 &&
++        op->src[1]->type == GGML_TYPE_F32 && dk == dv && (dk == 32 || dk == 64);
++
+     // do bounds checks for the mask?
+     const bool bc_mask = op->src[3] && (op->src[3]->ne[1] % 8 != 0);
+ 
+-    snprintf(base, 256, "kernel_%s_%s_dk%d_dv%d",
++    snprintf(base, 256, "kernel_%s_%s_dk%d_dv%d%s",
+             "flash_attn_ext",
+             type,
+             dk,
+-            dv);
++            dv,
++            prec_f32 ? "_prec_f32" : "");
+ 
+     snprintf(name, 256, "%s_mask=%d_sinks=%d_bias=%d_scap=%d_kvpad=%d_bcm=%d_ns10=%d_ns20=%d_nsg=%d",
+             base,
+@@ -2574,3 +2581,37 @@
+ 
+     return res;
+ }
++
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_win_part(ggml_metal_library_t lib, const ggml_tensor * op) {
++    assert(op->op == GGML_OP_WIN_PART);
++
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_win_part_%s", ggml_type_name(op->src[0]->type));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
++
++ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_win_unpart(ggml_metal_library_t lib, const ggml_tensor * op) {
++    assert(op->op == GGML_OP_WIN_UNPART);
++
++    char base[256];
++    char name[256];
++
++    snprintf(base, 256, "kernel_win_unpart_%s", ggml_type_name(op->src[0]->type));
++    snprintf(name, 256, "%s", base);
++
++    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
++    if (!res.pipeline) {
++        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
++    }
++
++    return res;
++}
+diff --git a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-device.h
+--- a/src/ggml-metal/ggml-metal-device.h
++++ b/src/ggml-metal/ggml-metal-device.h
+@@ -168,6 +168,8 @@
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_2d_dw        (ggml_metal_library_t lib, const struct ggml_tensor * op, bool tiled);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_3d           (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_upscale           (ggml_metal_library_t lib, const struct ggml_tensor * op);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_win_part          (ggml_metal_library_t lib, const struct ggml_tensor * op);
++struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_win_unpart        (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pad               (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pad_reflect_1d    (ggml_metal_library_t lib, const struct ggml_tensor * op);
+ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_roll              (ggml_metal_library_t lib, const struct ggml_tensor * op);
+diff --git a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
+--- a/src/ggml-metal/ggml-metal-device.m
++++ b/src/ggml-metal/ggml-metal-device.m
+@@ -1698,6 +1698,12 @@
+             return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
+         case GGML_OP_POOL_2D:
+             return op->src[0]->type == GGML_TYPE_F32;
++        case GGML_OP_WIN_PART:
++        case GGML_OP_WIN_UNPART:
++            // Both kernels use a flat uint grid and contiguous F32 channel vectors.
++            return op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32 &&
++                   ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op) &&
++                   ggml_nelements(op) < (1LL << 31);
+         case GGML_OP_PAD:
+             // TODO: add circular padding support for metal, see https://github.com/ggml-org/llama.cpp/pull/16985
+             if (ggml_get_op_params_i32(op, 8) != 0) {
+diff --git a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
+--- a/src/ggml-metal/ggml-metal-impl.h
++++ b/src/ggml-metal/ggml-metal-impl.h
+@@ -1379,4 +1379,33 @@
+     int64_t ne;
+ } ggml_metal_kargs_silu_back;
+ 
++typedef struct {
++    int64_t  ne00;
++    int64_t  ne01;
++    int64_t  ne02;
++    uint64_t nb00;
++    uint64_t nb01;
++    uint64_t nb02;
++    int64_t  ne0;
++    int64_t  ne1;
++    int64_t  ne2;
++    int32_t  npx;
++    int32_t  npy;
++    int32_t  w;
++} ggml_metal_kargs_win_part;
++
++typedef struct {
++    int64_t  ne00;
++    int64_t  ne01;
++    int64_t  ne02;
++    uint64_t nb00;
++    uint64_t nb01;
++    uint64_t nb02;
++    uint64_t nb03;
++    int64_t  ne0;
++    int64_t  ne1;
++    int64_t  ne2;
++    int32_t  npx;
++    int32_t  w;
++} ggml_metal_kargs_win_unpart;
+ #endif // GGML_METAL_IMPL
+diff --git a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cpp
+--- a/src/ggml-metal/ggml-metal-ops.cpp
++++ b/src/ggml-metal/ggml-metal-ops.cpp
+@@ -441,6 +441,14 @@
+         case GGML_OP_UPSCALE:
+             {
+                 n_fuse = ggml_metal_op_upscale(ctx, idx);
++            } break;
++        case GGML_OP_WIN_PART:
++            {
++                n_fuse = ggml_metal_op_win_part(ctx, idx);
++            } break;
++        case GGML_OP_WIN_UNPART:
++            {
++                n_fuse = ggml_metal_op_win_unpart(ctx, idx);
+             } break;
+         case GGML_OP_PAD:
+             {
+@@ -2938,11 +2946,24 @@
+     return 1;
+ }
+ 
++static bool ggml_metal_op_flash_attn_ext_use_prec_f32(const ggml_tensor * op) {
++    // K/V types match by the backend's supported-op contract.
++    const int64_t dk = op->src[1]->ne[0];
++    const int64_t dv = op->src[2]->ne[0];
++    return ggml_flash_attn_ext_get_prec(op) == GGML_PREC_F32 &&
++        op->src[1]->type == GGML_TYPE_F32 && dk == dv && (dk == 32 || dk == 64);
++}
++
+ bool ggml_metal_op_flash_attn_ext_use_vec(const ggml_tensor * op) {
+     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
+ 
+     const int64_t ne00 = op->src[0]->ne[0]; // head size
+     const int64_t ne01 = op->src[0]->ne[1]; // batch size
++
++    // The default vector kernel stages Q in half even for F32 K/V.
++    if (ggml_metal_op_flash_attn_ext_use_prec_f32(op)) {
++        return false;
++    }
+ 
+     // use vec kernel if the batch size is small and if the head size is supported
+     return (ne01 < 20) && (ne00 % 32 == 0);
+@@ -2977,6 +2998,11 @@
+ // n_kv_max is only an upper bound on their number per mask row, used to size the index lists
+ static int ggml_metal_op_flash_attn_ext_n_kv_max_sparse(const ggml_tensor * op) {
+     assert(op->op == GGML_OP_FLASH_ATTN_EXT);
++
++    // Sparse attention also uses the half-Query vector kernel.
++    if (ggml_metal_op_flash_attn_ext_use_prec_f32(op)) {
++        return 0;
++    }
+ 
+     int32_t n_kv_max = 0;
+     memcpy(&n_kv_max, ((const int32_t *) op->op_params) + 4, sizeof(n_kv_max));
+@@ -3501,7 +3527,9 @@
+         // the shared memory needed for the simdgroups to load the KV cache
+         // each thread loads (dequantizes) 16 head elements, there are 32 threads in th SG
+         //
+-#define FATTN_SMEM(nsg) (GGML_PAD((nqptg*(ne00 + 2*GGML_PAD(ne20, 64) + 2*(2*ncpsg)) + is_q*(16*32*(nsg)))*(sizeof(float)/2), 16))
++        const int qhs = ggml_metal_op_flash_attn_ext_use_prec_f32(op) ? sizeof(float)/sizeof(ggml_fp16_t) : 1;
++
++#define FATTN_SMEM(nsg) (GGML_PAD((nqptg*(qhs*ne00 + 2*GGML_PAD(ne20, 64) + 2*(2*ncpsg)) + is_q*(16*32*(nsg)))*(sizeof(float)/2), 16))
+ 
+         //int64_t nsgmax = 4;
+         //
+@@ -5755,3 +5783,91 @@
+ 
+     return 1;
+ }
++
++int ggml_metal_op_win_part(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    const int32_t npx = ((const int32_t *)(op->op_params))[0];
++    const int32_t npy = ((const int32_t *)(op->op_params))[1];
++    const int32_t w   = ((const int32_t *)(op->op_params))[2];
++
++    ggml_metal_kargs_win_part args = {
++        /*.ne00 =*/ (int64_t)  op->src[0]->ne[0],
++        /*.ne01 =*/ (int64_t)  op->src[0]->ne[1],
++        /*.ne02 =*/ (int64_t)  op->src[0]->ne[2],
++        /*.nb00 =*/ (uint64_t) op->src[0]->nb[0],
++        /*.nb01 =*/ (uint64_t) op->src[0]->nb[1],
++        /*.nb02 =*/ (uint64_t) op->src[0]->nb[2],
++        /*.ne0  =*/ (int64_t)  op->ne[0],
++        /*.ne1  =*/ (int64_t)  op->ne[1],
++        /*.ne2  =*/ (int64_t)  op->ne[2],
++        /*.npx  =*/ npx,
++        /*.npy  =*/ npy,
++        /*.w    =*/ w,
++    };
++
++    const int64_t np = (int64_t)npx * npy;
++    const int64_t total = op->ne[0] * op->ne[1] * op->ne[2] * np;
++
++    auto pipeline = ggml_metal_library_get_pipeline_win_part(lib, op);
++
++    const int nth = std::min(ggml_metal_pipeline_max_theads_per_threadgroup(pipeline), (int) total);
++    const int ntg = (int) ((total + nth - 1) / nth);
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
++
++    ggml_metal_encoder_dispatch_threadgroups(enc, ntg, 1, 1, nth, 1, 1);
++
++    return 1;
++}
++
++int ggml_metal_op_win_unpart(ggml_metal_op_t ctx, int idx) {
++    ggml_tensor * op = ctx->node(idx);
++
++    ggml_metal_library_t lib = ctx->lib;
++    ggml_metal_encoder_t enc = ctx->enc;
++
++    const int32_t w = ((const int32_t *)(op->op_params))[0];
++
++    // Recompute npx from output width (same formula as CPU impl)
++    const int64_t w0 = op->ne[1];
++    const int px = (w - (int)(w0 % w)) % w;
++    const int npx = (int)(px + w0) / w;
++
++    ggml_metal_kargs_win_unpart args = {
++        /*.ne00 =*/ (int64_t)  op->src[0]->ne[0],
++        /*.ne01 =*/ (int64_t)  op->src[0]->ne[1],
++        /*.ne02 =*/ (int64_t)  op->src[0]->ne[2],
++        /*.nb00 =*/ (uint64_t) op->src[0]->nb[0],
++        /*.nb01 =*/ (uint64_t) op->src[0]->nb[1],
++        /*.nb02 =*/ (uint64_t) op->src[0]->nb[2],
++        /*.nb03 =*/ (uint64_t) op->src[0]->nb[3],
++        /*.ne0  =*/ (int64_t)  op->ne[0],
++        /*.ne1  =*/ (int64_t)  op->ne[1],
++        /*.ne2  =*/ (int64_t)  op->ne[2],
++        /*.npx  =*/ npx,
++        /*.w    =*/ w,
++    };
++
++    const int64_t total = op->ne[0] * op->ne[1] * op->ne[2];
++
++    auto pipeline = ggml_metal_library_get_pipeline_win_unpart(lib, op);
++
++    const int nth = std::min(ggml_metal_pipeline_max_theads_per_threadgroup(pipeline), (int) total);
++    const int ntg = (int) ((total + nth - 1) / nth);
++
++    ggml_metal_encoder_set_pipeline(enc, pipeline);
++    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
++    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         2);
++
++    ggml_metal_encoder_dispatch_threadgroups(enc, ntg, 1, 1, nth, 1, 1);
++
++    return 1;
++}
+diff --git a/src/ggml-metal/ggml-metal-ops.h b/src/ggml-metal/ggml-metal-ops.h
+--- a/src/ggml-metal/ggml-metal-ops.h
++++ b/src/ggml-metal/ggml-metal-ops.h
+@@ -90,6 +90,8 @@
+ int ggml_metal_op_col2im_1d         (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_snake_fused       (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_upscale           (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_win_part          (ggml_metal_op_t ctx, int idx);
++int ggml_metal_op_win_unpart        (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_pad               (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_pad_reflect_1d    (ggml_metal_op_t ctx, int idx);
+ int ggml_metal_op_roll              (ggml_metal_op_t ctx, int idx);
+diff --git a/src/ggml-metal/kernels/fa.metal b/src/ggml-metal/kernels/fa.metal
+--- a/src/ggml-metal/kernels/fa.metal
++++ b/src/ggml-metal/kernels/fa.metal
+@@ -273,12 +273,13 @@
+     constexpr short SH  = 2*C; // shared memory per simdgroup (s_t == float)
+ 
+     constexpr short TS = 2*SH;
+-    constexpr short T  = DK + 2*PV; // shared memory size per query in (half)
++    constexpr short QHS = sizeof(q_t)/sizeof(half);
++    constexpr short T  = QHS*DK + 2*PV; // shared memory size per query in half units
+ 
+     threadgroup q_t  * sq  = (threadgroup q_t  *) (shmem_f16 + 0*T); // holds the query data
+     threadgroup q4_t * sq4 = (threadgroup q4_t *) (shmem_f16 + 0*T); // same as above but in q4_t
+-    threadgroup o_t  * so  = (threadgroup o_t  *) (shmem_f16 + 0*T + Q*DK); // the result for all queries in 8x8 matrices (the O matrix from the paper)
+-    threadgroup o4_t * so4 = (threadgroup o4_t *) (shmem_f16 + 0*T + Q*DK);
++    threadgroup o_t  * so  = (threadgroup o_t  *) (shmem_f16 + 0*T + Q*QHS*DK); // the result for all queries in 8x8 matrices (the O matrix from the paper)
++    threadgroup o4_t * so4 = (threadgroup o4_t *) (shmem_f16 + 0*T + Q*QHS*DK);
+     threadgroup s_t  * ss  = (threadgroup s_t  *) (shmem_f16 + Q*T); // scratch buffer for attention, mask and diagonal matrix
+     threadgroup s2_t * ss2 = (threadgroup s2_t *) (shmem_f16 + Q*T); // same as above but in s2_t
+ 
+@@ -921,6 +922,14 @@
+     float,  float4,    simdgroup_float8x8
+     //half,   half4,     simdgroup_half8x8
+ 
++#define FA_TYPES_F32_PREC \
++    float,  float4,    simdgroup_float8x8,  \
++    float,  float4x4,  simdgroup_float8x8, \
++    float,  float4x4,  simdgroup_float8x8, \
++    float,             simdgroup_float8x8, \
++    float,  float2,    simdgroup_float8x8, \
++    float,  float4,    simdgroup_float8x8
++
+ typedef decltype(kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16, 64, 64>) flash_attn_ext_t;
+ 
+ template [[host_name("kernel_flash_attn_ext_f32_dk32_dv32"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  32,  32>;
+@@ -939,6 +948,10 @@
+ template [[host_name("kernel_flash_attn_ext_f32_dk320_dv256")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  320, 256>;
+ template [[host_name("kernel_flash_attn_ext_f32_dk512_dv512")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  512, 512>;
+ template [[host_name("kernel_flash_attn_ext_f32_dk576_dv512")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  576, 512>;
++
++// Explicit F32 precision preserves Query values as well as F32 K/V.
++template [[host_name("kernel_flash_attn_ext_f32_dk32_dv32_prec_f32"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32_PREC, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  32,  32>;
++template [[host_name("kernel_flash_attn_ext_f32_dk64_dv64_prec_f32"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32_PREC, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  64,  64>;
+ 
+ template [[host_name("kernel_flash_attn_ext_f16_dk32_dv32"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES,    half4x4,    1, dequantize_f16,  half4x4,    1, dequantize_f16,  32,  32>;
+ template [[host_name("kernel_flash_attn_ext_f16_dk40_dv40"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES,    half4x4,    1, dequantize_f16,  half4x4,    1, dequantize_f16,  40,  40>;
+@@ -1064,6 +1077,7 @@
+ #undef FA_TYPES
+ #undef FA_TYPES_BF
+ #undef FA_TYPES_F32
++#undef FA_TYPES_F32_PREC
+ 
+ constant bool FC_flash_attn_ext_vec_has_mask  [[function_constant(FC_FLASH_ATTN_EXT_VEC + 0)]];
+ constant bool FC_flash_attn_ext_vec_has_sinks [[function_constant(FC_FLASH_ATTN_EXT_VEC + 1)]];
+diff --git a/src/ggml-metal/kernels/misc.metal b/src/ggml-metal/kernels/misc.metal
+--- a/src/ggml-metal/kernels/misc.metal
++++ b/src/ggml-metal/kernels/misc.metal
+@@ -656,3 +656,82 @@
+         *(device float *) (dst + i0*args.nb_d0 + idst*args.nb_d1 + it*args.nb_d2) = result[idst];
+     }
+ }
++
++kernel void kernel_win_part_f32(
++    constant ggml_metal_kargs_win_part & args,
++    device const char * src0,
++    device       char * dst,
++    uint gid[[thread_position_in_grid]]) {
++
++    const int64_t np = (int64_t)args.npx * args.npy;
++    const int64_t total = args.ne0 * args.ne1 * args.ne2 * np;
++
++    if ((int64_t)gid >= total) return;
++
++    // Decompose flat gid -> (i0, i1, i2, i3) in output tensor [ne0, w, w, np]
++    const int64_t i0   = gid % args.ne0;
++    const int64_t rem1 = gid / args.ne0;
++    const int64_t i1   = rem1 % args.ne1;
++    const int64_t rem2 = rem1 / args.ne1;
++    const int64_t i2   = rem2 % args.ne2;
++    const int64_t i3   = rem2 / args.ne2;
++
++    // Window grid coordinates
++    const int64_t py = i3 / args.npx;
++    const int64_t px = i3 % args.npx;
++
++    // Map to source coordinates
++    const int64_t src_col = px * args.w + i1;
++    const int64_t src_row = py * args.w + i2;
++
++    // Output address (contiguous)
++    device float * dst_ptr = (device float *)(dst + (i3 * args.ne2 * args.ne1 * args.ne0
++                                                   + i2 * args.ne1 * args.ne0
++                                                   + i1 * args.ne0) * sizeof(float));
++
++    if (src_col >= args.ne01 || src_row >= args.ne02) {
++        dst_ptr[i0] = 0.0f;
++    } else {
++        device const float * src_ptr = (device const float *)(src0 + src_row * args.nb02 + src_col * args.nb01);
++        dst_ptr[i0] = src_ptr[i0];
++    }
++}
++
++kernel void kernel_win_unpart_f32(
++    constant ggml_metal_kargs_win_unpart & args,
++    device const char * src0,
++    device       char * dst,
++    uint gid[[thread_position_in_grid]]) {
++
++    const int64_t total = args.ne0 * args.ne1 * args.ne2;
++
++    if ((int64_t)gid >= total) return;
++
++    // Decompose flat gid -> (i0, i1, i2) in output tensor [ne0, w0, h0]
++    const int64_t i0  = gid % args.ne0;
++    const int64_t rem = gid / args.ne0;
++    const int64_t i1  = rem % args.ne1;
++    const int64_t i2  = rem / args.ne1;
++
++    // Which window does this output element belong to?
++    const int64_t px = i1 / args.w;
++    const int64_t py = i2 / args.w;
++
++    // Position within the window
++    const int64_t wx = i1 % args.w;
++    const int64_t wy = i2 % args.w;
++
++    // Source window index
++    const int64_t win_idx = py * args.npx + px;
++
++    // Read from source: [C, w, w, np]
++    device const float * src_ptr = (device const float *)(src0 + win_idx * args.nb03
++                                                               + wy * args.nb02
++                                                               + wx * args.nb01);
++
++    // Write to output: [C, w0, h0, 1] contiguous
++    device float * dst_ptr = (device float *)(dst + (i2 * args.ne1 * args.ne0
++                                                   + i1 * args.ne0) * sizeof(float));
++
++    dst_ptr[i0] = src_ptr[i0];
++}
+diff --git a/src/ggml-metal/kernels/mul_mm.metal b/src/ggml-metal/kernels/mul_mm.metal
+--- a/src/ggml-metal/kernels/mul_mm.metal
++++ b/src/ggml-metal/kernels/mul_mm.metal
+@@ -159,7 +159,7 @@
+         ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+ 
+     threadgroup S0 * sa = (threadgroup S0 *)(shmem);
+-    threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
++    threadgroup S1 * sb = (threadgroup S1 *)(shmem + 64*32*sizeof(S0));
+ 
+     constexpr int NR0 = 64;
+     constexpr int NR1 = 32;
+@@ -849,6 +849,10 @@
+ //
+ 
+ typedef decltype(kernel_mul_mm<half, half4x4, simdgroup_half8x8, half, half2x4, simdgroup_half8x8, float4x4, 1, dequantize_f32, float, float4x4, float, float2x4>) mul_mm_t;
++
++// GGML_PREC_F32 keeps dense operands in float before matrix multiplication.
++template [[host_name("kernel_mul_mm_f32_f32_prec_f32")]] kernel mul_mm_t kernel_mul_mm<float, float4x4, simdgroup_float8x8, float, float2x4, simdgroup_float8x8, float4x4, 1, dequantize_f32, float, float4x4, float, float2x4>;
++template [[host_name("kernel_mul_mm_f16_f32_prec_f32")]] kernel mul_mm_t kernel_mul_mm<float, float4x4, simdgroup_float8x8, float, float2x4, simdgroup_float8x8, half4x4,  1, dequantize_f16, half,  half4x4,  float, float2x4>;
+ 
+ template [[host_name("kernel_mul_mm_f32_f32")]]     kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   float4x4,      1,     dequantize_f32,     float,  float4x4,  float, float2x4>;
+ template [[host_name("kernel_mul_mm_f16_f32")]]     kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   half4x4,       1,     dequantize_f16,     half,   half4x4,   float, float2x4>;
