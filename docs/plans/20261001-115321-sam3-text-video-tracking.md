@@ -1,7 +1,7 @@
 # M2: SAM 3 Text-Driven Video Tracking
 
 Created: 2026-10-01 11:53:21 Asia/Shanghai.
-Status: planning complete; implementation has not started.
+Status: first cloud implementation batch complete; full video integration and official local acceptance remain pending.
 Baseline: `2c23a67b58019149efe41c89aa263c1b1e770c65`.
 
 Implementation prerequisite: complete the
@@ -399,3 +399,90 @@ and reproducible performance receipts.
 - Fixed the M2 scope, API behavior, format migration, temporal/storage semantics,
   retention design, implementation ownership and acceptance requirements.
 - No M2 implementation, model run, package installation or remote write has occurred.
+
+## Cloud implementation record (2026-10-01)
+
+The user requested starting both plans in the cloud while keeping model/Meta and
+Metal hardware validation local. Independent M2 foundations were implemented
+alongside the FP32 backend change; the image numerical prerequisite is still
+open and no completed video support is claimed.
+
+Implemented in this batch:
+
+- `--task image|video` conversion and schema-2 loading for all 1,464 canonical
+  tensors, with named profile, tracker architecture, BF16 storage and Pillow/F16
+  preprocessing metadata. Default image schema 1 and image tensor bytes are
+  preserved. File/sidecar publication remains exclusive.
+- Tracker architecture and weight registration, shared-trunk detector/tracker
+  neck construction, SAM two-way mask decoder, memory encoder and 256-wide
+  tiled memory attention. Tracker neck transport explicitly rounds through BF16.
+- Pillow RGB bicubic fixed-point preprocessing and explicit F16 normalization,
+  plus F16/BF16 tie checks. The tracker Gaussian matrix registers the official
+  canonical `[128,2]` dimensions, correcting the inspected community convention.
+- Forward memory selection and retention helpers. Retention keeps complete
+  mutable hotstart history; later conditioning membership is not downgraded by
+  these helpers. Four conditioning records, eight recent non-conditioning frame
+  positions and 15 older eligible records suffice in this forward profile.
+  The count of discarded conditioning records preserves the official selection
+  branch/order. This count is caller-owned metadata and must be reset with state.
+- Deterministic motion, entry, occlusion, hotstart-removal and negative recipes in
+  `tests/data/sam3-video-cases.json`, plus hashed PNG generation. Generated input
+  manifests explicitly remain ineligible until the official oracle verifies
+  the required scenario behavior.
+
+Weight-free selector evidence uses the original unpruned Meta functions,
+extracted only after verifying source hashes:
+
+| Source | SHA-256 |
+| --- | --- |
+| `sam3_tracker_base.py` | `b2b52409c002e1590262375aa794f8ab67e7476f42f8fee41a76de0c14aa62e2` |
+| `sam3_tracker_utils.py` | `dc5fdeba2d4416f273394a9bd4450dff050608db6009a4546ca68adbaa24a640` |
+
+`export_memory_selection_goldens.py` reproduces 2,024 cases spanning two
+1,000-frame histories, late births, reconditioning, low-quality frames and
+permitted hotstart conditioning/quality changes. The retained selector matches
+spatial frame indices, temporal positions and pointer order while retaining at
+most 27 records. Fixture SHA-256 is
+`e4844ec8e03e4e9aab03b29e93d4c4d62d3cef08a9f0df3c22d2d0a321c02594`.
+This is selector evidence, not model, association or ID-continuity acceptance.
+
+Remaining implementation:
+
+1. Connect tracker prompt preparation, selected memory/pointers and stage
+   execution, then compare every stage with original-weight exports locally.
+2. Implement logical tracker groups, official association/lifecycle,
+   reconditioning and global overlap/suppression handling. Integrate retention
+   with hotstart removal and group-quality recomputation.
+3. Add the public video task contract, `VideoSession`, failure/reset recovery,
+   source-size delayed results, statistics and `sam_video` CLI.
+4. Adapt the isolated CPU video oracle and dependencies; implement full
+   `export_video_reference.py` and `validate_video.py`. These commands remain
+   planned interfaces and are not supplied by this batch.
+5. Run original video/image matrices, multi-session/long-sequence lifetime checks,
+   actual Metal placement and video performance measurements locally. Preserve
+   frozen gates and mark missing scenarios as fixture failures.
+
+Available local preparation commands from this batch:
+
+```sh
+.venv-reference/bin/python tools/convert_sam3.py --task video \
+  --checkpoint models/official/3c879f39826c281e95690f02c7821c4de09afae7/sam3.pt \
+  --bpe models/official/3c879f39826c281e95690f02c7821c4de09afae7/bpe_simple_vocab_16e6.txt.gz \
+  --precision f32 --output models/sam3-video-f32.gguf
+# Repeat with f16 and a new sam3-video-f16.gguf output.
+.venv-reference/bin/python tools/generate_video_cases.py \
+  --input-root models/fixtures --output models/video-cases
+```
+
+Both outputs are exclusive. Complete generated frames are not reference outputs.
+Cloud check results and source/binary hashes are recorded under ignored
+`build/cloud-implementation-20261001/`; no model or private media is committed.
+
+Cloud verification completed: CPU CTest **10/10**, downstream consumer CTest
+**3/3**, Python tools **13/13**, independent/repeated header compilation,
+Python syntax, JSON, local documentation links and whitespace checks passed.
+The selector tests cover 2,024 official weight-free cases; preprocessing covers
+four Pillow bicubic layouts, padded strides and all 256 RGB byte values.
+No official checkpoint was loaded, and no Metal hardware or new model benchmark
+was available in this cloud run. This record covers the first cloud implementation
+batch; the remaining implementation and local acceptance are listed above.

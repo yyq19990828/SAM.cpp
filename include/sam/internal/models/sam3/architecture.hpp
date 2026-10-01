@@ -28,6 +28,7 @@ SOFTWARE.
 */
 
 #include "ggml.h"
+#include "tracking/architecture.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -46,6 +47,8 @@ struct sam3_hparams {
     int32_t fenc_layers = 6, fenc_heads = 8, fenc_ffn_dim = 2048;
     int32_t ddec_layers = 6, ddec_heads = 8, ddec_ffn_dim = 2048, ddec_num_queries = 200;
     int32_t geom_layers = 3;
+    int32_t sam_embed_dim = 256, sam_dec_depth = 2, sam_n_multimask = 3;
+    int32_t mem_out_dim = 64, mem_attn_layers = 4, num_maskmem = 7;
     int32_t n_img_embd() const { return img_size / patch_size; }
     int32_t n_img_tokens() const { return n_img_embd() * n_img_embd(); }
     int32_t vit_head_dim() const { return vit_embed_dim / vit_num_heads; }
@@ -308,7 +311,21 @@ struct sam3_model {
     sam3_hparams hparams;
     ggml_type weight_type = GGML_TYPE_F16;
     sam3_vit vit;
-    sam3_neck neck_det;
+    sam3_neck neck_det, neck_trk;
+    sam3_sam_prompt_enc sam_pe;
+    sam3_sam_mask_dec sam_dec;
+    sam3_mem_enc mem_enc;
+    sam3_mem_attn mem_attn;
+    ggml_tensor* mem_attn_norm_w = nullptr;
+    ggml_tensor* mem_attn_norm_b = nullptr;
+    ggml_tensor* obj_ptr_proj_w[3] = {};
+    ggml_tensor* obj_ptr_proj_b[3] = {};
+    ggml_tensor* obj_ptr_tpos_w = nullptr;
+    ggml_tensor* obj_ptr_tpos_b = nullptr;
+    ggml_tensor* no_obj_ptr = nullptr;
+    ggml_tensor* no_mem_embed = nullptr;
+    ggml_tensor* no_mem_pos_enc = nullptr;
+    ggml_tensor* no_obj_embed_spatial = nullptr;
     sam3_text_encoder text_enc;
     sam3_fusion_encoder fenc;
     sam3_detr_decoder ddec;

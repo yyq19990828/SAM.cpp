@@ -19,9 +19,8 @@ public:
         if (options.threads <= 0) throw std::invalid_argument("threads must be positive");
         if (options.backend != Backend::Auto && options.backend != Backend::Cpu && options.backend != Backend::Metal)
             throw std::invalid_argument("invalid backend selection");
-        if (options.backend == Backend::Metal) validate_metal_checkpoint(fp32);
         drivers_.push_back(make_cpu_backend(options.threads));
-        if (!fp32 && options.backend != Backend::Cpu) {
+        if (options.backend == Backend::Metal || (!fp32 && options.backend == Backend::Auto)) {
             auto metal = make_metal_backend();
             if (!metal.handle && options.backend == Backend::Metal)
                 throw std::runtime_error("requested GGML Metal backend is unavailable or failed initialization");

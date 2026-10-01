@@ -1,4 +1,4 @@
-"""SAM 3 schema 1 on the pinned official GGUF writer/reader."""
+"""SAM 3 image schema 1 and experimental video schema 2 on the pinned GGUF tools."""
 
 import hashlib
 import math
@@ -37,6 +37,42 @@ UINT32_METADATA = {
     "tokenizer.ggml.eos_token_id": 49407, "tokenizer.ggml.padding_token_id": 0,
     **IMAGE_PARAMETERS,
 }
+VIDEO_PARAMETERS = {
+    "sam3.tracker.embedding_length": 256, "sam3.tracker.memory_length": 64,
+    "sam3.tracker.attention.block_count": 4, "sam3.tracker.attention.head_count": 1,
+    "sam3.tracker.attention.head_length": 256, "sam3.tracker.memory_position_count": 7,
+    "sam3.tracker.conditioning_frame_count": 4, "sam3.tracker.pointer_candidate_count": 16,
+    "sam3.tracker.mask_memory_size": 1152,
+}
+VIDEO_STRINGS = {
+    "sam3.tracker.policy": "meta-sam3-temporal-v1",
+    "sam3.tracker.feature_storage": "bf16", "sam3.tracker.memory_storage": "bf16",
+    "sam3.video.preprocessing": "pillow-bicubic-f16-normalize-v1",
+}
+
+
+def task_metadata(task):
+    if task not in ("image", "video"):
+        raise ValueError(f"unsupported SAM 3 task: {task}")
+    strings, integers = dict(STRING_METADATA), dict(UINT32_METADATA)
+    if task == "video":
+        strings.update(VIDEO_STRINGS)
+        strings["sam.task"] = "text_video"
+        integers.update(VIDEO_PARAMETERS)
+        integers["sam.schema_version"] = 2
+    return strings, integers
+
+
+def tensor_schema(schema, task="image"):
+    task_metadata(task)
+    result = dict(schema["tensors"])
+    if task == "video":
+        if set(result) & set(schema["unused_tracker_tensors"]):
+            raise ValueError("image and tracker schemas overlap")
+        result.update(schema["unused_tracker_tensors"])
+    return result
+
+
 METADATA_LIMIT = 16 * 1024 * 1024
 
 
@@ -102,7 +138,7 @@ def validate_tokenizer(tokens, merges):
             raise ValueError(f"GGUF tokenizer merge rank {rank} is inconsistent")
 
 
-def write_metadata(writer, precision, checkpoint_sha256, tokens, merges):
+def write_metadata(writer, precision, checkpoint_sha256, tokens, merges, task="image"):
     storage_dtype("", (1,), precision)
     if not re.fullmatch("[0-9a-f]{64}", checkpoint_sha256):
         raise ValueError("checkpoint SHA-256 must be 64 lowercase hexadecimal characters")
@@ -110,11 +146,12 @@ def write_metadata(writer, precision, checkpoint_sha256, tokens, merges):
     validate_tokenizer(tokens, merge_strings)
     writer.add_custom_alignment(32)
     writer.add_file_type(int(precision == "f16"))
-    for key, value in STRING_METADATA.items():
+    strings, integers = task_metadata(task)
+    for key, value in strings.items():
         if key != "general.architecture":  # The official writer adds architecture in its constructor.
             writer.add_string(key, value)
     writer.add_string("sam.source.checkpoint_sha256", checkpoint_sha256)
-    for key, value in UINT32_METADATA.items():
+    for key, value in integers.items():
         writer.add_uint32(key, value)
     writer.add_key_value("sam3.vision.global_attention_blocks", GLOBAL_BLOCKS,
                          gguf.GGUFValueType.ARRAY, sub_type=gguf.GGUFValueType.UINT32)
@@ -191,7 +228,7 @@ def read_gguf(path):
         raise ValueError(f"malformed GGUF metadata: {error}") from error
 
 
-def validate_metadata(reader, precision=None, checkpoint_sha256=None):
+def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="image"):
     def require(key, types, expected=None):
         field = reader.get_field(key)
         if field is None or field.types != types:
@@ -201,9 +238,10 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None):
             raise ValueError(f"GGUF metadata {key} disagrees with the supported SAM 3 schema")
         return value
 
-    for key, value in STRING_METADATA.items():
+    strings, integers = task_metadata(task)
+    for key, value in strings.items():
         require(key, [gguf.GGUFValueType.STRING], value)
-    for key, value in UINT32_METADATA.items():
+    for key, value in integers.items():
         require(key, [gguf.GGUFValueType.UINT32], value)
     if reader.get_field("general.name") is not None:
         require("general.name", [gguf.GGUFValueType.STRING])

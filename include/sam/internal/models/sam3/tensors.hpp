@@ -35,7 +35,7 @@ SOFTWARE.
 
 namespace sam::internal::sam3 {
 
-inline void sam3_register_tensors(sam3_model& model) {
+inline void sam3_register_tensors(sam3_model& model, bool video = false) {
     const auto& hp = model.hparams;
     auto& tensors = model.tensors;
     auto ctx = model.ctx;
@@ -84,6 +84,7 @@ inline void sam3_register_tensors(sam3_model& model) {
     };
 
     const int E = hp.vit_embed_dim;      // 1024
+    const int MD = hp.mem_out_dim;
     const int D = hp.neck_dim;           // 256
     const int TW = hp.text_width;        // 1024
     const int MLP = hp.vit_mlp_dim;      // 4736
@@ -159,6 +160,7 @@ inline void sam3_register_tensors(sam3_model& model) {
         neck.scales[3].conv3x3_b = T1f(prefix + "3.conv_3x3.bias", D);
     };
     register_neck(model.neck_det, "neck.det.");
+    if (video) register_neck(model.neck_trk, "neck.trk.");
 
     // Helper lambdas used by multiple sections (detector + tracker)
     auto reg = [&](const std::string& n, int64_t d0, int64_t d1, bool is_f32 = false) {
@@ -439,6 +441,216 @@ inline void sam3_register_tensors(sam3_model& model) {
     reg4("seg.semantic_seg_head.weight", 1, 1, D, 1);
     reg1("seg.semantic_seg_head.bias", 1);
 
+    if (video) {
+    // ── SAM prompt encoder ───────────────────────────────────────────────
+    model.sam_pe.pe_gaussian = T2f("sam_pe.pe_gaussian", 128, 2);
+    for (int i = 0; i < 4; ++i)
+        model.sam_pe.point_embed[i] = T2f("sam_pe.point_embeddings." + std::to_string(i) + ".weight", D, 1);
+    model.sam_pe.not_a_point_embed = T2f("sam_pe.not_a_point_embed.weight", D, 1);
+    model.sam_pe.no_mask_embed = T2f("sam_pe.no_mask_embed.weight", D, 1);
+
+    // mask_downscaling: sequential with numeric indices
+    model.sam_pe.mask_ds_conv_w[0] = T4("sam_pe.mask_ds.0.weight", 2, 2, 1, 4);
+    model.sam_pe.mask_ds_conv_b[0] = T1f("sam_pe.mask_ds.0.bias", 4);
+    model.sam_pe.mask_ds_norm_w[0] = T1f("sam_pe.mask_ds.1.weight", 4);
+    model.sam_pe.mask_ds_norm_b[0] = T1f("sam_pe.mask_ds.1.bias", 4);
+    model.sam_pe.mask_ds_conv_w[1] = T4("sam_pe.mask_ds.3.weight", 2, 2, 4, 16);
+    model.sam_pe.mask_ds_conv_b[1] = T1f("sam_pe.mask_ds.3.bias", 16);
+    model.sam_pe.mask_ds_norm_w[1] = T1f("sam_pe.mask_ds.4.weight", 16);
+    model.sam_pe.mask_ds_norm_b[1] = T1f("sam_pe.mask_ds.4.bias", 16);
+    model.sam_pe.mask_ds_conv_w[2] = T4("sam_pe.mask_ds.6.weight", 1, 1, 16, D);
+    model.sam_pe.mask_ds_conv_b[2] = T1f("sam_pe.mask_ds.6.bias", D);
+
+    // ── SAM mask decoder ─────────────────────────────────────────────────
+    model.sam_dec.iou_token = T2f("sam_dec.iou_token.weight", D, 1);
+    model.sam_dec.mask_tokens = T2f("sam_dec.mask_tokens.weight", D, 4);
+    model.sam_dec.obj_score_token = T2f("sam_dec.obj_score_token.weight", D, 1);
+
+    model.sam_dec.twoway_blocks.resize(hp.sam_dec_depth);
+    for (int i = 0; i < hp.sam_dec_depth; ++i) {
+        auto& blk = model.sam_dec.twoway_blocks[i];
+        auto p = "sam_dec.twoway." + std::to_string(i);
+
+        auto reg_attn = [&](sam3_sam_attn& a, const std::string& pfx, int in_dim, int out_dim) {
+            a.q_w = T2(pfx + ".q_proj.weight", in_dim, out_dim);
+            a.q_b = T1f(pfx + ".q_proj.bias", out_dim);
+            a.k_w = T2(pfx + ".k_proj.weight", in_dim, out_dim);
+            a.k_b = T1f(pfx + ".k_proj.bias", out_dim);
+            a.v_w = T2(pfx + ".v_proj.weight", in_dim, out_dim);
+            a.v_b = T1f(pfx + ".v_proj.bias", out_dim);
+            a.out_w = T2(pfx + ".out_proj.weight", out_dim, in_dim);
+            a.out_b = T1f(pfx + ".out_proj.bias", in_dim);
+        };
+
+        reg_attn(blk.self_attn, p + ".sa", D, D);
+        reg_attn(blk.ca_tok2img, p + ".cross_attn_token_to_image", D, 128);
+        reg_attn(blk.ca_img2tok, p + ".cross_attn_image_to_token", D, 128);
+
+        blk.norm1_w = T1f(p + ".norm1.weight", D);
+        blk.norm1_b = T1f(p + ".norm1.bias", D);
+        blk.norm2_w = T1f(p + ".norm2.weight", D);
+        blk.norm2_b = T1f(p + ".norm2.bias", D);
+        blk.norm3_w = T1f(p + ".norm3.weight", D);
+        blk.norm3_b = T1f(p + ".norm3.bias", D);
+        blk.norm4_w = T1f(p + ".norm4.weight", D);
+        blk.norm4_b = T1f(p + ".norm4.bias", D);
+
+        blk.mlp_fc1_w = T2(p + ".mlp.lin1.weight", D, FFN);
+        blk.mlp_fc1_b = T1f(p + ".mlp.lin1.bias", FFN);
+        blk.mlp_fc2_w = T2(p + ".mlp.lin2.weight", FFN, D);
+        blk.mlp_fc2_b = T1f(p + ".mlp.lin2.bias", D);
+    }
+
+    // final attention
+    auto reg_sam_attn = [&](sam3_sam_attn& a, const std::string& pfx, int in_dim, int out_dim) {
+        a.q_w = T2(pfx + ".q_proj.weight", in_dim, out_dim);
+        a.q_b = T1f(pfx + ".q_proj.bias", out_dim);
+        a.k_w = T2(pfx + ".k_proj.weight", in_dim, out_dim);
+        a.k_b = T1f(pfx + ".k_proj.bias", out_dim);
+        a.v_w = T2(pfx + ".v_proj.weight", in_dim, out_dim);
+        a.v_b = T1f(pfx + ".v_proj.bias", out_dim);
+        a.out_w = T2(pfx + ".out_proj.weight", out_dim, in_dim);
+        a.out_b = T1f(pfx + ".out_proj.bias", in_dim);
+    };
+    reg_sam_attn(model.sam_dec.final_attn, "sam_dec.final_attn", D, 128);
+    model.sam_dec.final_norm_w = T1f("sam_dec.final_norm.weight", D);
+    model.sam_dec.final_norm_b = T1f("sam_dec.final_norm.bias", D);
+
+    // upscaling
+    model.sam_dec.up1_w = T4("sam_dec.upscale.0.weight", 2, 2, 64, D);
+    model.sam_dec.up1_b = T1f("sam_dec.upscale.0.bias", 64);
+    model.sam_dec.up1_norm_w = T1f("sam_dec.upscale.1.weight", 64);
+    model.sam_dec.up1_norm_b = T1f("sam_dec.upscale.1.bias", 64);
+    model.sam_dec.up2_w = T4("sam_dec.upscale.3.weight", 2, 2, 32, 64);
+    model.sam_dec.up2_b = T1f("sam_dec.upscale.3.bias", 32);
+
+    // high-res feature convolutions
+    model.sam_dec.conv_s0_w = T4("sam_dec.conv_s0.weight", 1, 1, D, 32);
+    model.sam_dec.conv_s0_b = T1f("sam_dec.conv_s0.bias", 32);
+    model.sam_dec.conv_s1_w = T4("sam_dec.conv_s1.weight", 1, 1, D, 64);
+    model.sam_dec.conv_s1_b = T1f("sam_dec.conv_s1.bias", 64);
+
+    // hypernetwork MLPs (4 × 3 layers: 256→256→256→32)
+    for (int m = 0; m < 4; ++m) {
+        for (int j = 0; j < 3; ++j) {
+            int in_d = D, out_d = (j == 2) ? 32 : D;
+            auto bp = "sam_dec.hyper." + std::to_string(m) + ".layers." + std::to_string(j);
+            model.sam_dec.hyper_w[m][j] = T2(bp + ".weight", in_d, out_d);
+            model.sam_dec.hyper_b[m][j] = T1f(bp + ".bias", out_d);
+        }
+    }
+
+    // IoU prediction head (3 layers: 256→256→256→4)
+    for (int j = 0; j < 3; ++j) {
+        int out_d = (j == 2) ? 4 : D;
+        auto bp = "sam_dec.iou_prediction_head.layers." + std::to_string(j);
+        model.sam_dec.iou_head_w[j] = T2(bp + ".weight", D, out_d);
+        model.sam_dec.iou_head_b[j] = T1f(bp + ".bias", out_d);
+    }
+
+    // object score head (3 layers: 256→256→256→1)
+    for (int j = 0; j < 3; ++j) {
+        int out_d = (j == 2) ? 1 : D;
+        auto bp = "sam_dec.pred_obj_score_head.layers." + std::to_string(j);
+        model.sam_dec.obj_head_w[j] = T2(bp + ".weight", D, out_d);
+        model.sam_dec.obj_head_b[j] = T1f(bp + ".bias", out_d);
+    }
+
+    // ── Memory encoder ───────────────────────────────────────────────────
+    // mask_downsampler: sequential encoder.{0,1,3,4,6,7,9,10,12}
+    int ds_channels[] = {1, 4, 16, 64, 256};
+    int ds_indices[] = {0, 3, 6, 9, 12};
+    int norm_indices[] = {1, 4, 7, 10};
+    for (int s = 0; s < 4; ++s) {
+        auto si = std::to_string(ds_indices[s]);
+        model.mem_enc.ds_conv_w[s] = T4("mem_enc.ds." + si + ".weight", 3, 3, ds_channels[s], ds_channels[s + 1]);
+        model.mem_enc.ds_conv_b[s] = T1f("mem_enc.ds." + si + ".bias", ds_channels[s + 1]);
+        auto ni = std::to_string(norm_indices[s]);
+        model.mem_enc.ds_norm_w[s] = T1f("mem_enc.ds." + ni + ".weight", ds_channels[s + 1]);
+        model.mem_enc.ds_norm_b[s] = T1f("mem_enc.ds." + ni + ".bias", ds_channels[s + 1]);
+    }
+    model.mem_enc.ds_conv_w[4] = T4("mem_enc.ds.12.weight", 1, 1, D, D);
+    model.mem_enc.ds_conv_b[4] = T1f("mem_enc.ds.12.bias", D);
+
+    model.mem_enc.pix_proj_w = T4("mem_enc.pix_feat_proj.weight", 1, 1, D, D);
+    model.mem_enc.pix_proj_b = T1f("mem_enc.pix_feat_proj.bias", D);
+
+    // fuser CXBlocks
+    for (int i = 0; i < 2; ++i) {
+        auto p = "mem_enc.fuser." + std::to_string(i);
+        model.mem_enc.fuser_dw_w[i] = T4(p + ".dwconv.weight", 7, 7, 1, D);  // groups=256
+        model.mem_enc.fuser_dw_b[i] = T1f(p + ".dwconv.bias", D);
+        model.mem_enc.fuser_norm_w[i] = T1f(p + ".norm.weight", D);
+        model.mem_enc.fuser_norm_b[i] = T1f(p + ".norm.bias", D);
+        model.mem_enc.fuser_fc1_w[i] = T2(p + ".pwconv1.weight", D, 1024);
+        model.mem_enc.fuser_fc1_b[i] = T1f(p + ".pwconv1.bias", 1024);
+        model.mem_enc.fuser_fc2_w[i] = T2(p + ".pwconv2.weight", 1024, D);
+        model.mem_enc.fuser_fc2_b[i] = T1f(p + ".pwconv2.bias", D);
+        model.mem_enc.fuser_gamma[i] = T1f(p + ".gamma", D);
+    }
+
+    model.mem_enc.out_proj_w = T4("mem_enc.out_proj.weight", 1, 1, D, MD);
+    model.mem_enc.out_proj_b = T1f("mem_enc.out_proj.bias", MD);
+
+    // temporal pos encodings
+    model.mem_enc.tpos[0] = T4f("mem_enc.tpos_enc", MD, 1, 1, hp.num_maskmem);
+
+    // ── Memory attention ─────────────────────────────────────────────────
+    model.mem_attn.layers.resize(hp.mem_attn_layers);
+    model.mem_attn_norm_w = reg1("mem_attn.norm.weight", D);
+    model.mem_attn_norm_b = reg1("mem_attn.norm.bias", D);
+
+    for (int i = 0; i < hp.mem_attn_layers; ++i) {
+        auto& ly = model.mem_attn.layers[i];
+        auto p = "mem_attn.layers." + std::to_string(i);
+        // self-attention (RoPE, 1 head, 256-dim)
+        ly.sa_q_w = T2(p + ".sa.q_proj.weight", D, D);
+        ly.sa_q_b = T1f(p + ".sa.q_proj.bias", D);
+        ly.sa_k_w = T2(p + ".sa.k_proj.weight", D, D);
+        ly.sa_k_b = T1f(p + ".sa.k_proj.bias", D);
+        ly.sa_v_w = T2(p + ".sa.v_proj.weight", D, D);
+        ly.sa_v_b = T1f(p + ".sa.v_proj.bias", D);
+        ly.sa_out_w = T2(p + ".sa.out_proj.weight", D, D);
+        ly.sa_out_b = T1f(p + ".sa.out_proj.bias", D);
+        ly.norm1_w = T1f(p + ".norm1.weight", D);
+        ly.norm1_b = T1f(p + ".norm1.bias", D);
+        // cross-attention (kv_in_dim=64) — renamed from cross_attn_image → ca
+        ly.ca_q_w = T2(p + ".ca.q_proj.weight", D, D);
+        ly.ca_q_b = T1f(p + ".ca.q_proj.bias", D);
+        ly.ca_k_w = T2(p + ".ca.k_proj.weight", MD, D);
+        ly.ca_k_b = T1f(p + ".ca.k_proj.bias", D);
+        ly.ca_v_w = T2(p + ".ca.v_proj.weight", MD, D);
+        ly.ca_v_b = T1f(p + ".ca.v_proj.bias", D);
+        ly.ca_out_w = T2(p + ".ca.out_proj.weight", D, D);
+        ly.ca_out_b = T1f(p + ".ca.out_proj.bias", D);
+        ly.norm2_w = T1f(p + ".norm2.weight", D);
+        ly.norm2_b = T1f(p + ".norm2.bias", D);
+        // FFN
+        ly.ffn_fc1_w = T2(p + ".linear1.weight", D, FFN);
+        ly.ffn_fc1_b = T1f(p + ".linear1.bias", FFN);
+        ly.ffn_fc2_w = T2(p + ".linear2.weight", FFN, D);
+        ly.ffn_fc2_b = T1f(p + ".linear2.bias", D);
+        ly.norm3_w = T1f(p + ".norm3.weight", D);
+        ly.norm3_b = T1f(p + ".norm3.bias", D);
+    }
+
+    // ── Object pointer projection ────────────────────────────────────────
+    for (int j = 0; j < 3; ++j) {
+        auto bp = "obj_ptr_proj.layers." + std::to_string(j);
+        model.obj_ptr_proj_w[j] = T2(bp + ".weight", D, D);
+        model.obj_ptr_proj_b[j] = T1f(bp + ".bias", D);
+    }
+    model.no_obj_ptr = T2f("no_obj_ptr", D, 1);
+    model.obj_ptr_tpos_w = T2("obj_ptr_tpos_proj.weight", D, MD);
+    model.obj_ptr_tpos_b = T1f("obj_ptr_tpos_proj.bias", MD);
+
+    // standalone tracker parameters
+    model.no_mem_embed         = T3f("no_mem_embed", D, 1, 1);
+    model.no_mem_pos_enc       = T3f("no_mem_pos_enc", D, 1, 1);
+    model.no_obj_embed_spatial = T2f("no_obj_embed_spatial", MD, 1);
+    T4f("trk_mask_ds.weight", 4, 4, 1, 1);
+    T1f("trk_mask_ds.bias", 1);
+    }
 }
 
 } // namespace sam::internal::sam3

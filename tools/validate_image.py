@@ -10,7 +10,7 @@ import tempfile
 from sam3_artifacts import (BPE_SHA256, REQUIRED_TENSORS, SAM3_REVISION,
                            artifact_path, load_case_manifest, read_array, read_json, read_tensor_index,
                            sha256_file, validate_case_manifest, write_json)
-from sam3_gguf import inspect_tensors, read_gguf, validate_metadata
+from sam3_gguf import inspect_tensors, read_gguf, validate_metadata, tensor_schema
 
 
 GATES = {
@@ -197,8 +197,8 @@ def check_provenance(model_path, reference_path, case_path, allow_supplementary=
     if frozen.get("acceptance") != GATES:
         raise ValueError("case acceptance gates differ from the frozen M1 plan")
     if (model.get("architecture") != "sam3" or model.get("container_format") != "gguf"
-            or model.get("container_version") != 3 or model.get("sam_schema_version") != 1):
-        raise ValueError("converted model requires SAM schema-1 GGUF v3; reconvert the original checkpoint")
+            or model.get("container_version") != 3 or model.get("sam_schema_version") not in (1, 2)):
+        raise ValueError("converted model requires SAM schema-1/2 GGUF v3; reconvert the original checkpoint")
     precision = model.get("precision")
     if precision not in ("f32", "f16"):
         raise ValueError("converted model has unsupported precision")
@@ -206,15 +206,19 @@ def check_provenance(model_path, reference_path, case_path, allow_supplementary=
         raise ValueError("converted model size does not match its manifest")
     if model["output"]["sha256"] != sha256_file(model_path):
         raise ValueError("converted model SHA-256 does not match its manifest")
+    task = "video" if model["sam_schema_version"] == 2 else "image"
+    if model.get("task", "image") != task:
+        raise ValueError("converted model task disagrees with its SAM schema")
     reader = read_gguf(model_path)
-    validate_metadata(reader, precision, model["checkpoint"]["sha256"])
+    validate_metadata(reader, precision, model["checkpoint"]["sha256"], task)
     schema = read_json(Path(__file__).with_name("sam3_tensor_schema.json"))
     if schema.get("schema_version") != 1 or schema.get("sam3_revision") != SAM3_REVISION:
         raise ValueError("unsupported detector tensor schema")
+    expected_tensors = tensor_schema(schema, task)
     recorded = {item["name"]: item for item in model["tensors"]}
-    if len(recorded) != len(model["tensors"]) or set(recorded) != set(schema["tensors"]):
+    if len(recorded) != len(model["tensors"]) or set(recorded) != set(expected_tensors):
         raise ValueError("GGUF sidecar tensor inventory is missing, duplicated or unknown")
-    actual = inspect_tensors(reader, precision, schema["tensors"],
+    actual = inspect_tensors(reader, precision, expected_tensors,
                              {name: item["shape"] for name, item in recorded.items()})
     for item in actual:
         if any(item[key] != recorded[item["name"]].get(key)
@@ -256,8 +260,6 @@ def check_provenance(model_path, reference_path, case_path, allow_supplementary=
 
 def validate(args):
     precision, reference, model = check_provenance(args.model, args.reference, args.cases, args.allow_supplementary)
-    if precision == "f32" and args.backend == "metal":
-        raise ValueError("FP32/Metal is outside the supported acceptance matrix")
     executable = args.build_dir / "tests/test_image"
     if not executable.is_file():
         raise FileNotFoundError(f"C++ differential executable is missing: {executable}")

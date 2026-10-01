@@ -8,8 +8,13 @@ No releases have been published.
 
 ### Added
 
-- [FP32 CPU/Metal validation plan](docs/plans/20261001-121633-fp32-cpu-metal-validation.md) defining explicit FP32 Metal enablement, unchanged Auto selection, official four-configuration acceptance and comparable image benchmarks before M2. Implementation and new measurements remain pending.
-- [M2 video-tracking plan](docs/plans/20261001-115321-sam3-text-video-tracking.md) defining full video GGUF weights, buffered text-driven tracking, bounded temporal state, CPU/Metal execution and original-reference acceptance. Video implementation remains pending.
+- Experimental schema-2 full SAM 3 video GGUF conversion/loading with 1,464 tensors, named tracker/storage/preprocessing metadata, exclusive output publication and task/profile information. Image schema 1 remains the default.
+- Internal tracker mask/memory graph foundations, a shared ViT trunk for both necks, explicit BF16 transport rounding, and precise 256-wide full-key attention with 128-query tiles. Complete video session inference is not yet exposed.
+- Pillow 11.2.1 RGB bicubic/F16 preprocessing goldens, full official tensor-inventory checks, and forward memory retention checked against 2,024 weight-free pinned Meta selector cases.
+- Five deterministic M2 frame recipes and `generate_video_cases.py`, recording PNG hashes and incomplete/complete generation separately from unverified oracle behavior. Original media remains external.
+
+- [FP32 CPU/Metal validation plan](docs/plans/20261001-121633-fp32-cpu-metal-validation.md) defining explicit FP32 Metal enablement, unchanged Auto selection, official four-configuration acceptance and comparable image benchmarks before M2. Explicit FP32 Metal selection is implemented; model/Metal acceptance and new measurements remain pending locally.
+- [M2 video-tracking plan](docs/plans/20261001-115321-sam3-text-video-tracking.md) defining full video GGUF weights, buffered text-driven tracking, bounded temporal state, CPU/Metal execution and original-reference acceptance. Video format, tracker math, preprocessing and memory-selector foundations are implemented; the session and full temporal pipeline remain pending.
 - [SAM GGUF schema 1](docs/gguf.md), a bounded common GGUF reader, and official `gguf` Python serialization with streaming tensor writes and source/output provenance.
 - [Benchmark matrix](BENCHMARK.md) with model rows and hardware/backend headers, recorded software versions and reproduction steps; [model catalog](MODEL_ZOO.md) with pinned HF/GitHub sources, verified conversion commands and explicit GGUF support status.
 - [Contributor guidelines](AGENTS.md) for the planned header-only SAM library, focused testing, extensibility for multiple backends and model architectures, implementation plans, and changelog maintenance.
@@ -29,6 +34,9 @@ No releases have been published.
 - Verified original SAM 3 GGUF conversion and unfused FP32 reference acceptance: 21/21 cases across FP32/CPU, FP16/CPU and FP16/Metal pass unchanged numerical gates, with high-confidence mask IoU 1.0. All 210 tensor snapshots and 18 output masks match the prior custom-container runs byte-for-byte. Checkpoint and reference hashes are recorded in the [GGUF acceptance plan](docs/plans/20261001-020507-gguf-conversion-loading.md); [earlier evidence](docs/plans/20261001-002850-metal-window-cpu-performance-official-weights.md) retains its original format identities.
 
 ### Changed
+
+- Explicit FP32 Metal requests now initialize Metal and retain F32 weights; Auto FP32 continues choosing CPU. The arithmetic probe and unavailable-device errors remain enforced. The image validator accepts this experimental path without changing its numerical gates; official local acceptance and benchmarks remain pending.
+- Image provenance validation also accepts the image subset of complete schema-2 video files, validating the complete full-file inventory and sidecar before running the image comparison.
 
 - Model conversion and loading now use GGUF v3 with named image parameters and the complete tokenizer. Public model/session APIs and FP32/FP16 arithmetic policies remain unchanged; use `.gguf` output paths when converting original checkpoints.
 - Public model/session facades now delegate to a SAM 3 adapter, with model-specific schemas, tokenization, transforms, caches, and graphs isolated under `internal/models/sam3/`. Existing application calls remain unchanged.

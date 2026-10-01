@@ -12,12 +12,6 @@
 
 namespace sam::internal {
 
-// This restriction concerns the all-F32 checkpoint mode. Metal still executes
-// the F32 arithmetic and mixed F32/F16 tensors required by an F16 checkpoint.
-inline void validate_metal_checkpoint(bool fp32) {
-    if (fp32) throw std::runtime_error("FP32/Metal is outside the supported precision/backend matrix");
-}
-
 inline void validate_metal_precision(ggml_backend_t backend) {
     auto context = make_context(8, 8);
     auto* a = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, 256, 256);

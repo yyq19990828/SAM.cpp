@@ -58,6 +58,12 @@ add_executable(test_window test_window.cpp)
 target_link_libraries(test_window PRIVATE sam::sam)
 add_test(NAME sam_window COMMAND test_window)
 
+add_executable(test_tracking test_tracking.cpp)
+target_link_libraries(test_tracking PRIVATE sam::sam)
+target_compile_definitions(test_tracking PRIVATE SAM_VIDEO_INVENTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/sam3-video-tensor-inventory.txt")
+target_compile_definitions(test_tracking PRIVATE SAM_MEMORY_GOLDENS="${CMAKE_CURRENT_SOURCE_DIR}/data/video_memory_selection_goldens.txt")
+add_test(NAME sam_tracking_math COMMAND test_tracking)
+
 if(patched_ggml_source)
     add_test(NAME sam_ggml_preparation
         COMMAND ${CMAKE_COMMAND}

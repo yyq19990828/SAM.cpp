@@ -93,6 +93,13 @@ inline ggml_tensor* sam3_deconv_2x2(ggml_context* ctx, ggml_tensor* w, ggml_tens
     return ggml_reshape_4d(ctx, out, 2 * width, 2 * height, channels, 1);
 }
 
+// Tracker LayerNorm2d normalizes channels in CWH layout with epsilon 1e-6.
+inline ggml_tensor* sam3_layer_norm_2d(ggml_context* ctx, ggml_tensor* x,
+                                        ggml_tensor* weight, ggml_tensor* bias) {
+    x = ggml_mul(ctx, ggml_norm(ctx, x, 1e-6f), weight);
+    return bias ? ggml_add(ctx, x, bias) : x;
+}
+
 // Fused Q/K/V multihead attention: [D, N_q, B] attends to [D, N_kv, B].
 inline struct ggml_tensor* sam3_multihead_attn_fused(
     struct ggml_context* ctx,

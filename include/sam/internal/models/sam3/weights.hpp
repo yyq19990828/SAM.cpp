@@ -27,6 +27,7 @@ struct WeightFile {
     std::string path;
     std::uint64_t file_size = 0;
     std::int32_t ftype = 0;
+    bool video = false;
     std::vector<TensorInfo> tensors;
     TokenizerData tokenizer;
     std::unique_ptr<GgufReader> reader;
@@ -109,8 +110,25 @@ inline WeightFile inspect_weights(const std::string& path) {
         if (reader.string(key) != expected) throw std::runtime_error(std::string("unsupported SAM GGUF metadata: ") + key);
     };
     require_string("general.architecture", "sam3");
-    require_string("sam.task", "text_image");
-    if (reader.u32("sam.schema_version") != 1) throw std::runtime_error("unsupported SAM GGUF schema version");
+    const auto schema = reader.u32("sam.schema_version");
+    if (schema != 1 && schema != 2) throw std::runtime_error("unsupported SAM GGUF schema version");
+    result.video = schema == 2;
+    require_string("sam.task", result.video ? "text_video" : "text_image");
+    if (result.video) {
+        const std::array<std::pair<const char*, std::uint32_t>, 9> parameters{{
+            {"sam3.tracker.embedding_length", 256}, {"sam3.tracker.memory_length", 64},
+            {"sam3.tracker.attention.block_count", 4}, {"sam3.tracker.attention.head_count", 1},
+            {"sam3.tracker.attention.head_length", 256}, {"sam3.tracker.memory_position_count", 7},
+            {"sam3.tracker.conditioning_frame_count", 4}, {"sam3.tracker.pointer_candidate_count", 16},
+            {"sam3.tracker.mask_memory_size", 1152}}};
+        for (const auto& parameter : parameters)
+            if (reader.u32(parameter.first) != parameter.second)
+                throw std::runtime_error(std::string("unsupported SAM 3 tracker parameter: ") + parameter.first);
+        require_string("sam3.tracker.policy", "meta-sam3-temporal-v1");
+        require_string("sam3.tracker.feature_storage", "bf16");
+        require_string("sam3.tracker.memory_storage", "bf16");
+        require_string("sam3.video.preprocessing", "pillow-bicubic-f16-normalize-v1");
+    }
     const auto ftype = reader.u32("general.file_type");
     if (ftype > 1) throw std::runtime_error("SAM GGUF precision must be F32 or mixed F16");
     result.ftype = static_cast<std::int32_t>(ftype);
@@ -131,7 +149,8 @@ inline WeightFile inspect_weights(const std::string& path) {
     if (indices != expected_indices)
         throw std::runtime_error("unsupported SAM 3 global attention block order");
     result.tensors = reader.tensors();
-    if (result.tensors.size() != 1133) throw std::runtime_error("SAM 3 image GGUF requires exactly 1133 tensors");
+    if (result.tensors.size() != (result.video ? 1464 : 1133))
+        throw std::runtime_error("SAM 3 GGUF tensor count does not match its task profile");
     for (const auto& tensor : result.tensors) {
         if (!std::all_of(tensor.name.begin(), tensor.name.end(), [](char c) {
                 return ascii_letter(c) || ascii_digit(c) || c == '_' || c == '.';

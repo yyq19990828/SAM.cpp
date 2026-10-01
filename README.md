@@ -129,13 +129,16 @@ for C++ callers supplying pixels directly.
 
 | Weights | CPU | Metal | `Auto` |
 | --- | --- | --- | --- |
-| FP32 | Implemented | Rejected | CPU |
+| FP32 | Implemented | Explicit selection implemented; local model acceptance pending | CPU |
 | FP16 | Implemented | Implemented | Compatible Metal when available, CPU when unavailable |
 
 Inspect `model.backend()` or `model.info()` for the resolved backend. Explicit
 Metal selection fails when unavailable. Graph execution errors are surfaced;
 they do not trigger a silent backend retry. Numerical acceptance status is
-recorded in the plan separately from this implementation matrix.
+recorded in the [FP32 validation plan](docs/plans/20261001-121633-fp32-cpu-metal-validation.md) separately from this implementation matrix.
+Official model/Meta comparisons, Metal hardware checks and new benchmarks are
+reserved for local execution; no new accepted configuration or measured result
+is claimed by the cloud implementation.
 
 `ModelInfo::precision` describes checkpoint storage. CPU loading promotes FP16
 values exactly to FP32 to avoid narrowing activations in GGML's half-weight dot
@@ -155,7 +158,10 @@ zero-padded. IDs must be in `[0, 49407]`.
 
 ## Checkpoints and command-line example
 
-The reader accepts SAM schema-1 GGUF v3 files in FP32 or mixed FP16. See the
+The reader accepts SAM schema-1 image and experimental schema-2 full video GGUF v3 files in FP32 or mixed FP16.
+Schema-2 conversion/loading and internal tracking graphs are implemented;
+`VideoSession`, video CLI and full temporal-policy integration are still pending.
+`ModelInfo::task` and `profile` identify the file contract, rather than numerical acceptance. See the
 [GGUF contract](docs/gguf.md) for required architecture/task metadata, named
 parameters, tokenizer and tensor layout. Bounded metadata, canonical encoding,
 model schema and all file ranges are checked before backend weight allocation.

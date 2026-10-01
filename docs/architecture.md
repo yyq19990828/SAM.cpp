@@ -69,7 +69,7 @@ callback and metadata serialization APIs, checked by the CMake compatibility pro
 | `resources.hpp` | RAII ownership of contexts, buffers, backends, schedulers; metadata context allocation |
 | `backend.hpp` | Small driver/device contract for backend identity, storage policy and node statistics |
 | `backends/cpu.hpp` | CPU discovery, initialization, thread configuration and exact FP16 promotion policy |
-| `backends/metal.hpp` | Metal discovery, checkpoint-precision compatibility and the FP32 arithmetic probe |
+| `backends/metal.hpp` | Metal discovery, Metal initialization and the FP32 arithmetic probe |
 | `runtime.hpp` | Supported-driver selection, ordered execution backends and ownership |
 | `graph.hpp` | Shared scheduling, operation checks, transfers and execution statistics |
 
@@ -92,9 +92,9 @@ for direct GPU checks and full-model acceptance.
 
 CPU remains the required fallback backend. `Auto` selects compatible Metal for
 FP16 checkpoints when available and CPU for FP32 checkpoints. Explicit missing
-backends and incompatible Metal precision fail clearly. The FP32-checkpoint
-restriction is the current validated support matrix: Metal still computes with
-FP32 tensors and precise arithmetic inside the FP16 model path.
+backends and incompatible Metal arithmetic fail clearly. Explicit FP32 Metal
+selection is implemented and retains F32 weight storage, with full-model
+acceptance pending local validation. Auto FP32 continues selecting CPU.
 
 Adding CUDA requires a real driver under `backends/`, supported-driver selection,
 public configuration/CLI naming, device selection, and its statistics field.
@@ -172,3 +172,26 @@ units, and exercise meaningful contracts and precision boundaries. Structural
 changes also run the existing frozen numerical corpus. Same-weight community
 checkpoint comparisons retain supplementary provenance; original-checkpoint
 acceptance requires the authorized original file and its recorded hash.
+
+## M2 implementation in progress
+
+`tracking/` holds separate tracker weights, prompt/mask decoding, memory encoder,
+256-wide memory attention, video preprocessing and forward memory selectors.
+`ModelDefinition::encode_image(..., video=true)` builds the detector and tracker
+necks from one shared ViT trunk, then rounds tracker feature transport through
+BF16. The ordinary image call keeps its existing preprocessing and detector path.
+
+Memory attention tiles only queries, 128 at a time, while each softmax includes
+all spatial/pointer keys. Forward retention keeps complete hotstart group history;
+after group membership is fixed it protects the eight-frame correction window,
+four conditioning records and 15 older eligible records. The selector retains
+the count of pruned conditioning records to preserve official ordering. It is
+not a reverse/editable-session policy. These are internal foundations: group
+lifecycle, association, reconditioning, memory/pointer execution, delayed outputs,
+the public video task/facade, CLI and official video exporter are not integrated.
+
+Weight-free tests compare resized bytes and F16 normalization against Pillow
+11.2.1, attention against an independent full-key computation, and 2,024 memory
+selections against hash-verified pinned Meta functions. Official checkpoint
+stage comparisons and Metal execution remain local gates before video support
+can be advertised.

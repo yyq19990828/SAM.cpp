@@ -1,7 +1,7 @@
 # FP32 Image Validation and CPU/Metal Benchmarks
 
 Created: 2026-10-01 12:16:33 Asia/Shanghai.
-Status: planned; implementation and new measurements have not started.
+Status: cloud code implemented; official model/Meta, Metal hardware acceptance and new measurements deferred to local execution.
 Baseline: `2c23a67b58019149efe41c89aa263c1b1e770c65`.
 Priority: complete this image-validation matrix before implementing
 [M2 video tracking](20261001-115321-sam3-text-video-tracking.md).
@@ -22,7 +22,7 @@ are outside this plan.
 
 ## Verified starting point
 
-| Configuration | Numerical acceptance | Benchmark | Current restriction |
+| Configuration | Numerical acceptance | Benchmark | Baseline restriction |
 | --- | --- | --- | --- |
 | FP32 / CPU | Official corpus 7/7 passed; worst normalized L2 0.0005700826798642337 | Missing | None |
 | FP32 / Metal | Full model unvalidated | Missing | Runtime and Python validator reject it |
@@ -34,7 +34,7 @@ not results of this plan. The three existing `metrics.json` receipts were read
 while planning; weights, sidecars, reference bundle and reference interpreter
 are present locally. Full artifact hashes will be rechecked before execution.
 
-The restriction has three relevant locations:
+Before implementation, the restriction had three relevant locations:
 
 - `include/sam/internal/runtime/ggml/backends/metal.hpp` rejects all-F32
   checkpoints in `validate_metal_checkpoint`; its separate F32 arithmetic probe
@@ -259,3 +259,32 @@ the model rows and two hardware/backend header rows requested in `BENCHMARK.md`.
 Planning result: verified the existing receipts and three blocking code paths;
 selected the explicit-Metal opt-in approach. No runtime changes, new acceptance
 runs, benchmarks, commit or push were performed while writing this plan.
+
+## Cloud implementation record (2026-10-01)
+
+The user requested starting both plans in the cloud and leaving model-related
+and Meta/Metal validation locally. Cloud source baseline is `a3d03ec`; no model
+checkpoint, reference corpus or new performance result was used in this batch.
+
+- Removed the blanket all-F32 rejection. Explicit Metal now attempts device
+  initialization for either checkpoint precision; Auto FP32 still selects CPU.
+- Retained the arithmetic probe, scheduler CPU fallback and owned-node accounting.
+  Backend tests now check a real Metal-backed F32 weight tensor on matching
+  hardware and clear unavailable-device failures for both precisions on CPU-only
+  builds. The Metal branch is compiled but not executed in Linux.
+- Removed the validator's FP32/Metal gate without changing M1 tolerances or
+  placement/provenance checks. Full schema-2 files may also run the frozen image
+  suite after full inventory/sidecar validation.
+- Updated implementation/support documentation without adding accepted backend
+  configurations or altering historical benchmark values.
+
+Local acceptance still requires all four original-weight configurations, actual
+GPU placement evidence, and the sequential same-batch measurements specified
+above. Cloud compilation and synthetic tests do not complete this milestone.
+See the M2 cloud record for shared verification results and remaining video work.
+
+Cloud checks passed: CPU CTest **10/10**, consumer CTest **3/3**, Python tools
+**13/13**, independent/repeated headers and document/source checks. FP32 Metal
+selection fails clearly on this CPU-only host; GPU-backed numerical checks
+remain unexecuted here. This record covers the first cloud implementation batch;
+local model and Metal acceptance remain pending.

@@ -22,6 +22,8 @@ struct ModelInfo {
     int threads = 4;
     std::size_t tensor_count = 0, weight_bytes = 0; // Loaded representation, excluding buffer padding.
     bool tokenizer_compatibility_repaired = false;
+    std::string task;
+    std::string profile;
 };
 
 struct RuntimeStats {

@@ -26,7 +26,7 @@ median latency / peak process RSS**. Lower latency is better; GB means
     <tr>
       <th scope="row">SAM 3 image / FP32 GGUF</th>
       <td>Not benchmarked; numerical acceptance passed</td>
-      <td>Unsupported</td>
+      <td>Not benchmarked; explicit Metal path implemented, local numerical acceptance pending</td>
     </tr>
   </tbody>
 </table>

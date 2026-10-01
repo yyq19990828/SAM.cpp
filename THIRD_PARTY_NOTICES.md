@@ -2,14 +2,15 @@
 
 ## SAM 3 C++ Graph Implementation
 
-Selected SAM 3 image graph, tokenizer, and checkpoint conversion code is adapted
+Selected SAM 3 image/tracker graph, tokenizer, and checkpoint conversion code is adapted
 from [PABannier/sam3.cpp](https://github.com/PABannier/sam3.cpp/tree/416186c501d060df7ca02989d49b38080f5f81f3),
 revision `416186c501d060df7ca02989d49b38080f5f81f3`.
 
 Copyright (c) 2025-2026 Pierre-Antoine Bannier. Distributed under the MIT license;
 the original text is retained in [licenses/sam3.cpp-MIT.txt](licenses/sam3.cpp-MIT.txt).
-Other model families, GUI, video decoding, and tracking implementation are not
-part of this port.
+Other model families, GUI, video decoding, and the community association,
+lifecycle and memory-cache implementation are not part of this port. Tracker
+math is adapted separately, with full temporal integration still pending.
 
 ## GGML
 

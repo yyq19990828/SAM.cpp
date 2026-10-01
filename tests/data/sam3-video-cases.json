@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "task": "text_video",
+  "sam3_revision": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+  "status": "recipes defined; required oracle behavior not yet verified",
+  "pillow_version": "11.2.1",
+  "neutral_rgb": [
+    127,
+    127,
+    127
+  ],
+  "acceptance": {
+    "normalized_l2_f32": 0.001,
+    "normalized_l2_f16": 0.02,
+    "zero_norm_limit": 1e-12,
+    "zero_norm_max_abs": 1e-05,
+    "preprocessed_max_abs": 0.0,
+    "high_score_min": 0.6,
+    "mask_iou_f32": 0.98,
+    "mask_iou_f16": 0.95,
+    "score_max_abs": 0.02,
+    "box_dimension_fraction": 0.01,
+    "low_score_max": 0.4,
+    "score_threshold": 0.5
+  },
+  "recipes": {
+    "motion": "offset_x = 4 * min(f, 48-f) - 48",
+    "entry": "truck bicubic 900x600; first at (0,300); second at (1800-min(max(f-15,0)*60,900),300)",
+    "occlusion": "neutral rectangle [64,256,1744,920) on frames 20-23",
+    "hotstart-removal": "source visible on frames 0-1; neutral afterwards",
+    "negative": "repeat source unchanged"
+  },
+  "cases": [
+    {
+      "id": "motion",
+      "frames": 48,
+      "source": "truck.jpg",
+      "source_sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "prompt": "truck",
+      "required_reference_behavior": "stable ID through visible motion"
+    },
+    {
+      "id": "entry",
+      "frames": 64,
+      "source": "truck.jpg",
+      "source_sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "prompt": "truck",
+      "required_reference_behavior": "late object birth with original ID continuity"
+    },
+    {
+      "id": "occlusion",
+      "frames": 64,
+      "source": "truck.jpg",
+      "source_sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "prompt": "truck",
+      "required_reference_behavior": "ID continuity across oracle-retained occlusion"
+    },
+    {
+      "id": "hotstart-removal",
+      "frames": 24,
+      "source": "truck.jpg",
+      "source_sha256": "941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99",
+      "prompt": "truck",
+      "required_reference_behavior": "removed hotstart object suppressed from earlier delayed output"
+    },
+    {
+      "id": "negative",
+      "frames": 16,
+      "source": "groceries.jpg",
+      "source_sha256": "7073dfecb5a3ecafb6152124113163a0ea1c1c70f92999ec892b519eca63e3d3",
+      "prompt": "purple elephant",
+      "required_reference_behavior": "empty outputs and complete final draining"
+    }
+  ]
+}

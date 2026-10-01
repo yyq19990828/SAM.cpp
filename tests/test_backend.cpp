@@ -72,11 +72,6 @@ int main() {
         // A live backend from another runtime has the same kind, but is not an
         // owned scheduler backend. Never fabricate an invalid pointer to test it.
         check_unknown_attribution(cpu, auto_fp32.weights_backend());
-        bool rejected = false;
-        try { sam::internal::GgmlRuntime unsupported({sam::Backend::Metal, 1}, true); }
-        catch (const std::runtime_error&) { rejected = true; }
-        if (!rejected) throw std::runtime_error("Unsupported FP32 Metal combination was accepted");
-
         bool metal_registered = false;
         for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             auto* device = ggml_backend_dev_get(i);
@@ -90,6 +85,10 @@ int main() {
                 metal.promote_f16_weights() || auto_fp16.promote_f16_weights()) {
                 throw std::runtime_error("Metal/FP16 Auto selection did not keep packed FP16 weights");
             }
+            sam::internal::GgmlRuntime metal_fp32({sam::Backend::Metal, 1}, true);
+            if (metal_fp32.backend() != sam::Backend::Metal || metal_fp32.promote_f16_weights())
+                throw std::runtime_error("Explicit FP32 Metal selection did not retain device weight storage");
+            check_scheduled_attribution(metal_fp32, sam::Backend::Metal, true);
             // Pinned GGML assigns graph inputs to its CPU/default fallback.
             // Production weights carry buffer affinity to the selected driver.
             check_scheduled_attribution(metal, sam::Backend::Cpu);
@@ -98,12 +97,14 @@ int main() {
             if (auto_fp16.backend() != sam::Backend::Cpu || !auto_fp16.promote_f16_weights()) {
                 throw std::runtime_error("FP16 Auto did not select promoted CPU weights when Metal was unavailable");
             }
-            rejected = false;
-            try { sam::internal::GgmlRuntime missing({sam::Backend::Metal, 1}, false); }
-            catch (const std::runtime_error& error) {
-                rejected = std::string(error.what()).find("Metal") != std::string::npos;
+            for (const bool fp32 : {false, true}) {
+                bool rejected = false;
+                try { sam::internal::GgmlRuntime missing({sam::Backend::Metal, 1}, fp32); }
+                catch (const std::runtime_error& error) {
+                    rejected = std::string(error.what()).find("Metal") != std::string::npos;
+                }
+                if (!rejected) throw std::runtime_error("Unavailable Metal backend was not clearly rejected");
             }
-            if (!rejected) throw std::runtime_error("Unavailable Metal backend was not clearly rejected");
         }
         return 0;
     } catch (const std::exception& error) {

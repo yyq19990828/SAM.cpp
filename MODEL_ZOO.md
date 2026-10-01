@@ -1,6 +1,6 @@
 # Model Zoo
 
-The runtime reads **GGUF v3 with SAM schema 1**, containing named model
+The accepted image runtime uses **GGUF v3 with SAM schema 1**, containing named model
 parameters, the complete tokenizer and source hashes. See
 [GGUF schema and migration](#gguf-schema-and-migration). Performance is recorded in
 [BENCHMARK.md](BENCHMARK.md).
@@ -11,8 +11,9 @@ parameters, the complete tokenizer and source hashes. See
 | --- | --- | --- | --- | --- |
 | SAM 3 | Text-prompted image segmentation | [facebook/sam3 on HF](https://huggingface.co/facebook/sam3) | [facebookresearch/sam3 on GitHub](https://github.com/facebookresearch/sam3) | FP32/CPU, FP16/CPU, FP16/Metal; 7/7 reference cases each |
 
-SAM 3 video, SAM 3.1, SAM 2/2.1, GroundingSAM and DART are future integrations;
-the current converter does not produce runnable files for them. Their extension
+SAM 3 video conversion/loading and internal tracker graphs are in development;
+full video inference is not integrated or accepted. SAM 3.1, SAM 2/2.1,
+GroundingSAM and DART remain future integrations. Their extension
 boundaries are described in [architecture.md](docs/architecture.md).
 
 The C++ port and tensor mapping derive from
@@ -82,12 +83,15 @@ The converter uses `gguf==0.19.0` to stream 1,133 image-model tensors and the
 complete tokenizer into a GGUF file. Its `.gguf.manifest.json` sidecar records
 source/output and per-tensor hashes, canonical dimensions, payload offsets,
 package version and converter/helper identities.
-Known unused tracker tensors are validated and excluded. Existing output files
+The default `--task image` validates and excludes known unused tracker tensors.
+`--task video` includes all 1,464 image/tracker tensors in schema 2; choose new
+filenames such as `sam3-video-f32.gguf` or `sam3-video-f16.gguf`. Official video
+conversion hashes and numerical results are pending local validation. Existing output files
 or sidecars are refused; reuse a verified file or choose a new output path.
 
 | Output | Size (bytes) | SHA-256 | Runtime |
 | --- | ---: | --- | --- |
-| `sam3-f32.gguf` | 3,371,139,456 | `cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486` | CPU |
+| `sam3-f32.gguf` | 3,371,139,456 | `cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486` | Accepted on CPU; explicit Metal path pending local acceptance |
 | `sam3-f16.gguf` | 1,797,613,888 | `66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120` | CPU or Metal |
 
 FP16 uses the converter's mixed storage policy: selected tensors stay FP32.

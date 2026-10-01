@@ -3,7 +3,9 @@
 Schema 1 uses a single little-endian [GGUF v3](https://github.com/ggml-org/ggml/blob/353b63b439f27ab2cc19dac97ab1681ba6d2d084/docs/gguf.md)
 file with 32-byte alignment. GGUF identifies the container; the fields below
 identify the SAM implementation contract. This schema covers SAM 3 text image
-segmentation. Other model families/tasks require their own adapter and schema.
+segmentation. Experimental schema 2 adds the full SAM 3 tracker inventory and
+the video metadata below. Full video session integration and original-model
+acceptance remain pending. Other model families require their own adapter/schema.
 
 ## Identity and provenance
 
@@ -112,3 +114,42 @@ CPU exact F16 promotion and Metal precision/storage policies remain unchanged.
 Using a GGUF container does not enable a new backend, quantization or mmap
 loading. Original `.pt` inputs remain the supported reconversion source; old
 SAM-specific `.ggml` containers are rejected with a reconversion diagnostic.
+
+## Experimental full video profile (schema 2)
+
+The converter selects this profile with `--task video`; the default remains
+`--task image`. Schema 2 requires `sam.schema_version=2` and
+`sam.task=text_video`. It retains every identity, tokenizer and image parameter
+above, and includes the 1,133 image tensors plus 331 tracker/neck tensors:
+exactly 1,464 canonical entries from `tools/sam3_tensor_schema.json`. The
+previously excluded pooled-text/training entry remains excluded and recorded.
+Image-subset tensor bytes and precision policy remain identical. Old schema-1
+runtimes reject schema 2; the new loader accepts both profiles.
+
+All additional scalar fields are UINT32:
+
+| Key | Required value |
+| --- | ---: |
+| `sam3.tracker.embedding_length` | 256 |
+| `sam3.tracker.memory_length` | 64 |
+| `sam3.tracker.attention.block_count` | 4 |
+| `sam3.tracker.attention.head_count` | 1 |
+| `sam3.tracker.attention.head_length` | 256 |
+| `sam3.tracker.memory_position_count` | 7 |
+| `sam3.tracker.conditioning_frame_count` | 4 |
+| `sam3.tracker.pointer_candidate_count` | 16 |
+| `sam3.tracker.mask_memory_size` | 1152 |
+
+Required STRING fields are `sam3.tracker.policy=meta-sam3-temporal-v1`,
+`sam3.tracker.feature_storage=bf16`, `sam3.tracker.memory_storage=bf16`, and
+`sam3.video.preprocessing=pillow-bicubic-f16-normalize-v1`. These storage fields
+specify explicit transport/state rounding, independently of checkpoint storage
+and FP32 arithmetic. Unsupported values/types, incomplete inventories, shape or
+dtype mismatches fail before backend weight allocation.
+
+Use new output filenames and sidecars, such as `sam3-video-f32.gguf`; conversion
+refuses existing output files. `ModelInfo::task`/`profile` describe the file
+contract. The image API may load the image subset of these full files. The video
+session and oracle exporter remain unimplemented, so schema-2 files are not
+accepted video-inference artifacts yet. Local original-weight conversion,
+image-subset regression and tracker-stage comparisons remain required.

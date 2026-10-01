@@ -39,7 +39,7 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
     definition.weight_type = file.ftype == 0 ? GGML_TYPE_F32 : GGML_TYPE_F16;
     for (const auto& tensor : file.tensors)
         definition.source_types.emplace(tensor.name, static_cast<ggml_type>(tensor.type));
-    sam3_register_tensors(definition);
+    sam3_register_tensors(definition, file.video);
     std::map<std::string, const TensorInfo*> inventory;
     for (const auto& tensor : file.tensors) inventory.emplace(tensor.name, &tensor);
     for (const auto& required : definition.tensors) {
@@ -58,7 +58,7 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
     }
     for (const auto& tensor : file.tensors) {
         if (!definition.tensors.count(tensor.name))
-            throw std::runtime_error("unknown SAM 3 image tensor: " + tensor.name);
+            throw std::runtime_error("unknown SAM 3 tensor: " + tensor.name);
     }
     state->runtime = std::make_unique<GgmlRuntime>(options, file.ftype == 0);
     if (file.ftype == 1 && state->runtime->promote_f16_weights()) {
@@ -69,7 +69,7 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         state->definition = ModelDefinition{};
         definition.ctx = state->context.get();
         definition.weight_type = GGML_TYPE_F32;
-        sam3_register_tensors(definition);
+        sam3_register_tensors(definition, file.video);
     }
     state->buffer.reset(ggml_backend_alloc_ctx_tensors(state->context.get(), state->runtime->weights_backend()));
     if (!state->buffer) throw std::runtime_error("failed to allocate SAM 3 model weights");
@@ -91,6 +91,8 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
     state->tokenizer = std::move(file.tokenizer);
     state->model_info = {"sam3", file.ftype == 0 ? "f32" : "f16", state->runtime->backend(), options.threads,
                    definition.tensors.size(), weight_bytes, false};
+    state->model_info.task = file.video ? "text_video" : "text_image";
+    state->model_info.profile = file.video ? "meta-sam3-temporal-v1" : "";
     return state;
 }
 

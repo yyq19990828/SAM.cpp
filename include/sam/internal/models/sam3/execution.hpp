@@ -8,6 +8,7 @@
 #include "fusion_encoder.hpp"
 #include "detector.hpp"
 #include "mask_decoder.hpp"
+#include "tracking/preprocessing.hpp"
 #include "sam/internal/runtime/ggml.hpp"
 #include "sam/types.hpp"
 #include <array>
@@ -23,7 +24,7 @@ namespace sam::internal::sam3 {
 
 struct ImageFeatures {
     std::vector<float> preprocessed;
-    std::array<std::vector<float>, 3> vision;
+    std::array<std::vector<float>, 3> vision, tracker;
     std::vector<float> position, geometry;
     int width = 0, height = 0;
 };
@@ -51,7 +52,7 @@ struct ModelDefinition {
     sam3_model weights;
 
     ImageFeatures encode_image(GgmlRuntime& runtime, std::vector<float> pixels,
-                               int width, int height, RuntimeStats& stats) const {
+                               int width, int height, RuntimeStats& stats, bool video = false) const {
         const auto start = std::chrono::steady_clock::now();
         const auto& hp = weights.hparams;
         ImageFeatures features;
@@ -66,10 +67,21 @@ struct ModelDefinition {
             ggml_tensor* neck[4] = {};
             sam3_build_neck_graph(ctx, vit, weights.neck_det, neck);
             for (int i = 0; i < 3; ++i) execution.output(neck[i]);
+            ggml_tensor* tracker_neck[4] = {};
+            if (video) {
+                if (!weights.neck_trk.scales[0].deconv1_w)
+                    throw std::runtime_error("video encoding requires full tracker weights");
+                sam3_build_neck_graph(ctx, vit, weights.neck_trk, tracker_neck);
+                for (int i = 0; i < 3; ++i) execution.output(tracker_neck[i]);
+            }
             execution.allocate();
             upload(input, features.preprocessed, stats);
             execution.compute();
             for (int i = 0; i < 3; ++i) features.vision[i] = download(neck[i], stats);
+            if (video) for (int i = 0; i < 3; ++i) {
+                features.tracker[i] = download(tracker_neck[i], stats);
+                round_bf16_storage(features.tracker[i]);
+            }
         }
         const int h = hp.n_img_embd(), d = hp.neck_dim;
         features.position = sam3_sinusoidal_pe_2d(h, h, d);

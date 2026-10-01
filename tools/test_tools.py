@@ -13,6 +13,7 @@ import numpy as np
 from convert_sam3 import bytes_to_unicode, convert, rename_key, tensor_array
 from export_reference import load_case_manifest, load_detector_checkpoint
 from prepare_reference_source import prepare
+from generate_video_cases import generate as generate_video_cases, recipe_frame
 from sam3_artifacts import (SAM3_REVISION, artifact_path, dump_array, read_array,
                            read_json, read_tensor_index)
 from sam3_gguf import (canonical_shape, converted_array, inspect_tensors, read_gguf,
@@ -158,6 +159,108 @@ class ToolChecks(unittest.TestCase):
                 manifest = convert(checkpoint, bpe, "f16", output)
             self.assertEqual(manifest["tensors"][0]["dtype"], "float32")
             np.testing.assert_array_equal(read_gguf(output).tensors[0].data, [np.float32(1.0003), np.float32(-2.333)])
+
+    def test_video_conversion_preserves_image_subset_and_is_exclusive(self):
+        import torch
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkpoint, bpe = root / "checkpoint.pt", root / "fixture.bpe"
+            bpe.write_bytes(b"disposable tokenizer fixture")
+            schema = {"schema_version": 1, "sam3_revision": SAM3_REVISION,
+                      "tensors": {"ddec.norm.bias": [2]},
+                      "unused_tracker_tensors": {"no_mem_embed": [2]}}
+            torch.save({"detector.transformer.decoder.norm.bias": torch.tensor([1.0003, -2.333]),
+                        "tracker.no_mem_embed": torch.tensor([[[3.14159, -4.0001]]])}, checkpoint)
+            vocab, merges = self.tokenizer_fixture()
+            with patch("convert_sam3.load_tokenizer", return_value=(vocab, merges)), \
+                    patch("sam3_artifacts.read_json", return_value=schema):
+                image = convert(checkpoint, bpe, "f16", root / "image.gguf")
+                video = convert(checkpoint, bpe, "f16", root / "video.gguf", "video")
+                with self.assertRaises(FileExistsError):
+                    convert(checkpoint, bpe, "f16", root / "video.gguf", "video")
+            self.assertEqual(video["sam_schema_version"], 2)
+            self.assertEqual(video["task"], "video")
+            self.assertEqual(len(video["tensors"]), 2)
+            self.assertEqual(video["skipped"], [])
+            self.assertEqual(len(image["skipped"]), 1)
+            image_entry = image["tensors"][0]
+            video_entry = next(item for item in video["tensors"] if item["name"] == image_entry["name"])
+            for key in ("ggml_shape", "dtype", "sha256", "bytes"):
+                self.assertEqual(image_entry[key], video_entry[key])
+            reader = read_gguf(root / "video.gguf")
+            validate_metadata(reader, "f16", video["checkpoint"]["sha256"], "video")
+            with self.assertRaises(ValueError):
+                validate_metadata(reader, "f16", video["checkpoint"]["sha256"])
+            self.assertEqual(reader.get_field("sam3.tracker.memory_storage").contents(), "bf16")
+            self.assertEqual(rename_key("tracker.no_mem_embed", "video"), ("no_mem_embed", None))
+            self.assertEqual(rename_key("detector.backbone.vision_backbone.sam2_convs.0.conv_1x1.bias", "video"),
+                             ("neck.trk.0.conv_1x1.bias", None))
+            with self.assertRaises(ValueError):
+                rename_key("tracker.no_mem_embed", "unknown")
+
+    def test_video_metadata_rejects_invalid_profile_and_storage(self):
+        vocab, merges = self.tokenizer_fixture()
+        mutations = [
+            lambda writer: writer.add_string("sam.task", "text_image"),
+            lambda writer: writer.add_uint32("sam.schema_version", 1),
+            lambda writer: writer.add_uint32("sam3.tracker.attention.head_length", 64),
+            lambda writer: writer.add_string("sam3.tracker.memory_storage", "f32"),
+            lambda writer: writer.add_string("sam3.tracker.policy", "unknown"),
+            lambda writer: writer.add_int32("sam3.tracker.memory_length", 64),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            for index, mutate in enumerate(mutations):
+                path = Path(temporary) / f"mutated-{index}.gguf"
+                writer = gguf.GGUFWriter(path, "sam3")
+                write_metadata(writer, "f32", "a" * 64, vocab, merges, "video")
+                mutate(writer)
+                writer.add_tensor("probe.weight", np.zeros((2, 2), dtype=np.float32))
+                writer.write_header_to_file(); writer.write_kv_data_to_file(); writer.write_tensors_to_file(); writer.close()
+                with self.subTest(index=index), self.assertRaises(ValueError):
+                    validate_metadata(read_gguf(path), "f32", "a" * 64, "video")
+
+    def test_video_recipe_boundaries_and_generation_status(self):
+        from PIL import Image
+        from sam3_artifacts import sha256_file
+
+        source = Image.new("RGB", (1800, 1200), (220, 40, 10))
+        self.assertEqual(recipe_frame("motion", source, 12).tobytes(), source.tobytes())
+        entry_start, entry_late = recipe_frame("entry", source, 0), recipe_frame("entry", source, 30)
+        self.assertEqual(entry_start.getpixel((1799, 600)), (127, 127, 127))
+        self.assertEqual(entry_late.getpixel((1799, 600)), (220, 40, 10))
+        occluded = recipe_frame("occlusion", source, 20)
+        for point in ((64, 256), (1743, 919)):
+            self.assertEqual(occluded.getpixel(point), (127, 127, 127))
+        for point in ((63, 256), (1744, 919), (100, 920)):
+            self.assertEqual(occluded.getpixel(point), (220, 40, 10))
+        self.assertEqual(recipe_frame("occlusion", source, 24).tobytes(), source.tobytes())
+        self.assertEqual(recipe_frame("hotstart-removal", source, 1).getpixel((0, 0)), (220, 40, 10))
+        self.assertEqual(recipe_frame("hotstart-removal", source, 2).getpixel((0, 0)), (127, 127, 127))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "fixture.png"
+            Image.new("RGB", (7, 3), (220, 40, 10)).save(path)
+            frozen = {"sam3_revision": SAM3_REVISION, "pillow_version": "11.2.1", "cases": [
+                {"id": "negative", "frames": 2, "source": path.name, "source_sha256": sha256_file(path),
+                 "prompt": "purple elephant"}]}
+            with patch("generate_video_cases.read_json", return_value=frozen):
+                output = root / "generated"
+                generate_video_cases(root, output)
+                manifest = read_json(output / "manifest.json")
+                self.assertTrue(manifest["complete"])
+                self.assertFalse(manifest["eligible_for_milestone"])
+                self.assertFalse(manifest["reference_behavior_verified"])
+                frames = manifest["cases"][0]["frames_manifest"]
+                self.assertEqual([item["index"] for item in frames], [0, 1])
+                for item in frames:
+                    self.assertEqual(sha256_file(output / item["file"]), item["sha256"])
+                with self.assertRaises(FileExistsError):
+                    generate_video_cases(root, output)
+                frozen["cases"][0]["source_sha256"] = "0" * 64
+                with self.assertRaises(ValueError):
+                    generate_video_cases(root, root / "bad-output")
+                self.assertFalse((root / "bad-output").exists())
 
     def test_reference_source_output_does_not_overlap(self):
         with tempfile.TemporaryDirectory() as temporary:

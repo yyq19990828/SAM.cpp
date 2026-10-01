@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert the pinned SAM 3 detector to its validated schema-1 GGUF v3 container.
+"""Convert pinned SAM 3 image/video weights to task-specific GGUF v3 containers.
 
 Key mapping/container adapted from PABannier/sam3.cpp, MIT License,
 Copyright (c) 2025-2026 Pierre-Antoine Bannier. See THIRD_PARTY_NOTICES.md.
@@ -16,7 +16,7 @@ import gguf
 
 from sam3_artifacts import BPE_SHA256, PAB_REVISION, SAM3_REVISION, sha256_file, write_json
 from sam3_gguf import (KEEP_F32, bytes_to_unicode, canonical_shape, converted_array,
-                       inspect_tensors, read_gguf, validate_metadata, write_metadata)
+                       inspect_tensors, read_gguf, validate_metadata, write_metadata, tensor_schema)
 
 
 def load_tokenizer(bpe_path):
@@ -36,9 +36,11 @@ def load_tokenizer(bpe_path):
     return vocab, merges
 
 
-def rename_key(key):
+def rename_key(key, task="image"):
+    if task not in ("image", "video"):
+        raise ValueError(f"unsupported SAM 3 task: {task}")
     if key.startswith("tracker."):
-        return None, "unused tracker tensor"
+        return (unused_tracker_key(key), None) if task == "video" else (None, "unused tracker tensor")
     if not key.startswith("detector."):
         raise ValueError(f"unrecognized checkpoint tensor: {key}")
     if any(pattern in key for pattern in ("attn_mask", ".dac_", "_dn_", "text_projection")):
@@ -69,7 +71,7 @@ def rename_key(key):
     name = key
     for source, target in replacements:
         name = name.replace(source, target)
-    if name.startswith("neck.trk."):
+    if name.startswith("neck.trk.") and task == "image":
         return None, "unused interactive tracker neck tensor"
     if name.startswith("detector."):
         raise ValueError(f"unrecognized detector tensor: {key}")
@@ -126,7 +128,7 @@ def tensor_array(name, tensor):
     return array
 
 
-def convert(checkpoint, bpe_path, precision, output):
+def convert(checkpoint, bpe_path, precision, output, task="image"):
     import torch
 
     output = Path(output).resolve()
@@ -150,7 +152,7 @@ def convert(checkpoint, bpe_path, precision, output):
     for key, tensor in state.items():
         if not isinstance(key, str) or not isinstance(tensor, torch.Tensor):
             raise ValueError("checkpoint state dictionary contains a non-tensor entry")
-        name, reason = rename_key(key)
+        name, reason = rename_key(key, task)
         if name is None:
             if reason.startswith("unused"):
                 unused_name = unused_tracker_key(key)
@@ -165,7 +167,7 @@ def convert(checkpoint, bpe_path, precision, output):
         if name in renamed:
             raise ValueError(f"duplicate converted tensor name: {name}")
         renamed[name] = (key, tensor)
-    expected = schema["tensors"]
+    expected = tensor_schema(schema, task)
     if set(renamed) != set(expected):
         raise ValueError(f"checkpoint schema mismatch; missing={sorted(set(expected) - set(renamed))}; "
                          f"unknown={sorted(set(renamed) - set(expected))}")
@@ -179,7 +181,7 @@ def convert(checkpoint, bpe_path, precision, output):
         temporary.append(Path(model_tmp))
         checkpoint_sha256 = sha256_file(checkpoint)
         writer = gguf.GGUFWriter(model_tmp, "sam3", endianess=gguf.GGUFEndian.LITTLE)
-        write_metadata(writer, precision, checkpoint_sha256, vocab, merges)
+        write_metadata(writer, precision, checkpoint_sha256, vocab, merges, task)
         original_shapes = {}
         for name, (_, tensor) in sorted(renamed.items()):
             array = tensor_array(name, tensor)
@@ -206,7 +208,7 @@ def convert(checkpoint, bpe_path, precision, output):
             os.fsync(stream.fileno())
         writer.close()
         reader = read_gguf(model_tmp)
-        _, actual_vocab, actual_merges = validate_metadata(reader, precision, checkpoint_sha256)
+        _, actual_vocab, actual_merges = validate_metadata(reader, precision, checkpoint_sha256, task)
         if actual_vocab != vocab or actual_merges != [" ".join(pair) for pair in merges]:
             raise ValueError("GGUF tokenizer readback differs from the pinned source")
         inventory = inspect_tensors(reader, precision, expected, original_shapes)
@@ -217,7 +219,7 @@ def convert(checkpoint, bpe_path, precision, output):
                         conversion="complex-real-pairs" if tensor.is_complex() else "real")
         manifest = {
             "schema_version": 1, "architecture": "sam3", "container_format": "gguf",
-            "container_version": 3, "sam_schema_version": 1,
+            "container_version": 3, "sam_schema_version": 2 if task == "video" else 1, "task": task,
             "precision": precision, "sam3_revision": SAM3_REVISION, "converter_revision": PAB_REVISION,
             "converter_sha256": sha256_file(__file__),
             "gguf_helper_sha256": sha256_file(Path(__file__).with_name("sam3_gguf.py")),
@@ -227,7 +229,7 @@ def convert(checkpoint, bpe_path, precision, output):
             "output": {"file": output.name, "sha256": sha256_file(model_tmp), "bytes": Path(model_tmp).stat().st_size},
             "tokenizer": {"vocab_size": len(vocab), "merge_count": len(merges), "context_length": 32,
                           "sot_id": 49406, "eot_id": 49407},
-            "options": {"detector_only": True, "preserve_f32": list(KEEP_F32), "one_dimensional_f32": True},
+            "options": {"detector_only": task == "image", "preserve_f32": list(KEEP_F32), "one_dimensional_f32": True},
             "tensors": inventory, "skipped": skipped,
         }
         descriptor, manifest_tmp = tempfile.mkstemp(prefix=".sam3-manifest-", dir=output.parent)
@@ -254,13 +256,14 @@ def convert(checkpoint, bpe_path, precision, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--task", choices=("image", "video"), default="image")
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--bpe", required=True, type=Path)
     parser.add_argument("--precision", choices=("f32", "f16"), required=True)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     try:
-        convert(args.checkpoint, args.bpe, args.precision, args.output)
+        convert(args.checkpoint, args.bpe, args.precision, args.output, args.task)
     except (OSError, ValueError, RuntimeError, KeyError) as error:
         parser.exit(1, f"conversion failed: {error}\n")
 
