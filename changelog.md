@@ -8,6 +8,8 @@ No releases have been published.
 
 ### Added
 
+- [FP32 CPU/Metal validation plan](docs/plans/20261001-121633-fp32-cpu-metal-validation.md) defining explicit FP32 Metal enablement, unchanged Auto selection, official four-configuration acceptance and comparable image benchmarks before M2. Implementation and new measurements remain pending.
+- [M2 video-tracking plan](docs/plans/20261001-115321-sam3-text-video-tracking.md) defining full video GGUF weights, buffered text-driven tracking, bounded temporal state, CPU/Metal execution and original-reference acceptance. Video implementation remains pending.
 - [SAM GGUF schema 1](docs/gguf.md), a bounded common GGUF reader, and official `gguf` Python serialization with streaming tensor writes and source/output provenance.
 - [Benchmark matrix](BENCHMARK.md) with model rows and hardware/backend headers, recorded software versions and reproduction steps; [model catalog](MODEL_ZOO.md) with pinned HF/GitHub sources, verified conversion commands and explicit GGUF support status.
 - [Contributor guidelines](AGENTS.md) for the planned header-only SAM library, focused testing, extensibility for multiple backends and model architectures, implementation plans, and changelog maintenance.
