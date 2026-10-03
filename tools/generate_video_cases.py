@@ -9,7 +9,7 @@ import argparse
 import importlib.metadata
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 from sam3_artifacts import read_json, sha256_file, write_json
 
@@ -22,9 +22,10 @@ def recipe_frame(case_id, source, frame):
         return source.copy()
     if case_id == "entry":
         image = Image.new("RGB", (1800, 1200), (127, 127, 127))
-        truck = source.resize((900, 600), Image.Resampling.BICUBIC)
-        image.paste(truck, (0, 300))
-        image.paste(truck, (1800 - min(max(frame - 15, 0) * 60, 900), 300))
+        truck = source.resize((800, 533), Image.Resampling.BICUBIC)
+        image.paste(truck, (0, 400))
+        if frame >= 16:
+            image.paste(ImageOps.mirror(truck), (1000, 400))
         return image
     if case_id == "motion":
         image = Image.new("RGB", source.size, (127, 127, 127))
@@ -36,7 +37,10 @@ def recipe_frame(case_id, source, frame):
             image.paste((127, 127, 127), (64, 256, 1744, 920))
         return image
     if case_id == "hotstart-removal":
-        return source.copy() if frame < 2 else Image.new("RGB", source.size, (127, 127, 127))
+        image = source.copy()
+        if frame >= 2:
+            image.paste((127, 127, 127), (64, 256, 1744, 760))
+        return image
     raise ValueError(f"undefined video frame recipe: {case_id}")
 
 

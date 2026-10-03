@@ -104,13 +104,14 @@ def read_results(directory, scores, case, require_hash):
 def compare_case(reference_directory, actual_directory, case, precision, backend=None):
     import numpy as np
 
+    gate_precision = "f16" if precision == "hybrid" else precision
     reference_index = read_tensor_index(reference_directory)
     actual_index = read_tensor_index(actual_directory, require_hash=False)
     if reference_index["token_ids"] != actual_index["token_ids"]:
         raise ValueError("token IDs differ from the official tokenizer")
     reference_tensors, actual_tensors = {}, {}
     errors, failures = {}, []
-    tolerance = GATES[f"normalized_l2_{precision}"]
+    tolerance = GATES[f"normalized_l2_{gate_precision}"]
     for name in REQUIRED_TENSORS:
         reference = read_array(reference_directory, reference_index["tensors"][name], "float32")
         actual = read_array(actual_directory, actual_index["tensors"][name], "float32", require_hash=False)
@@ -150,7 +151,7 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
             score_error = abs(actual["score"] - reference["score"])
             box_error = np.abs(np.asarray(actual["box"]) - np.asarray(reference["box"]))
             box_fraction = float(np.max(box_error / np.asarray([width, height, width, height])))
-            passed = (iou >= GATES[f"mask_iou_{precision}"] and score_error <= GATES["score_max_abs"]
+            passed = (iou >= GATES[f"mask_iou_{gate_precision}"] and score_error <= GATES["score_max_abs"]
                       and box_fraction <= GATES["box_dimension_fraction"])
             detection_metrics.append({"query_index": query, "mask_iou": iou, "score_absolute_error": score_error,
                                       "box_dimension_fraction": box_fraction, "passed": passed})
@@ -200,7 +201,7 @@ def check_provenance(model_path, reference_path, case_path, allow_supplementary=
             or model.get("container_version") != 3 or model.get("sam_schema_version") not in (1, 2)):
         raise ValueError("converted model requires SAM schema-1/2 GGUF v3; reconvert the original checkpoint")
     precision = model.get("precision")
-    if precision not in ("f32", "f16"):
+    if precision not in ("f32", "f16", "hybrid"):
         raise ValueError("converted model has unsupported precision")
     if model["output"].get("bytes") != model_path.stat().st_size:
         raise ValueError("converted model size does not match its manifest")
@@ -259,6 +260,8 @@ def check_provenance(model_path, reference_path, case_path, allow_supplementary=
 
 
 def validate(args):
+    from sam3_artifacts import freeze_run_artifacts, verify_run_artifacts, freeze_output_files, verify_output_files
+
     precision, reference, model = check_provenance(args.model, args.reference, args.cases, args.allow_supplementary)
     executable = args.build_dir / "tests/test_image"
     if not executable.is_file():
@@ -276,6 +279,8 @@ def validate(args):
               "gates": GATES, "cases": []}
     if "supplementary_weights" in model:
         report["supplementary_weights"] = model["supplementary_weights"]
+    artifacts = freeze_run_artifacts(args.build_dir, executable, args.model, model["output"]["sha256"])
+    report["run_artifact_sha256"] = artifacts
     for case in reference["cases"]:
         directory = artifact_path(args.reference, case["directory"])
         actual_directory = output / case["id"]
@@ -284,12 +289,18 @@ def validate(args):
                    "--backend", args.backend, "--threads", str(args.threads),
                    "--score-threshold", "0.5", "--output", str(actual_directory)]
         try:
+            verify_run_artifacts(artifacts)
             print(f"Validating {case['id']} ({args.backend}, {precision})", flush=True)
             with (output / f"{case['id']}.log").open("w") as log:
                 completed = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout_seconds)
             if completed.returncode != 0:
                 raise RuntimeError(f"test_image exited {completed.returncode}; see {case['id']}.log")
+            verify_run_artifacts(artifacts)
+            output_files = freeze_output_files(actual_directory)
             metrics = compare_case(directory, actual_directory, case, precision, args.backend)
+            verify_output_files(actual_directory, output_files)
+            metrics["output_sha256"] = output_files
+            verify_run_artifacts(artifacts)
         except (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired) as error:
             metrics = {"id": case["id"], "passed": False, "failures": [str(error)]}
         report["cases"].append(metrics)

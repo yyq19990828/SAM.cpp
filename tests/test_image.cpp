@@ -3,40 +3,6 @@
 #include <cstring>
 #include <iostream>
 
-namespace {
-
-void write_tensor(const std::filesystem::path& path, const sam::TensorData& tensor) {
-    static_assert(sizeof(float) == 4 && std::numeric_limits<float>::is_iec559,
-                  "Reference dumps require IEEE-754 binary32");
-    std::size_t count = 1;
-    if (tensor.shape.empty()) throw std::runtime_error("Tensor shape is empty");
-    for (const auto dimension : tensor.shape) {
-        if (dimension <= 0 || static_cast<std::uint64_t>(dimension) >
-                                  std::numeric_limits<std::size_t>::max() / count) {
-            throw std::runtime_error("Tensor shape is invalid");
-        }
-        count *= static_cast<std::size_t>(dimension);
-    }
-    if (count != tensor.values.size()) throw std::runtime_error("Tensor size does not match shape");
-    auto file = sam_example::output_file(path, true);
-    const std::uint16_t endian = 1;
-    if (*reinterpret_cast<const std::uint8_t*>(&endian) == 1) {
-        file.write(reinterpret_cast<const char*>(tensor.values.data()),
-                   static_cast<std::streamsize>(count * sizeof(float)));
-    } else {
-        for (const float value : tensor.values) {
-            std::uint32_t bits = 0;
-            std::memcpy(&bits, &value, sizeof(bits));
-            const char bytes[4] = {static_cast<char>(bits), static_cast<char>(bits >> 8),
-                                   static_cast<char>(bits >> 16), static_cast<char>(bits >> 24)};
-            file.write(bytes, sizeof(bytes));
-        }
-    }
-    file.close();
-}
-
-} // namespace
-
 int main(int argc, char** argv) {
     try {
         const auto options = sam_example::parse_options(argc, argv, false);
@@ -76,7 +42,7 @@ int main(int argc, char** argv) {
                                 "class_logits", "mask_logits"}) {
             const auto& tensor = session.tensor(name);
             const std::string filename = std::string(name) + ".bin";
-            write_tensor(options.output / filename, tensor);
+            sam_example::write_tensor(options.output / filename, tensor);
             if (!first) manifest << ',';
             first = false;
             manifest << sam_example::json_string(name) << ":{\"file\":"
@@ -95,6 +61,7 @@ int main(int argc, char** argv) {
                 << ",\"score_threshold\":" << options.score_threshold
                 << ",\"backend\":" << sam_example::json_string(sam_example::backend_name(model.backend()))
                 << ",\"precision\":" << sam_example::json_string(model.info().precision)
+                << ",\"storage_profile\":" << sam_example::json_string(model.info().storage_profile)
                 << ",\"tokenizer_compatibility_repaired\":"
                 << (model.info().tokenizer_compatibility_repaired ? "true" : "false")
                 << ",\"runtime\":";

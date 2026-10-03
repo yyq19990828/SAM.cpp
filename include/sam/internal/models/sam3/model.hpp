@@ -6,6 +6,7 @@
 #include "sam/internal/input_validation.hpp"
 #include "state.hpp"
 #include "image_session.hpp"
+#include "tracking/session.hpp"
 #include "tensors.hpp"
 #include "weights.hpp"
 
@@ -46,7 +47,8 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         const auto found = inventory.find(required.first);
         if (found == inventory.end()) throw std::runtime_error("missing SAM 3 tensor: " + required.first);
         const auto expected = required.second;
-        const int required_type = file.ftype == 1 && !tensor_kept_f32(required.first, ggml_n_dims(expected)) ? 1 : 0;
+        const int required_type = file.ftype == 1 &&
+            !tensor_kept_f32(required.first, ggml_n_dims(expected), !file.storage_profile.empty()) ? 1 : 0;
         if (found->second->type != required_type)
             throw std::runtime_error("incompatible SAM 3 tensor precision: " + required.first);
         const auto shape = canonical_dimensions(found->second->dimensions);
@@ -89,10 +91,11 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         weight_bytes += ggml_nbytes(found->second);
     }
     state->tokenizer = std::move(file.tokenizer);
-    state->model_info = {"sam3", file.ftype == 0 ? "f32" : "f16", state->runtime->backend(), options.threads,
+    state->model_info = {"sam3", !file.storage_profile.empty() ? "hybrid" : (file.ftype == 0 ? "f32" : "f16"), state->runtime->backend(), options.threads,
                    definition.tensors.size(), weight_bytes, false};
     state->model_info.task = file.video ? "text_video" : "text_image";
     state->model_info.profile = file.video ? "meta-sam3-temporal-v1" : "";
+    state->model_info.storage_profile = file.storage_profile;
     return state;
 }
 
@@ -102,6 +105,9 @@ public:
     const ModelInfo& info() const override { return state_->model_info; }
     std::unique_ptr<sam::internal::TextImageSessionImplementation> create_text_image_session() override {
         return std::make_unique<ImageSession>(state_);
+    }
+    std::unique_ptr<sam::internal::TextVideoSessionImplementation> create_text_video_session(int count, VideoOptions options) override {
+        return std::make_unique<VideoSession>(state_, count, options);
     }
 private:
     std::shared_ptr<ModelState> state_;

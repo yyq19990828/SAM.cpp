@@ -316,6 +316,18 @@ void test_weight_failures(const std::filesystem::path& directory) {
         write_fixture(path, change);
         rejects<std::runtime_error>([&] { sam::internal::sam3::inspect_weights(path.string()); }, "unsupported SAM metadata was accepted");
     }
+    write_fixture(path, [](auto* c) {
+        gguf_set_val_u32(c, "general.file_type", 1);
+        gguf_set_val_str(c, "sam.storage_profile", "visual-tracker-f32-v1");
+    });
+    bool rejected_profile = false;
+    try { (void) sam::internal::sam3::inspect_weights(path.string()); }
+    catch (const std::runtime_error& error) {
+        require(std::string(error.what()).find("storage profile") != std::string::npos,
+                "image hybrid declaration was not rejected before weight validation");
+        rejected_profile = true;
+    }
+    require(rejected_profile, "video-only hybrid declaration accepted on an image container");
     reject_bytes([](auto& bytes) { integer_at(bytes, 0, 0x73616d33, 4); }, "legacy SAM magic was accepted");
     try { sam::internal::GgufReader legacy(path.string()); }
     catch (const std::runtime_error& error) {
@@ -333,6 +345,7 @@ void test_checkpoint(const std::string& path, const std::filesystem::path& direc
     const auto key = file.reader->array("tokenizer.ggml.merges", GGUF_TYPE_STRING, 48894);
     std::vector<const char*> merges;
     for (std::size_t i = 0; i < 48894; ++i) merges.push_back(gguf_get_arr_str(file.reader->metadata(), key, i));
+    const auto original_first_merge = merges[0];
     merges[0] = "bad merge";
     gguf_set_arr_str(corrupted.get(), "tokenizer.ggml.merges", merges.data(), merges.size());
     for (const auto& info : file.tensors) {
@@ -347,15 +360,41 @@ void test_checkpoint(const std::string& path, const std::filesystem::path& direc
         gguf_add_tensor(corrupted.get(), &tensor);
     }
     const auto output_path = directory / "corrupted-tokenizer.gguf";
-    require(gguf_write_to_file(corrupted.get(), output_path.string().c_str(), true), "cannot write corrupted GGUF metadata");
     // Sparse holes preserve valid tensor extents without copying gigabytes.
-    const auto data_bytes = file.file_size - gguf_get_data_offset(file.reader->metadata());
-    std::fstream sparse(output_path, std::ios::binary | std::ios::in | std::ios::out);
-    sparse.seekp(static_cast<std::streamoff>(gguf_get_meta_size(corrupted.get()) + data_bytes - 1));
-    sparse.put(0);
-    sparse.close();
+    const auto write_sparse = [&] {
+        require(gguf_write_to_file(corrupted.get(), output_path.string().c_str(), true), "cannot write corrupted GGUF metadata");
+        const auto last = gguf_get_n_tensors(corrupted.get()) - 1;
+        const auto bytes = gguf_get_tensor_size(corrupted.get(), last);
+        const auto data_bytes = gguf_get_tensor_offset(corrupted.get(), last) + bytes + (32 - bytes % 32) % 32;
+        std::fstream sparse(output_path, std::ios::binary | std::ios::in | std::ios::out);
+        sparse.seekp(static_cast<std::streamoff>(gguf_get_meta_size(corrupted.get()) + data_bytes - 1));
+        sparse.put(0); sparse.close();
+    };
+    write_sparse();
     rejects<std::runtime_error>([&] { sam::internal::sam3::inspect_weights(output_path.string()); },
                                 "corrupted GGUF tokenizer merge sequence was accepted");
+    if (!file.storage_profile.empty()) {
+        merges[0] = original_first_merge;
+        gguf_set_arr_str(corrupted.get(), "tokenizer.ggml.merges", merges.data(), merges.size());
+        for (const auto* profile : {"unknown", "visual-tracker-f32-v1"}) {
+            gguf_set_val_str(corrupted.get(), "sam.storage_profile", profile);
+            gguf_set_val_u32(corrupted.get(), "general.file_type", profile == std::string("unknown") ? 1 : 0);
+            write_sparse();
+            rejects<std::runtime_error>([&] { sam::internal::sam3::inspect_weights(output_path.string()); },
+                                        "hybrid precision misdeclaration was accepted");
+        }
+        gguf_set_val_u32(corrupted.get(), "general.file_type", 1);
+        gguf_set_tensor_type(corrupted.get(), "vit.blocks.0.attn.qkv.weight", GGML_TYPE_F16);
+        write_sparse();
+        bool rejected = false;
+        try { (void) sam::internal::sam3::inspect_weights(output_path.string()); }
+        catch (const std::runtime_error& error) {
+            if (std::string(error.what()).find("tensor precision") == std::string::npos)
+                throw std::runtime_error(std::string("unexpected hybrid type rejection: ") + error.what());
+            rejected = true;
+        }
+        require(rejected, "F16 visual weight was accepted in the hybrid profile");
+    }
 }
 
 } // namespace

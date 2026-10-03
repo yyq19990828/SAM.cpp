@@ -1,7 +1,7 @@
 # M2: SAM 3 Text-Driven Video Tracking
 
 Created: 2026-10-01 11:53:21 Asia/Shanghai.
-Status: first cloud implementation batch complete; full video integration and official local acceptance remain pending.
+Status: complete on 2026-10-03 under the user-approved F32 + hybrid CPU/Metal support contract. Explicit F16 remains diagnostic; see the final acceptance record below.
 Baseline: `2c23a67b58019149efe41c89aa263c1b1e770c65`.
 
 Implementation prerequisite: complete the
@@ -14,8 +14,10 @@ acceptance; the video graphs retain the independent gates below.
 Deliver a header-only `VideoSession` that consumes a finite sequence of
 host-supplied RGB frames and one text concept, discovers matching objects on
 later frames, and returns masks, boxes, scores and persistent object IDs.
-Support FP32/CPU and FP16/CPU or Metal using the same model graphs. Preserve
-the current image API, image GGUF files and all M1 numerical gates.
+The original precision target was FP32/CPU and FP16/CPU or Metal. Final
+acceptance supports F32 and hybrid on both CPU/Metal using the same model
+graphs, following the user-approved precision change documented below.
+Preserve the current image API, image GGUF files and all M1 numerical gates.
 
 M2 follows the [original roadmap](20260930-192519-sam3-text-image-baseline.md#10-follow-on-milestones).
 Its completion requires the complete tracking pipeline. Converter, graph and
@@ -316,8 +318,8 @@ the public results or validated helpers without taking SAM 3 temporal constants.
 
 ## Planned verification commands and performance
 
-The video commands below are interfaces to implement, not available commands in
-the baseline commit. Use the existing authorized checkpoint and pinned BPE asset.
+The video commands below were planned interfaces in the baseline and are now
+implemented. Use the existing authorized checkpoint and pinned BPE asset.
 
 ```sh
 reference_python=build/reference-runtime/venv/bin/python
@@ -334,12 +336,14 @@ SAM3_SOURCE_DIR="$HOME/.x-repo/github.com/facebookresearch/sam3"
 
 "$reference_python" tools/prepare_reference_source.py --task video \
   --source "$SAM3_SOURCE_DIR" --output build/reference-runtime/sam3-video-cpu
+"$reference_python" tools/generate_video_cases.py \
+  --input-root models/fixtures --output models/video-cases
 "$reference_python" tools/export_video_reference.py \
   --sam3-source "$SAM3_SOURCE_DIR" \
   --sam3-runtime-source build/reference-runtime/sam3-video-cpu \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$SAM3_SOURCE_DIR/sam3/assets/bpe_simple_vocab_16e6.txt.gz" \
-  --cases tests/data/sam3-video-cases.json --input-root models/fixtures \
+  --cases tests/data/sam3-video-cases.json --frames models/video-cases \
   --device cpu --output models/reference/sam3-video
 
 cmake --build build/cpu --parallel
@@ -349,7 +353,8 @@ ctest --test-dir build/metal --output-on-failure
 "$reference_python" tools/test_tools.py
 "$reference_python" tools/validate_video.py \
   --build-dir build/metal --model models/sam3-video-f16.gguf \
-  --reference models/reference/sam3-video --backend metal --threads 4
+  --reference models/reference/sam3-video --backend metal --threads 4 \
+  --output build/video-validation-metal-f16
 ```
 
 Repeat the validator for FP32/CPU and FP16/CPU. The exporter accepts the same
@@ -358,7 +363,8 @@ manifest, and records every adaptation and package version. The paths above
 reuse the verified local environment/source layout; another checkout can set
 those three variables to its matching paths.
 
-Benchmark FP16 on CPU and Metal sequentially, with fixed 1- and 4-object workloads
+The original benchmark target was FP16; the final approved default is hybrid.
+Benchmark that accepted profile on CPU and Metal sequentially, with fixed 1- and 4-object workloads
 to expose object-count scaling without redundant intermediate cases. Run one
 64-frame sequence per workload: record the first 16 frames as warmup and measure
 the remaining 48. Record every
@@ -486,3 +492,110 @@ four Pillow bicubic layouts, padded strides and all 256 RGB byte values.
 No official checkpoint was loaded, and no Metal hardware or new model benchmark
 was available in this cloud run. This record covers the first cloud implementation
 batch; the remaining implementation and local acceptance are listed above.
+
+## Local foundations validation (2026-10-02)
+
+The [FP32 CPU/Metal image prerequisite](20261001-121633-fp32-cpu-metal-validation.md)
+is now complete: 28/28 original-weight image cases, actual Metal placement,
+FP32/Metal session behavior and four fresh benchmark cells passed. This does not
+validate any video tracker graph or temporal policy.
+
+Both schema-2 full files were converted from the pinned original checkpoint:
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `sam3-video-f32.gguf` | 3,449,345,696 | `02513232afca5ba8c174b66c7fc839c67b32590df4b53bdd6df5089a6a546844` |
+| `sam3-video-f16.gguf` | 1,837,925,216 | `9c9bc86c81d11a041db10a46d3d1e8ecaa1cbcf6fad683b00901f641746bf32c` |
+
+Complete metadata, inventory and sidecar payload checks passed. Independent
+Torch dtype conversion of every original tensor reproduced all 1,464 payload
+hashes in each file, including complex RoPE real pairs and the original Gaussian
+matrix shape. All 1,133 image entries preserve dimensions, dtypes and payloads
+exactly relative to their accepted schema-1 counterpart. Only the unused pooled
+text projection is excluded and recorded.
+
+The initial FP16 conversion failed on the original object-score head's last
+weight, `[1,256]`: source-rank selection requested F16, while canonical GGML
+`[256]` requires F32. A sweep of all 1,464 tensors found only this mismatch. The
+existing F32 preservation list now contains this exact tensor; no image entry,
+C++ precision policy or malformed-shape guard changed. The extended converter
+regression failed before this fix, passed after it, and the complete Python
+suite passed 13/13. Failed conversion published no FP16 output; the successful
+retry used a fresh exclusive publication.
+
+Loading each full file and running `truck-truck` passed on FP32/CPU, FP32/Metal,
+FP16/CPU and FP16/Metal. All ten image tensor dumps, selected detections and
+output masks match the corresponding accepted image-file run byte-for-byte.
+The Metal checks retain zero CPU graph nodes. These four checks cover full-file
+loading and the unchanged image subset; they are not a video-corpus run.
+
+Re-exporting the exact hash-verified Meta selector functions reproduced all
+2,024 cases and fixture hash
+`e4844ec8e03e4e9aab03b29e93d4c4d62d3cef08a9f0df3c22d2d0a321c02594`.
+Pinned Pillow 11.2.1 reproduced all four resize layouts. Executing the original
+Meta `load_resource_as_video_frames` PIL-list branch with CPU offload reproduced
+the F16 normalization goldens for all 256 byte values exactly. C++ padding,
+rounding, selector retention and attention checks passed in both local CTest
+builds; the maintained tiled-attention test itself executes on CPU.
+
+The five recipes generated 216 contiguous PNG frames under ignored
+`models/video-cases/`, with per-frame hashes. Generation is complete, while
+`reference_behavior_verified=false` and `eligible_for_milestone=false` remain
+correct. Entry, occlusion, hotstart removal and ID continuity have not yet been
+established by a full official video oracle.
+
+Receipts and reproduction scripts remain in ignored
+`build/fp32-validation/20261002-032709/`: `video-conversion.json`,
+`video-profile-image-smoke.json`, `meta-foundations.json`, the red/green precision
+logs and `video-commands.json`. See the
+[local run record](20261002-032709-local-model-meta-validation.md).
+The five remaining implementation items above still block complete video
+acceptance, tracker-stage comparisons and video benchmarks. No video support,
+commit or push is claimed by this validation batch.
+
+## Local integration continuation (2026-10-02)
+
+The subsequent [video-session and official-validator run](20261002-041320-video-session-official-validation.md)
+supplies the missing tracker execution, logical groups/temporal policy, public
+`VideoSession`, delayed owned results, `sam_video`, isolated official CPU source,
+and original video export/comparison tools. The image regression matrix remains
+28/28. Four precision/backend two-frame diagnostics pass, and the full 48-frame
+FP16/Metal motion comparison passes with exact temporal traces and zero CPU
+fallback. Complete M2 acceptance still depends on verified scenario behavior,
+the full video matrix and controlled performance receipts; see that run record
+for the precise corpus failures and completed checks.
+
+
+## Final M2 acceptance (2026-10-03)
+
+The [completion run](20261002-182848-m2-complete-acceptance.md) closes the
+remaining implementation, numerical, real-session and performance gates under
+the user's explicit **F32 + hybrid CPU/Metal** support contract. Video conversion
+defaults to hybrid when precision is omitted; image conversion still requires
+explicit precision. Existing F16/F32 files and the temporal/BF16/strict-argmax
+policies are unchanged.
+
+| Gate | Completed evidence |
+| --- | --- |
+| Original video corpus | All five behavior-verified cases, 216 frames per cell, pass F32/CPU, F32/Metal, hybrid/CPU and hybrid/Metal. Maximum stage L2 respectively 0.000203, 0.000346, 0.002650 and 0.002594 under the original 0.001 / 0.02 gates. Candidates, IDs, lifecycle, outputs, retained-state bounds and backend placement pass. |
+| Image compatibility | 56 fresh schema-1/full-schema-2 F32/F16 image cases plus 14 matching sealed hybrid cases pass. |
+| Real session behavior | Six short configuration checks and two hybrid backend checks, each interleaving 64 positive and 64 negative frames after caller Model destruction. Positive public outputs match standalone exactly; negatives are empty; caches, owned-result lifetime and bounds pass. |
+| Performance | Four hybrid backend/object-count cells complete 64 frames with 16 warmup and 48 measured samples. All frame/stage samples, final drain, first output, current/peak RSS, state/backend allocations and AC/no-sleep conditions are retained in [BENCHMARK.md](../../BENCHMARK.md#video-64-frame-protocol). |
+| Tooling/integration | 20 isolated Python tests pass. Existing immutable CPU/Metal builds retain their 11/11 CTest results; the new long test independently compiles and runs on both. Separate CMake configuration verifies its optional registration without rebuilding those artifacts. |
+
+Explicit F16/Metal completes the corpus but fails candidate selection at entry
+frames 23/24. Exact-F16 original-module replay reproduces those choices with all
+1,464 payloads verified. The old 17-frame pressure failure is also retained.
+The optional full F16/CPU diagnostic is deferred, not passed; the original
+incomplete legacy queue remains preserved. These facts supersede earlier
+subset/pending statements for current support, without rewriting historical
+receipts or relaxing a gate.
+
+Matching artifact/input/output seals permit baseline reuse. Documentation and
+verified CLI dispatch-only changes do not trigger full CPU inference; changed
+weight values, preprocessing, graph/backend arithmetic, dependency/toolchain
+behavior or temporal state require affected acceptance again. Finite
+allocation/RSS observations are not a universal lifetime memory guarantee.
+The final local receipts are indexed by
+`build/video-validation/20261002-182848/completion-summary.json`.
+No commit, push or model upload is part of this completion.

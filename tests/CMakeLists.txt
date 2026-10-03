@@ -64,6 +64,10 @@ target_compile_definitions(test_tracking PRIVATE SAM_VIDEO_INVENTORY="${CMAKE_CU
 target_compile_definitions(test_tracking PRIVATE SAM_MEMORY_GOLDENS="${CMAKE_CURRENT_SOURCE_DIR}/data/video_memory_selection_goldens.txt")
 add_test(NAME sam_tracking_math COMMAND test_tracking)
 
+add_executable(test_video test_video.cpp)
+target_link_libraries(test_video PRIVATE sam::sam)
+add_test(NAME sam_video_behavior COMMAND test_video)
+
 if(patched_ggml_source)
     add_test(NAME sam_ggml_preparation
         COMMAND ${CMAKE_COMMAND}
@@ -85,6 +89,19 @@ set_target_properties(test_image PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CUR
 add_executable(test_session test_session.cpp)
 target_link_libraries(test_session PRIVATE sam::sam sam_image_io)
 set_target_properties(test_session PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+add_executable(test_video_session test_video_session.cpp)
+target_link_libraries(test_video_session PRIVATE sam::sam sam_image_io)
+set_target_properties(test_video_session PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+# Optional real-weight 64+64 interleaving; default CTest remains weight-free.
+add_executable(test_video_long_session test_video_long_session.cpp)
+target_link_libraries(test_video_long_session PRIVATE sam::sam sam_image_io)
+set_target_properties(test_video_long_session PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+set(SAM_VIDEO_LONG_SESSION_ARGS "" CACHE STRING "Optional MODEL;ENTRY_64_DIR;NEGATIVE_IMAGE;BACKEND;THREADS;NEW_DIR")
+if(SAM_VIDEO_LONG_SESSION_ARGS)
+    add_test(NAME sam_video_long_session COMMAND test_video_long_session ${SAM_VIDEO_LONG_SESSION_ARGS})
+endif()
 
 set(SAM_REFERENCE_MODEL "" CACHE FILEPATH "Converted checkpoint for the official reference suite")
 set(SAM_REFERENCE_BACKEND "cpu" CACHE STRING "Backend for the official reference suite")

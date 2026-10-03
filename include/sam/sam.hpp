@@ -5,5 +5,6 @@
 #include "types.hpp"
 #include "model.hpp"
 #include "image_session.hpp"
+#include "video_session.hpp"
 
 #endif // SAM_CPP_SAM_SAM_HPP

@@ -25,9 +25,9 @@
   },
   "recipes": {
     "motion": "offset_x = 4 * min(f, 48-f) - 48",
-    "entry": "truck bicubic 900x600; first at (0,300); second at (1800-min(max(f-15,0)*60,900),300)",
+    "entry": "truck bicubic 800x533; first at (0,400); mirrored second at (1000,400) from frame 16",
     "occlusion": "neutral rectangle [64,256,1744,920) on frames 20-23",
-    "hotstart-removal": "source visible on frames 0-1; neutral afterwards",
+    "hotstart-removal": "source visible on frames 0-1; neutral rectangle [64,256,1744,760) afterwards, preserving wheels for nonempty unmatched tracking",
     "negative": "repeat source unchanged"
   },
   "cases": [

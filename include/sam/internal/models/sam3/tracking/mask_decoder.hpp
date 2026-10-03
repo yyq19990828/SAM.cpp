@@ -43,11 +43,21 @@ inline struct ggml_tensor* sam3_sam_attention(
 
     // Attention
     float scale = 1.0f / sqrtf((float)HD);
-    auto* out = ggml_flash_attn_ext(ctx, Q, K, V, nullptr, scale, 0.0f, 0.0f);
-    // out: [HD, NH, N_q, B] (flash_attn_ext swaps dims 1,2 vs input)
-
-
-
+    ggml_tensor* out;
+    if (HD == 16) {
+        // The pinned Metal flash kernel has no head-16 implementation. Keep
+        // both operands and softmax in F32 on the same backend.
+        auto* scores = ggml_mul_mat(ctx, K, Q);
+        ggml_prec_set_acc(scores, GGML_PREC_F32);
+        scores = ggml_soft_max_ext(ctx, scores, nullptr, scale, 0.0f);
+        auto* values = ggml_cont(ctx, ggml_transpose(ctx, V));
+        out = ggml_mul_mat(ctx, values, scores);
+        ggml_prec_set_acc(out, GGML_PREC_F32);
+        out = ggml_cont(ctx, ggml_permute(ctx, out, 0, 2, 1, 3));
+    } else {
+        out = ggml_flash_attn_ext(ctx, Q, K, V, nullptr, scale, 0.0f, 0.0f);
+    }
+    // [HD, NH, N_q, B], matching flash_attn_ext's output layout.
     // Merge heads: [ID=HD*NH, N_q, B]
     auto* merged = ggml_reshape_3d(ctx, out, ID, N_q, B);
 

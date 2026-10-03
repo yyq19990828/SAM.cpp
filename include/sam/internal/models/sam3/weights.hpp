@@ -28,6 +28,7 @@ struct WeightFile {
     std::uint64_t file_size = 0;
     std::int32_t ftype = 0;
     bool video = false;
+    std::string storage_profile;
     std::vector<TensorInfo> tensors;
     TokenizerData tokenizer;
     std::unique_ptr<GgufReader> reader;
@@ -47,8 +48,11 @@ inline std::array<std::pair<const char*, std::uint32_t>, 22> sam3_image_paramete
              {"sam3.decoder.query_count", 200}, {"sam3.geometry.block_count", 3}}};
 }
 
-inline bool tensor_kept_f32(const std::string& name, std::size_t rank) {
+inline bool tensor_kept_f32(const std::string& name, std::size_t rank, bool hybrid = false) {
     if (rank == 1) return true;
+    if (hybrid) for (const char* prefix : {"vit.", "neck.trk.", "mem_attn.", "mem_enc.", "sam_pe.", "sam_dec.",
+                                         "obj_ptr_proj.", "obj_ptr_tpos_proj.", "trk_mask_ds."})
+        if (name.rfind(prefix, 0) == 0) return true;
     for (const char* part : {"embed", "tpos", "pe_gaussian", "token", "no_obj", "no_mem", "gamma", "freqs_cis"})
         if (name.find(part) != std::string::npos) return true;
     return false;
@@ -132,6 +136,11 @@ inline WeightFile inspect_weights(const std::string& path) {
     const auto ftype = reader.u32("general.file_type");
     if (ftype > 1) throw std::runtime_error("SAM GGUF precision must be F32 or mixed F16");
     result.ftype = static_cast<std::int32_t>(ftype);
+    if (gguf_find_key(metadata, "sam.storage_profile") >= 0) {
+        result.storage_profile = reader.string("sam.storage_profile");
+        if (!result.video || ftype != 1 || result.storage_profile != "visual-tracker-f32-v1")
+            throw std::runtime_error("unsupported SAM GGUF storage profile");
+    }
     if (gguf_find_key(metadata, "general.name") >= 0) (void) reader.string("general.name");
     const auto source_hash = reader.string("sam.source.checkpoint_sha256", 64);
     if (source_hash.size() != 64 || !std::all_of(source_hash.begin(), source_hash.end(), [](char c) {
@@ -155,7 +164,8 @@ inline WeightFile inspect_weights(const std::string& path) {
         if (!std::all_of(tensor.name.begin(), tensor.name.end(), [](char c) {
                 return ascii_letter(c) || ascii_digit(c) || c == '_' || c == '.';
             })) throw std::runtime_error("invalid SAM 3 tensor name: " + tensor.name);
-        const auto expected_type = result.ftype == 1 && !tensor_kept_f32(tensor.name, tensor.dimensions.size()) ? 1 : 0;
+        const auto expected_type = result.ftype == 1 &&
+            !tensor_kept_f32(tensor.name, tensor.dimensions.size(), !result.storage_profile.empty()) ? 1 : 0;
         if (tensor.type != expected_type) throw std::runtime_error("incompatible SAM 3 tensor precision: " + tensor.name);
     }
     require_string("tokenizer.ggml.model", "clip");

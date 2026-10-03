@@ -101,6 +101,19 @@ with the canonical SAM tensor's storage policy before publishing the file.
 Preserve the existing name mapping, positional-embedding
 layout and complex-RoPE real-pair layout. No quantized tensor types are accepted.
 
+Schema 2 also supports an explicit hybrid profile, selected by
+`--task video --precision hybrid`. It uses `general.file_type=1` and requires
+the STRING metadata `sam.storage_profile=visual-tracker-f32-v1`. Restore original
+checkpoint FP32 values for `vit.`, `neck.trk.`, `mem_attn.`, `mem_enc.`, `sam_pe.`,
+`sam_dec.`, `obj_ptr_proj.`, `obj_ptr_tpos_proj.` and `trk_mask_ds.` tensors;
+remaining tensors follow the existing mixed-F16 policy. This restores 236
+previously F16 payloads. Promoting rounded F16 values does not satisfy this
+profile. Unknown profiles, hybrid declarations on schema 1/F32 containers and
+tensor types inconsistent with the declared closure are rejected before weight
+allocation. `ModelInfo::precision` reports `hybrid`, and `storage_profile`
+reports the versioned policy separately from the temporal `profile`. Acceptance
+uses the unchanged mixed-F16 numerical gates; this is not a full-FP32 artifact.
+
 The common reader limits metadata reads to 16 MiB, at most 256 metadata keys and
 4,096 tensor entries. Individual tokenizer symbols are limited to 2,048 bytes;
 the complete tokenizer is limited to 16 MiB. Metadata is parsed without loading
@@ -151,5 +164,13 @@ Use new output filenames and sidecars, such as `sam3-video-f32.gguf`; conversion
 refuses existing output files. `ModelInfo::task`/`profile` describe the file
 contract. The image API may load the image subset of these full files. The video
 session and oracle exporter remain unimplemented, so schema-2 files are not
-accepted video-inference artifacts yet. Local original-weight conversion,
-image-subset regression and tracker-stage comparisons remain required.
+accepted video-inference artifacts yet. Original-weight conversion and image-subset
+checks passed locally on 2026-10-02; tracker-stage comparisons and the full
+temporal pipeline remain required. See the
+[local validation record](plans/20261002-032709-local-model-meta-validation.md).
+
+The FP16 policy explicitly retains
+`sam_dec.pred_obj_score_head.layers.2.weight` in F32: its original `[1,256]`
+projection has canonical GGML dimensions `[256]`, for which the runtime requires
+F32. This does not change any of the 1,133 image-subset payloads or weaken shape
+validation.

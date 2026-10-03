@@ -1,5 +1,6 @@
 #include <sam/internal/models/sam3/tensors.hpp>
 #include <sam/internal/models/sam3/tracking/attention.hpp>
+#include <sam/internal/models/sam3/tracking/mask_decoder.hpp>
 #include <sam/internal/models/sam3/tracking/preprocessing.hpp>
 #include <sam/internal/models/sam3/tracking/memory_selection.hpp>
 #include <sam/internal/models/sam3/weights.hpp>
@@ -209,9 +210,51 @@ void check_memory_selection() {
     require(!(goldens >> trailing), "Selector fixture contains unconsumed cases");
 }
 
+void check_sam_cross_attention() {
+    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 1}, true);
+    sam::RuntimeStats stats;
+    sam::internal::GraphExecution graph(runtime, 256, stats);
+    auto* ctx = graph.context();
+    constexpr int channels = 32, queries = 3, keys = 11, heads = 2, head_size = 16;
+    auto* q = sam::internal::input_tensor(ctx, "sam_q", channels, queries);
+    auto* k = sam::internal::input_tensor(ctx, "sam_k", channels, keys);
+    auto* v = sam::internal::input_tensor(ctx, "sam_v", channels, keys);
+    auto* identity = sam::internal::input_tensor(ctx, "identity", channels, channels);
+    auto* zero = sam::internal::input_tensor(ctx, "zero", channels);
+    sam::internal::sam3::sam3_sam_attn weights{};
+    weights.q_w = weights.k_w = weights.v_w = weights.out_w = identity;
+    weights.q_b = weights.k_b = weights.v_b = weights.out_b = zero;
+    auto* out = sam::internal::sam3::sam3_sam_attention(ctx, q, k, v, weights, heads);
+    graph.output(out); graph.allocate();
+    std::vector<float> matrix(channels * channels), q_values(channels * queries), k_values(channels * keys), v_values(channels * keys);
+    for (int c = 0; c < channels; ++c) matrix[c * channels + c] = 1;
+    for (std::size_t i = 0; i < q_values.size(); ++i) q_values[i] = std::sin(i * 0.7) * 0.2f;
+    for (std::size_t i = 0; i < k_values.size(); ++i) {
+        k_values[i] = std::cos(i * 0.4) * 0.3f; v_values[i] = std::sin(i * 0.2) + i / channels;
+    }
+    sam::internal::upload(identity, matrix, stats); sam::internal::upload(zero, std::vector<float>(channels), stats);
+    sam::internal::upload(q, q_values, stats); sam::internal::upload(k, k_values, stats); sam::internal::upload(v, v_values, stats);
+    graph.compute(); const auto actual = sam::internal::download(out, stats);
+    for (int query = 0; query < queries; ++query) for (int head = 0; head < heads; ++head) {
+        std::vector<double> scores(keys);
+        for (int key = 0; key < keys; ++key) for (int c = 0; c < head_size; ++c)
+            scores[key] += static_cast<double>(q_values[query * channels + head * head_size + c]) *
+                k_values[key * channels + head * head_size + c] / 4.0;
+        double sum = 0;
+        for (auto& score : scores) { score = std::exp(score); sum += score; }
+        for (int c = 0; c < head_size; ++c) {
+            double expected = 0;
+            for (int key = 0; key < keys; ++key)
+                expected += scores[key] / sum * v_values[key * channels + head * head_size + c];
+            require(std::abs(actual[query * channels + head * head_size + c] - expected) < 2e-6,
+                    "SAM head-16 attention changed softmax/head layout");
+        }
+    }
+}
+
 } // namespace
 
 int main() {
-    try { check_preprocessing(); check_inventory(); check_attention(); check_memory_selection(); return 0; }
+    try { check_preprocessing(); check_inventory(); check_attention(); check_sam_cross_attention(); check_memory_selection(); return 0; }
     catch (const std::exception& error) { std::cerr << "tracking math: " << error.what() << '\n'; return 1; }
 }

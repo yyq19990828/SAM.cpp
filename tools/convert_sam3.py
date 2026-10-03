@@ -15,7 +15,7 @@ import tempfile
 import gguf
 
 from sam3_artifacts import BPE_SHA256, PAB_REVISION, SAM3_REVISION, sha256_file, write_json
-from sam3_gguf import (KEEP_F32, bytes_to_unicode, canonical_shape, converted_array,
+from sam3_gguf import (KEEP_F32, HYBRID_PROFILE, HYBRID_F32_PREFIXES, bytes_to_unicode, canonical_shape, converted_array,
                        inspect_tensors, read_gguf, validate_metadata, write_metadata, tensor_schema)
 
 
@@ -131,6 +131,8 @@ def tensor_array(name, tensor):
 def convert(checkpoint, bpe_path, precision, output, task="image"):
     import torch
 
+    if precision == "hybrid" and task != "video":
+        raise ValueError("hybrid storage is defined only for full video models")
     output = Path(output).resolve()
     manifest_path = output.with_suffix(output.suffix + ".manifest.json")
     if output.suffix != ".gguf":
@@ -232,6 +234,9 @@ def convert(checkpoint, bpe_path, precision, output, task="image"):
             "options": {"detector_only": task == "image", "preserve_f32": list(KEEP_F32), "one_dimensional_f32": True},
             "tensors": inventory, "skipped": skipped,
         }
+        if precision == "hybrid":
+            manifest["storage_profile"] = HYBRID_PROFILE
+            manifest["options"]["original_f32_prefixes"] = list(HYBRID_F32_PREFIXES)
         descriptor, manifest_tmp = tempfile.mkstemp(prefix=".sam3-manifest-", dir=output.parent)
         os.close(descriptor)
         temporary.append(Path(manifest_tmp))
@@ -259,9 +264,14 @@ def main():
     parser.add_argument("--task", choices=("image", "video"), default="image")
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--bpe", required=True, type=Path)
-    parser.add_argument("--precision", choices=("f32", "f16"), required=True)
+    parser.add_argument("--precision", choices=("f32", "f16", "hybrid"),
+                        help="weight storage precision: defaults to hybrid for video; required for image")
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
+    if args.precision is None:
+        if args.task != "video":
+            parser.error("--precision is required for --task image")
+        args.precision = "hybrid"
     try:
         convert(args.checkpoint, args.bpe, args.precision, args.output, args.task)
     except (OSError, ValueError, RuntimeError, KeyError) as error:

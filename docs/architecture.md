@@ -1,9 +1,9 @@
 # Architecture and model extensions
 
 The library currently implements SAM 3 text-prompted image segmentation.
-`sam::Model`, `sam::ImageSession`, and the `sam::sam` CMake target remain the
-application entry points. SAM 2/2.1, GroundingSAM, DART, SAM 3.1, and video
-sessions are not yet supported.
+`sam::Model`, `sam::ImageSession`, experimental `sam::VideoSession`, and the
+`sam::sam` CMake target are the application entry points. Full video acceptance
+has independent gates. SAM 2/2.1, GroundingSAM, DART and SAM 3.1 remain unimplemented.
 
 ## Why `internal`
 
@@ -19,7 +19,7 @@ model implementations may include `sam/internal/...` directly.
 ```text
 Application / example / composed pipeline
                |
-sam/{types,model,image_session,sam}.hpp
+sam/{types,model,image_session,video_session,sam}.hpp
                |
 internal/model_interface.hpp       task-specific contracts
                |
@@ -85,16 +85,18 @@ and Metal execution with a Metal weight buffer.
 
 SAM's local GGML patch implements native Metal `WIN_PART` and `WIN_UNPART` for
 contiguous F32 tensors, including padded windows. The tested full image graph
-executes all 3,342 nodes on Metal with six graph partitions and no CPU graph
-fallback. Host preprocessing/postprocessing still run on CPU. See the
+executes all 3,332 FP32 or 3,342 FP16 nodes on Metal with six graph partitions
+and no CPU graph fallback. Host preprocessing/postprocessing still run on CPU. See the
 [window and performance plan](plans/20261001-002850-metal-window-cpu-performance-official-weights.md)
 for direct GPU checks and full-model acceptance.
 
 CPU remains the required fallback backend. `Auto` selects compatible Metal for
 FP16 checkpoints when available and CPU for FP32 checkpoints. Explicit missing
 backends and incompatible Metal arithmetic fail clearly. Explicit FP32 Metal
-selection is implemented and retains F32 weight storage, with full-model
-acceptance pending local validation. Auto FP32 continues selecting CPU.
+selection retains F32 weight storage and passed all seven original-weight
+image cases plus the real-checkpoint session lifetime/cache checks locally on
+2026-10-02. See the [acceptance record](plans/20261001-121633-fp32-cpu-metal-validation.md).
+Auto FP32 continues selecting CPU.
 
 Adding CUDA requires a real driver under `backends/`, supported-driver selection,
 public configuration/CLI naming, device selection, and its statistics field.
@@ -173,7 +175,7 @@ changes also run the existing frozen numerical corpus. Same-weight community
 checkpoint comparisons retain supplementary provenance; original-checkpoint
 acceptance requires the authorized original file and its recorded hash.
 
-## M2 implementation in progress
+## Forward video sessions
 
 `tracking/` holds separate tracker weights, prompt/mask decoding, memory encoder,
 256-wide memory attention, video preprocessing and forward memory selectors.
@@ -186,12 +188,32 @@ all spatial/pointer keys. Forward retention keeps complete hotstart group histor
 after group membership is fixed it protects the eight-frame correction window,
 four conditioning records and 15 older eligible records. The selector retains
 the count of pruned conditioning records to preserve official ordering. It is
-not a reverse/editable-session policy. These are internal foundations: group
-lifecycle, association, reconditioning, memory/pointer execution, delayed outputs,
-the public video task/facade, CLI and official video exporter are not integrated.
+not a reverse/editable-session policy. `tracking/session.hpp` integrates logical
+birth groups, quality recomputation after hotstart removal, association, periodic
+reconditioning, overlap suppression and a 15-frame delayed queue. Tensor work
+runs serially per object; group membership and the original batch-quality
+broadcasting semantics stay intact. `tracking/execution.hpp` connects conditioned
+memory, temporal pointers, SAM decoding and BF16 memory encoding to shared graphs.
+
+SAM decoder head-16 cross attention uses F32 GGML matmul/softmax because the
+pinned Metal flash implementation does not support that head size. Head-32
+self-attention retains the verified precise flash path. The graph is shared by
+CPU and Metal; no new device policy or dependency patch is introduced.
+
+The public facade delegates through the text-video task contract. It retains the
+model, owns prompt/temporal state and returned results, enforces fixed finite
+forward input, and requires reset after execution failure. `sam_video` decodes
+host PNGs, publishes exclusive output and writes an incomplete/complete receipt.
+The source adapter, official exporter and differential validator record explicit
+F16/BF16 boundaries and retain Meta's association/lifecycle modules. The original
+CPU component fallback needs a recorded empty-batch adaptation when no object is born.
+Snapshots preserve propagated conditioned features and selected masks before
+periodic correction, plus the normalized mask passed to memory encoding. Thus
+correction cannot overwrite the observations needed to diagnose recurrence.
 
 Weight-free tests compare resized bytes and F16 normalization against Pillow
 11.2.1, attention against an independent full-key computation, and 2,024 memory
 selections against hash-verified pinned Meta functions. Official checkpoint
-stage comparisons and Metal execution remain local gates before video support
-can be advertised.
+stage, temporal, session and backend-placement evidence is recorded separately in
+the [video validation record](plans/20261002-041320-video-session-official-validation.md).
+The full corpus/matrix and performance gates determine accepted video support.

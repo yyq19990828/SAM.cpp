@@ -24,6 +24,7 @@ struct ModelInfo {
     bool tokenizer_compatibility_repaired = false;
     std::string task;
     std::string profile;
+    std::string storage_profile; // Versioned weight policy, separate from the temporal profile.
 };
 
 struct RuntimeStats {
@@ -71,6 +72,31 @@ struct Detection {
 
 struct Result {
     std::vector<Detection> detections;
+};
+
+struct VideoOptions {
+    int max_objects = 8;
+};
+
+struct TrackedObject {
+    std::uint64_t id = 0;
+    Box box;
+    float score = 0.0f;
+    Mask mask;
+};
+
+struct VideoFrameResult {
+    int frame_index = 0;
+    std::vector<TrackedObject> objects;
+};
+
+struct VideoStats {
+    RuntimeStats runtime;
+    std::uint64_t accepted_frames = 0, emitted_frames = 0, tracker_calls = 0;
+    std::uint64_t rejected_new_objects = 0;
+    std::size_t active_objects = 0, retained_records = 0, retained_memory_bytes = 0;
+    std::size_t pending_frames = 0, pending_high_water = 0, retained_records_high_water = 0;
+    double frame_ms = 0.0, tracker_ms = 0.0, memory_ms = 0.0;
 };
 
 } // namespace sam

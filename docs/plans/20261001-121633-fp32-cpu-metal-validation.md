@@ -1,7 +1,7 @@
 # FP32 Image Validation and CPU/Metal Benchmarks
 
 Created: 2026-10-01 12:16:33 Asia/Shanghai.
-Status: cloud code implemented; official model/Meta, Metal hardware acceptance and new measurements deferred to local execution.
+Status: complete; original-weight CPU/Metal image acceptance and four fresh benchmark cells verified locally on 2026-10-02.
 Baseline: `2c23a67b58019149efe41c89aa263c1b1e770c65`.
 Priority: complete this image-validation matrix before implementing
 [M2 video tracking](20261001-115321-sam3-text-video-tracking.md).
@@ -246,14 +246,14 @@ the model rows and two hardware/backend header rows requested in `BENCHMARK.md`.
 
 ## Completion checklist and results
 
-- [ ] CPU and Metal builds, focused backend checks, CTest, Python tooling and
+- [x] CPU and Metal builds, focused backend checks, CTest, Python tooling and
   downstream integration pass; FP32 Auto remains CPU.
-- [ ] All four configurations pass the frozen official corpus, 28/28 cases;
+- [x] All four configurations pass the frozen official corpus, 28/28 cases;
   FP32 Metal shows real GPU execution without CPU graph fallback.
-- [ ] FP32 Metal session lifetime, prompt/image invalidation and caching pass.
-- [ ] Four benchmark cells have fresh raw samples, hashes and defined memory
+- [x] FP32 Metal session lifetime, prompt/image invalidation and caching pass.
+- [x] Four benchmark cells have fresh raw samples, hashes and defined memory
   measurements; historical receipts remain available.
-- [ ] Support matrix, explicit/Auto behavior, reproduction commands and changelog
+- [x] Support matrix, explicit/Auto behavior, reproduction commands and changelog
   match the evidence; documentation links and `git diff --check` pass.
 
 Planning result: verified the existing receipts and three blocking code paths;
@@ -288,3 +288,65 @@ Cloud checks passed: CPU CTest **10/10**, consumer CTest **3/3**, Python tools
 selection fails clearly on this CPU-only host; GPU-backed numerical checks
 remain unexecuted here. This record covers the first cloud implementation batch;
 local model and Metal acceptance remain pending.
+
+## Local acceptance record (2026-10-02)
+
+Completed on the M4 Pro host from source `2ddee1b`. All five pinned identities
+in this plan, plus the BPE hash, were rechecked successfully. The Meta checkout
+is clean at `2345a4ad109ac29c569da749c91d84f10dc08c40`; every original/adapted
+Python source file in the existing reference runtime passed its hash checks.
+The frozen reference corpus was reused without changing gates or regenerating
+unchanged weights. No C++ runtime or GGML patch repair was necessary.
+
+CPU and Metal CTest passed **10/10** each, downstream consumers passed **3/3**
+each, and isolated Python tools passed **13/13**. Header compilation and two-TU
+linkage remain part of these builds. The real Metal backend/precision/window
+checks executed on the matching hardware; Auto FP32 still selects CPU.
+
+| Configuration | Cases | Worst normalized tensor L2 | Minimum high-confidence mask IoU | CPU / Metal nodes per case |
+| --- | ---: | ---: | ---: | --- |
+| FP32 / CPU | 7/7 | 0.0005700826798642337 | 1.0 | 3,332 / 0 |
+| FP32 / Metal | 7/7 | 0.0003144987262019289 | 1.0 | 0 / 3,332 |
+| FP16 / CPU | 7/7 | 0.013056476876752196 | 1.0 | 3,332 / 0 |
+| FP16 / Metal | 7/7 | 0.012984803954191696 | 1.0 | 0 / 3,342 |
+
+All configurations used six graph partitions per case. Exact tokens, finite
+equal-shaped tensors, preprocessing, zero-norm handling, output selection,
+scores and boxes passed the unchanged gates. No threshold-adjacent queries were
+present. The worst L2 in each row is `groceries-bottle` / `mask_logits`.
+
+The original-checkpoint FP32/Metal session test passed model-owner destruction,
+shared-model isolation, prompt/image invalidation, cache reuse and ten changed
+prompt repeats. Its compute-buffer high-water mark stayed at 1,242,646,848 bytes;
+both sessions recorded zero CPU graph nodes.
+
+| Configuration | Five-sample warmed median | Peak process RSS |
+| --- | ---: | ---: |
+| FP32 / CPU | 38.9860272 s | 4,907,794,432 bytes |
+| FP32 / Metal | 5.65112704 s | 4,248,715,264 bytes |
+| FP16 / CPU | 38.9940517 s | 4,927,406,080 bytes |
+| FP16 / Metal | 5.57596308 s | 2,660,253,696 bytes |
+
+Fresh benchmark processes ran in the order FP32/Metal, FP16/Metal, FP32/CPU,
+FP16/CPU, using the defined truck workload and four threads. Each made one
+initial and five measured full-image calls, then cache-only calls. AC power was
+attached, the battery was not charging (19% to 13%), and no thermal/performance
+warning was recorded. Other project computation stopped during timing; desktop
+activity remained and clocks were not controlled. This batch does not establish
+a speedup over the old battery-powered measurements.
+
+The old `build/metal` generated dependency tree blocked on reading a duplicated
+`gated_delta_net 2.cuh` during CMake hash verification. Its diagnostic stack was
+preserved. Fresh Metal and consumer builds under
+`/private/tmp/sam-model-meta-20261002-032709/` used the same verified GGML checkout,
+Release, AppleClang 21.0.0, SDK 27.0 and embedded Metal sources. No source check
+was bypassed and the old directory was preserved.
+
+Receipts: ignored `build/fp32-validation/20261002-032709/`, including
+`validation-{cpu,metal}-{f32,f16}/metrics.json`, `acceptance-summary.json`,
+`session-metal-f32/results.json`, the four benchmark result directories,
+`benchmark-summary.json`, power/thermal records, command statuses, source/model/
+binary/patch hashes and CMake caches. See the
+[local run record](20261002-032709-local-model-meta-validation.md).
+The image prerequisite for M2 is complete; video tracker-stage and temporal
+acceptance remain independent and incomplete. No commit or push was performed.

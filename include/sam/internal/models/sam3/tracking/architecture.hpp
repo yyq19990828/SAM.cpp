@@ -10,7 +10,7 @@
 namespace sam::internal::sam3 {
 
 struct sam3_sam_prompt_enc {
-    struct ggml_tensor* pe_gaussian         = nullptr;  // [2, 128]
+    struct ggml_tensor* pe_gaussian         = nullptr;  // GGML [128,2], original [2,128]
     struct ggml_tensor* point_embed[4]      = {};       // neg, pos, box_tl, box_br
     struct ggml_tensor* not_a_point_embed   = nullptr;  // [256]
     struct ggml_tensor* no_mask_embed       = nullptr;  // [256]

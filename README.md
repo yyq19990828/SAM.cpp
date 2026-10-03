@@ -1,6 +1,7 @@
 # SAM.cpp
 
-Header-only C++17 SAM 3 text-prompted image segmentation, using GGML on Apple CPU
+Header-only C++17 SAM 3 text-prompted image segmentation and experimental forward
+video tracking, using GGML on Apple CPU
 and Metal. Applications provide RGB pixels and receive owned masks, boxes, and
 scores. GGML and its backends are compiled dependencies; checkpoints remain
 external files.
@@ -10,11 +11,15 @@ external files.
 
 This is an experimental first implementation. All seven original-checkpoint
 reference cases pass the frozen tensor and detection gates on FP32/CPU,
-FP16/CPU, and FP16/Metal using GGUF. The authorized original checkpoint,
-converted weights and pinned Meta reference have recorded hashes. All 210
-tensor snapshots and 18 output masks match the previous container's accepted
-results byte-for-byte. See the
-[GGUF migration and acceptance plan](docs/plans/20261001-020507-gguf-conversion-loading.md).
+FP32/Metal, FP16/CPU, and FP16/Metal using GGUF (28/28 cases in the local
+2026-10-02 batch). The authorized original checkpoint,
+converted weights and pinned Meta reference have recorded hashes. The earlier
+GGUF migration preserved all 210 tensor snapshots and 18 output masks from the
+previous container's accepted results byte-for-byte. See the
+[GGUF migration and acceptance plan](docs/plans/20261001-020507-gguf-conversion-loading.md)
+for the historical byte-parity check and the
+[FP32 CPU/Metal acceptance record](docs/plans/20261001-121633-fp32-cpu-metal-validation.md)
+for the complete current image matrix.
 The [first implementation plan](docs/plans/20260930-192519-sam3-text-image-baseline.md)
 records the image milestone and later video/SAM 3.1 work.
 The [GGML migration plan](docs/plans/20260930-231832-upstream-ggml-0253.md)
@@ -22,13 +27,14 @@ records dependency changes; the
 [window and performance plan](docs/plans/20261001-002850-metal-window-cpu-performance-official-weights.md)
 records native Metal windows, controlled CPU diagnosis and original-weight acceptance.
 
-On the tested M4 Pro with four CPU threads, five warmed FP16 image runs had
-median latency 60.59 seconds on CPU and 6.56 seconds on Metal, with peak process
-RSS 4.94/2.67 GB, using the original checkpoint's GGUF conversion and patched
-GGML 0.25.3.
+On the tested M4 Pro with four CPU threads, the 2026-10-02 batch of five warmed
+FP16 image runs had median latency 38.99 seconds on CPU and 5.58 seconds on
+Metal, with peak process RSS 4.93/2.66 GB. FP32 measured 38.99/5.65 seconds
+and 4.91/4.25 GB on CPU/Metal, using the original checkpoint's GGUF conversion
+and patched GGML 0.25.3.
 See [BENCHMARK.md](BENCHMARK.md) for the result table, protocol and reproduction
 commands, and the window/performance plan for the earlier controlled investigations.
-This measurement batch does not establish a speedup from changing the container.
+This measurement batch does not establish a speedup over historical runs.
 These are local single-image measurements, not video frame-rate guarantees.
 
 ## Code organization
@@ -129,16 +135,15 @@ for C++ callers supplying pixels directly.
 
 | Weights | CPU | Metal | `Auto` |
 | --- | --- | --- | --- |
-| FP32 | Implemented | Explicit selection implemented; local model acceptance pending | CPU |
-| FP16 | Implemented | Implemented | Compatible Metal when available, CPU when unavailable |
+| FP32 | Accepted | Accepted with explicit selection | CPU |
+| FP16 | Accepted | Accepted | Compatible Metal when available, CPU when unavailable |
 
 Inspect `model.backend()` or `model.info()` for the resolved backend. Explicit
 Metal selection fails when unavailable. Graph execution errors are surfaced;
 they do not trigger a silent backend retry. Numerical acceptance status is
 recorded in the [FP32 validation plan](docs/plans/20261001-121633-fp32-cpu-metal-validation.md) separately from this implementation matrix.
-Official model/Meta comparisons, Metal hardware checks and new benchmarks are
-reserved for local execution; no new accepted configuration or measured result
-is claimed by the cloud implementation.
+The local 2026-10-02 original-weight comparison passed all four configurations;
+FP32 Metal also passed the checkpoint-backed session lifetime/cache check.
 
 `ModelInfo::precision` describes checkpoint storage. CPU loading promotes FP16
 values exactly to FP32 to avoid narrowing activations in GGML's half-weight dot
@@ -158,9 +163,10 @@ zero-padded. IDs must be in `[0, 49407]`.
 
 ## Checkpoints and command-line example
 
-The reader accepts SAM schema-1 image and experimental schema-2 full video GGUF v3 files in FP32 or mixed FP16.
-Schema-2 conversion/loading and internal tracking graphs are implemented;
-`VideoSession`, video CLI and full temporal-policy integration are still pending.
+The reader accepts SAM schema-1 image and experimental schema-2 full video GGUF v3 files in FP32 or mixed FP16, plus the explicit schema-2 hybrid storage profile below.
+Schema-2 files expose `VideoSession` and the `sam_video` CLI. Video reference
+acceptance is tracked separately in the
+[session and official-validation record](docs/plans/20261002-041320-video-session-official-validation.md).
 `ModelInfo::task` and `profile` identify the file contract, rather than numerical acceptance. See the
 [GGUF contract](docs/gguf.md) for required architecture/task metadata, named
 parameters, tokenizer and tensor layout. Bounded metadata, canonical encoding,
@@ -200,10 +206,200 @@ are different measurements and should not be added together as total memory.
 session, separate from its model weights and host-side caches.
 
 The local patch supplies native Metal window partition/restoration. The tested
-full image graph executes 3,342 Metal nodes, zero CPU graph nodes, and six graph
-partitions. Host preprocessing/postprocessing still run on CPU. The previous
-56 window fallbacks and 118 graph partitions are eliminated; see the
+full image graph executes 3,332 Metal nodes for FP32 weights or 3,342 for FP16,
+zero CPU graph nodes, and six graph partitions. Host preprocessing/postprocessing
+still run on CPU. The previous 56 window fallbacks and 118 graph partitions are eliminated; see the
 [window and performance results](docs/plans/20261001-002850-metal-window-cpu-performance-official-weights.md).
+
+## Forward video tracking
+
+Load a full schema-2 video file and set one prompt before pushing a finite RGB
+sequence. Prompt, resolution and frame count stay fixed until `reset`.
+
+```cpp
+auto model = sam::Model::load("models/sam3-video-hybrid-v1.gguf",
+                             {sam::Backend::Metal, 4});
+sam::VideoSession session(model, frame_count, {8});
+session.set_text("truck");
+for (int frame = 0; frame < frame_count; ++frame) {
+    // The application decodes each frame and supplies a borrowed RGB8 view.
+    for (auto& result : session.push_frame(frame, decoded_rgb_view(frame))) {
+        consume_owned_result(result); // frame_index, objects, IDs, masks, boxes, scores
+    }
+}
+```
+
+Frames must arrive exactly once, starting at index zero. The session delays
+output by the official 15-frame hotstart policy; the final declared frame drains
+all remaining results, including valid empty frames. Returned masks own their
+storage. IDs start at zero and increase without reuse; `reset(new_frame_count)`
+clears prompt, IDs, temporal state and counters while retaining weights. Invalid
+arguments leave state unchanged; execution failures require reset. Separate
+sessions retain their shared model and use its execution mutex.
+
+The detector and tracker share one visual trunk per frame. Text is encoded once.
+Tracking uses the original memory attention, SAM decoder, pointers, memory
+encoder, association and lifecycle rules. The runtime retains at most 27 memory
+records per active object and 14 queued low-resolution results between ordinary
+calls; emitted masks are resized to source resolution. `VideoStats` separates
+retained state, backend allocation, process RSS, frame/stage time and graph work.
+`tensor_names()`, `tensor()` and `trace_json()` expose the latest frame for
+diagnostics. Object tensor IDs use canonical decimal names; aliases are rejected. `object.<id>.propagated_mask_logits` preserves the selected mask
+before periodic correction; `propagated_conditioned_features` preserves its
+memory-attention input. `object.<id>.memory_mask` records the normalized
+1152-square input actually passed to the memory encoder. Re-export older video
+references to compare these additional stages. Runtime availability does not
+establish full numerical acceptance.
+Per-frame `trace_json()` also records propagated candidate IoUs and the chosen
+mask/pointer projection tokens before periodic correction.
+`sam_video --dump-all-tensors` exports every frame for precision diagnosis; `--dump-tensors`
+keeps the sparse checkpoints at 0, 1, 16 and the final frame.
+M2 acceptance is complete for **F32 and hybrid on CPU and Metal**. Each
+configuration passes the behavior-verified original five-case, 216-frame corpus:
+motion (48), entry (64), occlusion (64), hotstart removal (24) and negative (16).
+The entry case proves a second ID appearing at frame 16; hotstart retirement
+at frame 9 suppresses its delayed outputs. All four configurations pass the
+unchanged tensor, candidate/pointer, output, ID, lifecycle, state and backend
+gates. Metal executes no CPU graph fallback.
+
+| Video storage | CPU maximum stage L2 | Metal maximum stage L2 | Original-reference gate |
+| --- | ---: | ---: | --- |
+| F32 | 0.000203 | 0.000346 | L2 <= 0.001; all five cases pass |
+| Hybrid `visual-tracker-f32-v1` | 0.002650 | 0.002594 | L2 <= 0.02; all five cases pass |
+
+The video converter selects **hybrid when `--precision` is omitted**.
+Image conversion still requires explicit precision; explicit video `f16` and
+`f32` preserve their existing payloads. Hybrid restores original FP32 shared
+visual-trunk, tracker-neck and tracker values while detector-only/text weights
+remain mixed. Its storage profile is validated before allocation and reported
+through `ModelInfo::storage_profile`, with `precision=hybrid`. It adds about
+884 MiB of payload over the F16 video file. BF16 transport/state and Meta's
+temporal policy remain unchanged; hybrid is not a full-FP32 model.
+
+Explicit F16 video remains a diagnostic configuration. Its complete Metal
+comparison fails exact propagated mask/pointer selection at entry frames 23
+and 24, although the other four cases pass. Loading all 1,464 exact F16-file
+payloads into the original Meta modules reproduces those choices over a
+26-frame replay. This is an original-value rounding boundary, not evidence
+that C++ needs a different argmax rule. The optional full F16/CPU diagnostic
+is deferred and is not counted as a pass. Earlier subset passes do not override
+the later complete-corpus candidate failure.
+
+The retained old 17-frame F16 pressure failure is a separate input: a near-tied
+candidate switch amplifies pointer/memory differences. Hybrid passes it on CPU
+and Metal with every candidate matching and maximum stage L2 0.000249/0.000196.
+The [recurrence diagnosis](docs/plans/20261002-112808-video-recurrence-precision.md)
+and [fixture history](docs/plans/20261002-100625-video-numerics-fixtures.md)
+preserve the earlier failures and distinguish supplementary same-weight replay
+from original-weight acceptance.
+
+The final regression set covers 56 fresh image cases (schema-1 and full
+schema-2 F32/F16 on both backends), 14 sealed hybrid image cases, six real
+short session/reset/lifetime checks, and two long interleaved-session checks.
+Each long check runs 64 positive and 64 negative pushes after destroying the
+caller-owned Model. Positive outputs match the accepted standalone entry
+sequence exactly; negative outputs stay empty. Owned results, per-session
+caches and bounded state pass, with a stable observed graph-allocation
+high-water mark after warmup. Finite RSS observations are reported separately
+from backend buffers.
+
+The default hybrid also completes the independent 64-frame one/four-object
+performance protocol on each backend: 16 warmup and 48 measured frames, with
+final drain included. See [video measurements](BENCHMARK.md#video-64-frame-protocol)
+and the [completed M2 acceptance record](docs/plans/20261002-182848-m2-complete-acceptance.md)
+for samples, provenance, limits and reproduction. The earlier
+[hybrid implementation record](docs/plans/20261002-133548-video-hybrid-precision-implementation.md)
+retains the repair's payload and same-weight evidence.
+
+```sh
+.venv-reference/bin/python tools/convert_sam3.py --task video \
+  --checkpoint models/official/sam3.pt --bpe models/bpe_simple_vocab_16e6.txt.gz \
+  --output models/sam3-video-hybrid-v1.gguf
+```
+
+```sh
+build/metal/examples/sam_video \
+  --model models/sam3-video-hybrid-v1.gguf --frames models/video-cases/motion \
+  --text truck --backend metal --threads 4 --max-objects 8 \
+  --dump-tensors --output build/video-motion
+```
+
+Inputs are contiguous PNG files named `000000.png` onward. The CLI requires a
+new output directory, writes per-frame results and raw binary masks, and records
+`complete=true` only after every declared frame is emitted. Failed runs retain
+their incomplete receipt. Optional tensor snapshots cover frames 0, 1, 16 and
+the last frame; every frame records memory selection, births/removals and stats.
+
+## Official video references
+
+Use the original checkpoint, pinned Meta source, dependency lock and source
+images described below. Keep all generated frames/references outside Git.
+
+```sh
+.venv-reference/bin/python tools/convert_sam3.py --task video \
+  --checkpoint "$sam3_weights_dir/sam3.pt" \
+  --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
+  --precision hybrid --output models/sam3-video-hybrid-v1.gguf
+.venv-reference/bin/python tools/generate_video_cases.py \
+  --input-root models/fixtures --output models/video-cases
+.venv-reference/bin/python tools/prepare_reference_source.py --task video \
+  --source "$SAM3_SOURCE_DIR" --output build/reference-runtime/sam3-video-cpu
+.venv-reference/bin/python tools/export_video_reference.py \
+  --sam3-source "$SAM3_SOURCE_DIR" \
+  --sam3-runtime-source build/reference-runtime/sam3-video-cpu \
+  --checkpoint "$sam3_weights_dir/sam3.pt" \
+  --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
+  --frames models/video-cases --output models/reference/sam3-video
+.venv-reference/bin/python tools/validate_video.py \
+  --build-dir build/metal --model models/sam3-video-hybrid-v1.gguf \
+  --reference models/reference/sam3-video --backend metal --threads 4 \
+  --output build/video-validation-metal-hybrid
+```
+
+Use fresh output paths when regenerating recipes or stage snapshots. Repeat
+with the CPU build and explicit F32 model to reproduce the accepted four-cell
+support matrix. Keep explicit F16 diagnostics in separate outputs; they are
+not eligible as a substitute for a supported cell. The CPU oracle calls pinned
+original modules once per frame with rank 0/world size 1,
+compilation/autocast/TF32 disabled and recorded
+FP32 arithmetic adaptations. It preserves explicit F16 input normalization,
+BF16 tracker transport/memory storage and the original temporal policy. The
+isolated source copy fixes the original CPU connected-component fallback's
+empty-batch error; original source and weights stay untouched.
+
+The exporter verifies required motion, entry, occlusion, hotstart-removal and
+negative behavior before marking its full 216-frame corpus eligible. Missing
+behavior fails acceptance. `--case` / `--max-frames` exports and validator
+`--allow-diagnostic` comparisons remain ineligible subsets. The validator checks
+original full-file provenance, unchanged tolerances, fixed birth-ID mapping,
+every output frame, stage tensors, memory/pointer order, retirement events,
+state bounds and zero CPU graph fallback on Metal. Per-frame mask rematching
+cannot conceal an ID switch. See the
+[M2 plan](docs/plans/20261001-115321-sam3-text-video-tracking.md) for frozen gates
+and the [completion record](docs/plans/20261002-182848-m2-complete-acceptance.md)
+for the user-approved precision scope and actual results.
+
+The permanent long-session executable accepts model, positive 64-frame directory,
+negative image, backend, threads and a fresh output directory:
+
+```sh
+build/metal/tests/test_video_long_session \\
+  models/sam3-video-hybrid-v1.gguf models/video-cases/entry \\
+  models/video-cases/negative/000000.png metal 4 /private/tmp/sam-long-metal
+```
+
+Its optional CTest registration uses the semicolon-separated
+`SAM_VIDEO_LONG_SESSION_ARGS` CMake cache value in that same argument order;
+ordinary CTest remains weight-free. The completion record also supplies the
+independent compile/run and standalone-output audit commands used locally.
+
+Reuse a numerical baseline when model, executable, backend libraries, relevant
+source, inputs, gates and sealed outputs still match. Documentation and verified
+CLI dispatch-only edits do not require another full CPU run. Changed weights,
+preprocessing, graphs/backend arithmetic, dependency/toolchain behavior or
+temporal state require the affected checks. Long-session isolation and controlled
+performance have their own evidence and cannot be inferred from short or
+dump-heavy numerical runs.
 
 ## Convert and generate references
 
@@ -285,8 +481,8 @@ excluded tensor. Unknown detector keys and missing image weights remain errors.
   --reference models/reference/sam3-f32 --backend cpu
 ```
 
-Run the same validator for FP16/CPU and FP16/Metal using the matching model and
-build directory. It checks exact tokens, intermediate tensors, scores, boxes,
+Run the same validator for FP32/Metal, FP16/CPU and FP16/Metal using the matching
+model and build directory. It checks exact tokens, intermediate tensors, scores, boxes,
 masks, and provenance with the plan's fixed tolerances. Missing artifacts fail.
 Supplementary references restored from community weights require the explicit
 `--allow-supplementary` diagnostic option and cannot satisfy original-checkpoint
@@ -311,6 +507,15 @@ shared-model session isolation, cache reuse, and the compute-buffer high-water m
 build/metal/tests/test_session models/sam3-f16.gguf \
   models/fixtures/truck.jpg models/fixtures/groceries.jpg \
   truck wheel metal 4 build/session-check
+```
+
+The corresponding real-checkpoint video check interleaves two sessions, releases
+the public model handle, verifies owned results and repeats inference after reset:
+
+```sh
+build/metal/tests/test_video_session models/sam3-video-f16.gguf \
+  models/video-cases/motion/000000.png models/video-cases/negative/000000.png \
+  metal 4 build/video-session-check
 ```
 
 This is a behavior check, separate from numerical reference acceptance. Check

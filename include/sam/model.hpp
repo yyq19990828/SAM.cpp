@@ -12,6 +12,7 @@
 namespace sam {
 
 class ImageSession;
+class VideoSession;
 
 class Model {
 public:
@@ -25,6 +26,7 @@ private:
         : implementation_(std::move(implementation)) {}
     std::shared_ptr<internal::ModelImplementation> implementation_;
     friend class ImageSession;
+    friend class VideoSession;
 };
 
 } // namespace sam

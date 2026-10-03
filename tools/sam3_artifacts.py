@@ -31,6 +31,38 @@ def sha256_file(path):
     return digest.hexdigest()
 
 
+def freeze_run_artifacts(build_dir, executable, model, expected_model_sha256):
+    """Bind a validation batch to its model, sidecar, binary and build libraries."""
+    paths = {Path(executable).absolute(), Path(model).absolute(),
+             Path(model).with_suffix(Path(model).suffix + ".manifest.json").absolute()}
+    for pattern in ("*.dylib", "*.so*", "*.dll"):
+        paths.update(path.absolute() for path in Path(build_dir).rglob(pattern) if path.is_file())
+    # Retain alias paths: repointing a library symlink must also change its hash.
+    snapshot = {str(path): sha256_file(path) for path in sorted(paths)}
+    if snapshot[str(Path(model).absolute())] != expected_model_sha256:
+        raise ValueError("validation model changed after provenance inspection")
+    return snapshot
+
+
+def verify_run_artifacts(snapshot):
+    for path, digest in snapshot.items():
+        if sha256_file(path) != digest:
+            raise ValueError(f"validation artifact changed during the batch: {path}")
+
+
+def freeze_output_files(directory):
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise ValueError("validation output directory is missing")
+    return {path.relative_to(directory).as_posix(): sha256_file(path)
+            for path in sorted(directory.rglob("*")) if path.is_file()}
+
+
+def verify_output_files(directory, snapshot):
+    if freeze_output_files(directory) != snapshot:
+        raise ValueError("validation output changed during analysis")
+
+
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 

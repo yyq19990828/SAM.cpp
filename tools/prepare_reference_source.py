@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy pinned Meta sources and apply the five recorded CPU-image import/cache fixes.
+"""Copy pinned Meta sources and apply recorded CPU image/video adaptations.
 
 The original checkout stays untouched. This does not load, download, or alter weights.
 The exporter separately records its unfused FP32 MLP adaptation.
@@ -61,6 +61,71 @@ PATCHES = [
     },
 ]
 
+VIDEO_SOURCE_HASHES = {
+    "sam3/model/sam3_tracker_utils.py": "dc5fdeba2d4416f273394a9bd4450dff050608db6009a4546ca68adbaa24a640",
+    "sam3/model/sam3_tracker_base.py": "b2b52409c002e1590262375aa794f8ab67e7476f42f8fee41a76de0c14aa62e2",
+    "sam3/model/sam3_tracking_predictor.py": "145df76a5c045605d4d15360456015adb4f987c4b18e82f4f4876a63e6a32345",
+    "sam3/model/sam3_video_base.py": "7ffae0a8c15f17814ce438078b6a00cc052be21ad16c8a59205df859c3df52c4",
+    "sam3/model/sam3_video_inference.py": "a502cd76a845292aaf022f64667c176bad919a1bd0cfd9b542d2aa58a7d561fe",
+    "sam3/perflib/connected_components.py": "f09bb5b905a12e0aeb6e7f1096af839015230f007dc47c43a1de7893a355dbd1",
+}
+
+
+def video_adaptations(source):
+    changes = []
+    for patch in PATCHES:
+        text = (source / patch["file"]).read_text(encoding="utf-8")
+        if patch["file"] == "sam3/model_builder.py":
+            if hashlib.sha256(text.encode()).hexdigest() != patch["source_sha256"]:
+                raise ValueError("pinned video builder source hash differs")
+            for statement in patch["removed_imports"]:
+                if "sam3_tracking_predictor" not in statement and "sam3_video_inference" not in statement:
+                    if text.count(statement) != 1:
+                        raise ValueError("pinned video builder import differs")
+                    text = text.replace(statement, "")
+            text = "from __future__ import annotations\n\n" + text
+        else:
+            text = patched_text(text, patch)
+        changes.append((patch["file"], text,
+                        "CPU cache/import adaptation; retain original single-rank video inference and tracker."))
+    for filename, digest in VIDEO_SOURCE_HASHES.items():
+        text = (source / filename).read_text(encoding="utf-8")
+        if hashlib.sha256(text.encode()).hexdigest() != digest:
+            raise ValueError(f"pinned video source hash differs: {filename}")
+        replacements = []
+        if filename.endswith("sam3_tracker_utils.py"):
+            replacements = [("from sam3.model.edt import edt_triton\n", ""),
+                            ("    fn_mask_dt = edt_triton(padded_fn_masks)",
+                             "    from sam3.model.edt import edt_triton\n\n    fn_mask_dt = edt_triton(padded_fn_masks)")]
+        if filename.endswith("sam3_tracking_predictor.py"):
+            replacements = [("torch.autocast(device_type=\"cuda\", dtype=torch.bfloat16)",
+                             "torch.autocast(device_type=\"cpu\", enabled=False)"),
+                            ("torch.device(\"cuda\")", "self.device")]
+        if filename.endswith("sam3_video_base.py"):
+            replacements = [(f'sam3_image_out["tracker_backbone_fpn_{i}"]',
+                             f'sam3_image_out["tracker_backbone_fpn_{i}"].float()') for i in range(3)]
+        if filename.endswith("connected_components.py"):
+            replacements = [("    batch_size = input_tensor.shape[0]\n",
+                             "    batch_size = input_tensor.shape[0]\n"
+                             "    if batch_size == 0:\n"
+                             "        empty = torch.zeros(out_shape, dtype=torch.int64, device=input_tensor.device)\n"
+                             "        return empty, empty.clone()\n")]
+        for original, replacement in replacements:
+            if text.count(original) != 1:
+                raise ValueError(f"expected one CPU-video adaptation site: {filename}: {original}")
+            text = text.replace(original, replacement)
+        text = text.replace(".pin_memory()", "")
+        text = text.replace(".cuda(non_blocking=True)", ".to(device=self.device, non_blocking=True)")
+        text = text.replace(".cuda()", ".to(device=self.device)")
+        if filename.endswith("sam3_tracker_base.py"):
+            text = text.replace('prev["maskmem_features"].to(device=self.device, non_blocking=True)',
+                                'prev["maskmem_features"].to(device=self.device, non_blocking=True).float()')
+        changes.append((filename, text,
+                        "CPU-only transfers and FP32 consumers; retain explicit BF16 storage and original temporal rules. Defer unused interactive Triton import."))
+    return [{"file": filename, "source_sha256": sha256_file(source / filename),
+             "adapted_sha256": hashlib.sha256(text.encode()).hexdigest(), "reason": reason,
+             "text": text} for filename, text, reason in changes]
+
 
 def patched_text(text, patch):
     if hashlib.sha256(text.encode()).hexdigest() != patch["source_sha256"]:
@@ -81,7 +146,9 @@ def patched_text(text, patch):
     return text
 
 
-def prepare(source, output):
+def prepare(source, output, task="image"):
+    if task not in ("image", "video"):
+        raise ValueError("unsupported reference task")
     source, _, _ = validate_source(source)
     output = output.resolve()
     if output.is_relative_to(source) or source.is_relative_to(output):
@@ -93,15 +160,19 @@ def prepare(source, output):
     try:
         shutil.copytree(source / "sam3", staging / "sam3", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         shutil.copyfile(source / "LICENSE", staging / "LICENSE")
-        for patch in PATCHES:
+        changes = video_adaptations(source) if task == "video" else PATCHES
+        for patch in changes:
             path = staging / patch["file"]
-            path.write_text(patched_text(path.read_text(encoding="utf-8"), patch), encoding="utf-8")
+            text = patch["text"] if task == "video" else patched_text(path.read_text(encoding="utf-8"), patch)
+            path.write_text(text, encoding="utf-8")
         write_json(staging / "adaptations.json", {"source": str(source), "source_revision": SAM3_REVISION,
                                                  "adapted_source": str(output), "preparer_sha256": sha256_file(__file__),
-                                                 "changes": PATCHES})
+                                                 "task": task,
+                                                 "changes": [{key: value for key, value in patch.items() if key != "text"}
+                                                             for patch in changes]})
         validate_source(source, staging)
         os.rename(staging, output)
-        print(f"Prepared pinned CPU-image reference source: {output}")
+        print(f"Prepared pinned CPU-{task} reference source: {output}")
     except BaseException:
         shutil.rmtree(staging)
         raise
@@ -111,9 +182,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--task", choices=("image", "video"), default="image")
     args = parser.parse_args()
     try:
-        prepare(args.source, args.output)
+        prepare(args.source, args.output, args.task)
     except (OSError, ValueError, RuntimeError) as error:
         parser.exit(1, f"reference source preparation failed: {error}\n")
 

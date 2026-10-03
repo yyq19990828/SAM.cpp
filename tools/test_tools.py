@@ -22,6 +22,28 @@ from validate_image import GATES, check_provenance, mask_iou, read_results, tens
 
 
 class ToolChecks(unittest.TestCase):
+    def test_converter_cli_video_precision_default(self):
+        import io
+        import convert_sam3
+
+        common = ["convert_sam3.py", "--checkpoint", "source.pt", "--bpe", "bpe.gz", "--output", "output.gguf"]
+        for task, explicit, expected in (("video", None, "hybrid"), ("video", "f16", "f16"),
+                                         ("video", "f32", "f32"), ("video", "hybrid", "hybrid"),
+                                         ("image", "f16", "f16"), ("image", "f32", "f32")):
+            with self.subTest(task=task, explicit=explicit):
+                arguments = common + ["--task", task] + (["--precision", explicit] if explicit else [])
+                with patch("sys.argv", arguments), patch.object(convert_sam3, "convert") as convert_mock:
+                    convert_sam3.main()
+                    convert_mock.assert_called_once_with(Path("source.pt"), Path("bpe.gz"), expected, Path("output.gguf"), task)
+        for task_arguments in ([], ["--task", "image"]):
+            with self.subTest(image_arguments=task_arguments):
+                with patch("sys.argv", common + task_arguments), patch.object(convert_sam3, "convert") as convert_mock:
+                    with patch("sys.stderr", new_callable=io.StringIO) as stderr, self.assertRaises(SystemExit) as caught:
+                        convert_sam3.main()
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertIn("--precision", stderr.getvalue())
+                    convert_mock.assert_not_called()
+
     @staticmethod
     def tokenizer_fixture():
         base = list(bytes_to_unicode().values())
@@ -169,9 +191,12 @@ class ToolChecks(unittest.TestCase):
             bpe.write_bytes(b"disposable tokenizer fixture")
             schema = {"schema_version": 1, "sam3_revision": SAM3_REVISION,
                       "tensors": {"ddec.norm.bias": [2]},
-                      "unused_tracker_tensors": {"no_mem_embed": [2]}}
+                      "unused_tracker_tensors": {"no_mem_embed": [2],
+                                                 "sam_dec.pred_obj_score_head.layers.2.weight": [256]}}
+            score_weight = torch.arange(256, dtype=torch.float32).reshape(1, 256) / 1000 + 1.0003
             torch.save({"detector.transformer.decoder.norm.bias": torch.tensor([1.0003, -2.333]),
-                        "tracker.no_mem_embed": torch.tensor([[[3.14159, -4.0001]]])}, checkpoint)
+                        "tracker.no_mem_embed": torch.tensor([[[3.14159, -4.0001]]]),
+                        "tracker.sam_mask_decoder.pred_obj_score_head.layers.2.weight": score_weight}, checkpoint)
             vocab, merges = self.tokenizer_fixture()
             with patch("convert_sam3.load_tokenizer", return_value=(vocab, merges)), \
                     patch("sam3_artifacts.read_json", return_value=schema):
@@ -181,9 +206,17 @@ class ToolChecks(unittest.TestCase):
                     convert(checkpoint, bpe, "f16", root / "video.gguf", "video")
             self.assertEqual(video["sam_schema_version"], 2)
             self.assertEqual(video["task"], "video")
-            self.assertEqual(len(video["tensors"]), 2)
+            self.assertEqual(len(video["tensors"]), 3)
             self.assertEqual(video["skipped"], [])
-            self.assertEqual(len(image["skipped"]), 1)
+            self.assertEqual(len(image["skipped"]), 2)
+            score_entry = next(item for item in video["tensors"]
+                               if item["name"] == "sam_dec.pred_obj_score_head.layers.2.weight")
+            self.assertEqual(score_entry["shape"], [1, 256])
+            self.assertEqual(score_entry["ggml_shape"], [256])
+            self.assertEqual(score_entry["dtype"], "float32")
+            score_tensor = next(item for item in read_gguf(root / "video.gguf").tensors
+                                if item.name == score_entry["name"])
+            np.testing.assert_array_equal(score_tensor.data.reshape(1, 256), score_weight.numpy())
             image_entry = image["tensors"][0]
             video_entry = next(item for item in video["tensors"] if item["name"] == image_entry["name"])
             for key in ("ggml_shape", "dtype", "sha256", "bytes"):
@@ -220,15 +253,75 @@ class ToolChecks(unittest.TestCase):
                 with self.subTest(index=index), self.assertRaises(ValueError):
                     validate_metadata(read_gguf(path), "f32", "a" * 64, "video")
 
+    def test_hybrid_profile_retains_original_values_and_rejects_misdeclarations(self):
+        import torch
+
+        values = torch.tensor([[1.0003, -2.333], [3.1415927, 4.00001]])
+        keys = ["detector.backbone.vision_backbone.trunk.blocks.0.attn.qkv.weight",
+                "detector.backbone.vision_backbone.sam2_convs.2.conv_1x1.weight",
+                "tracker.obj_ptr_proj.layers.0.weight",
+                "detector.backbone.vision_backbone.convs.2.conv_1x1.weight",
+                "detector.backbone.language_backbone.resizer.weight"]
+        names = [rename_key(key, "video")[0] for key in keys]
+        expected = {name: [2, 2] for name in names}
+        vocab, merges = self.tokenizer_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkpoint, bpe = root / "original.pt", root / "fixture.bpe"
+            torch.save({key: values.clone() for key in keys}, checkpoint)
+            bpe.write_bytes(b"disposable BPE fixture")
+            with patch("convert_sam3.load_tokenizer", return_value=(vocab, merges)), \
+                    patch("convert_sam3.tensor_schema", return_value=expected):
+                baseline = convert(checkpoint, bpe, "f16", root / "f16.gguf", "video")
+                hybrid = convert(checkpoint, bpe, "hybrid", root / "hybrid.gguf", "video")
+            reader = read_gguf(root / "hybrid.gguf")
+            self.assertEqual(validate_metadata(reader, "hybrid", hybrid["checkpoint"]["sha256"], "video")[0], "hybrid")
+            self.assertEqual(hybrid["storage_profile"], "visual-tracker-f32-v1")
+            original_shapes = {name: [2, 2] for name in names}
+            inspect_tensors(reader, "hybrid", expected, original_shapes)
+            old = {item["name"]: item for item in baseline["tensors"]}
+            for tensor in reader.tensors:
+                if tensor.name in names[:3]:
+                    self.assertEqual(tensor.tensor_type, gguf.GGMLQuantizationType.F32)
+                    np.testing.assert_array_equal(tensor.data, values.numpy())
+                else:
+                    item = next(item for item in hybrid["tensors"] if item["name"] == tensor.name)
+                    self.assertEqual(item["sha256"], old[tensor.name]["sha256"])
+                    self.assertEqual(item["dtype"], "float16")
+            with self.assertRaises(ValueError):
+                inspect_tensors(reader, "f16", expected, original_shapes)
+            with self.assertRaises(ValueError):
+                validate_metadata(reader, "f16", hybrid["checkpoint"]["sha256"], "video")
+            for index, declaration in enumerate(("unknown", 7)):
+                path = root / f"invalid-profile-{index}.gguf"
+                writer = gguf.GGUFWriter(path, "sam3")
+                write_metadata(writer, "hybrid", "a" * 64, vocab, merges, "video")
+                if isinstance(declaration, str):
+                    writer.add_string("sam.storage_profile", declaration)
+                else:
+                    writer.add_uint32("sam.storage_profile", declaration)
+                writer.add_tensor("probe.weight", values.numpy())
+                writer.write_header_to_file(); writer.write_kv_data_to_file(); writer.write_tensors_to_file(); writer.close()
+                with self.assertRaises(ValueError):
+                    validate_metadata(read_gguf(path), task="video")
+            with self.assertRaises(ValueError):
+                write_metadata(gguf.GGUFWriter(root / "invalid-image.gguf", "sam3"),
+                               "hybrid", "a" * 64, vocab, merges, "image")
+
     def test_video_recipe_boundaries_and_generation_status(self):
         from PIL import Image
         from sam3_artifacts import sha256_file
 
         source = Image.new("RGB", (1800, 1200), (220, 40, 10))
         self.assertEqual(recipe_frame("motion", source, 12).tobytes(), source.tobytes())
-        entry_start, entry_late = recipe_frame("entry", source, 0), recipe_frame("entry", source, 30)
+        entry_start, entry_late = recipe_frame("entry", source, 15), recipe_frame("entry", source, 16)
         self.assertEqual(entry_start.getpixel((1799, 600)), (127, 127, 127))
         self.assertEqual(entry_late.getpixel((1799, 600)), (220, 40, 10))
+        asymmetric = source.copy()
+        asymmetric.paste((10, 40, 220), (0, 0, 900, 1200))
+        mirrored_entry = recipe_frame("entry", asymmetric, 16)
+        self.assertEqual(mirrored_entry.getpixel((1000, 600)), (220, 40, 10))
+        self.assertEqual(mirrored_entry.getpixel((1799, 600)), (10, 40, 220))
         occluded = recipe_frame("occlusion", source, 20)
         for point in ((64, 256), (1743, 919)):
             self.assertEqual(occluded.getpixel(point), (127, 127, 127))
@@ -236,7 +329,11 @@ class ToolChecks(unittest.TestCase):
             self.assertEqual(occluded.getpixel(point), (220, 40, 10))
         self.assertEqual(recipe_frame("occlusion", source, 24).tobytes(), source.tobytes())
         self.assertEqual(recipe_frame("hotstart-removal", source, 1).getpixel((0, 0)), (220, 40, 10))
-        self.assertEqual(recipe_frame("hotstart-removal", source, 2).getpixel((0, 0)), (127, 127, 127))
+        hotstart = recipe_frame("hotstart-removal", source, 2)
+        self.assertEqual(hotstart.getpixel((64, 256)), (127, 127, 127))
+        self.assertEqual(hotstart.getpixel((1743, 759)), (127, 127, 127))
+        self.assertEqual(hotstart.getpixel((1744, 759)), (220, 40, 10))
+        self.assertEqual(hotstart.getpixel((100, 760)), (220, 40, 10))
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             path = root / "fixture.png"
@@ -381,6 +478,214 @@ class ToolChecks(unittest.TestCase):
         self.assertIsNone(rename_key("tracker.no_mem_embed")[0])
         with self.assertRaises(ValueError):
             rename_key("detector.unsupported.weight")
+
+    def test_video_propagation_trace_serializes_original_ids_and_ties(self):
+        import torch
+        from export_video_reference import Capture
+
+        capture = Capture.__new__(Capture)
+        capture.ids = [np.int64(4), np.int64(9)]
+        capture.propagation = []
+        capture.candidate_iou = torch.tensor([[0.99, 0.7, 0.7, 0.4], [0.99, 0.4, 0.6, 0.8]])
+        capture.record_propagation(capture.candidate_iou[:, 1:])
+        restored = json.loads(json.dumps(capture.propagation, allow_nan=False))
+        self.assertEqual([item["id"] for item in restored], [4, 9])
+        self.assertEqual([item["mask_index"] for item in restored], [1, 3])
+        self.assertEqual([item["pointer_index"] for item in restored], [1, 3])
+        self.assertEqual([len(item["iou"]) for item in restored], [4, 4])
+        with self.assertRaisesRegex(ValueError, "batch"):
+            capture.record_propagation(capture.candidate_iou[:1, 1:])
+
+    def test_validators_reject_model_and_library_replacement_during_execution(self):
+        from types import SimpleNamespace
+        import validate_image
+        import validate_video
+        from sam3_artifacts import sha256_file
+
+        for validator, target in ((validate_image, "tests/test_image"), (validate_video, "examples/sam_video")):
+            for changed_artifact in ("model", "library"):
+                with self.subTest(validator=validator.__name__, changed=changed_artifact), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary); build, reference = root / "build", root / "reference"
+                    executable = build / target; executable.parent.mkdir(parents=True)
+                    executable.write_bytes(b"disposable executable fixture")
+                    library = build / "libggml-base.dylib"; library.write_bytes(b"original library")
+                    model = root / "model.gguf"; model.write_bytes(b"original model")
+                    manifest = model.with_suffix(".gguf.manifest.json"); manifest.write_text("{}")
+                    (reference / "case").mkdir(parents=True)
+                    (reference / "manifest.json").write_text("{}")
+                    case = {"id": "case", "directory": "case", "input": "input.png", "prompt": "truck"}
+                    oracle = {"reference_kind": "official-checkpoint", "eligible_for_milestone": False,
+                              "max_objects": 8, "cases": [case]}
+                    provenance = {"output": {"sha256": sha256_file(model)}, "checkpoint": {"sha256": "a" * 64}}
+                    args = SimpleNamespace(build_dir=build, model=model, reference=reference, cases=root / "cases.json",
+                                           output=root / "output", backend="cpu", threads=4, timeout_seconds=1,
+                                           allow_supplementary=False, allow_diagnostic=True)
+                    checked = ("f16", oracle, provenance) if validator is validate_image else ("f16", oracle, GATES)
+                    def replace(*unused, **kwargs):
+                        (model if changed_artifact == "model" else library).write_bytes(b"replaced during inference")
+                        return SimpleNamespace(returncode=0)
+                    with patch.object(validator, "check_provenance", return_value=checked), \
+                            patch.object(validator, "compare_case", return_value={"id": "case", "passed": True}) as compared, \
+                            patch.object(validator.subprocess, "run", side_effect=replace), \
+                            patch.object(validate_video, "MODEL_HASHES", {"f16": sha256_file(model)}):
+                        self.assertEqual(validator.validate(args), 1)
+                        compared.assert_not_called()
+                    report = read_json(args.output / "metrics.json")
+                    self.assertFalse(report["passed"])
+                    self.assertIn("artifact changed", report["cases"][0]["failures"][0])
+
+        from sam3_artifacts import freeze_output_files, verify_output_files
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary); tensor = output / "tensor.bin"
+            tensor.write_bytes(b"original output")
+            frozen = freeze_output_files(output)
+            verify_output_files(output, frozen)
+            tensor.write_bytes(b"altered output")
+            with self.assertRaisesRegex(ValueError, "output changed"):
+                verify_output_files(output, frozen)
+
+    def test_benchmark_rejects_incomplete_or_changed_workloads(self):
+        import copy
+        import benchmark_video
+        from sam3_artifacts import write_json
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "trace").mkdir(); (root / "tensors").mkdir()
+            for frame in range(64):
+                directory = root / f"{frame:06d}"; directory.mkdir()
+                mask = dump_array(directory, "mask", np.array([[1,0],[0,0]], dtype=np.uint8))
+                write_json(directory / "results.json", {"schema_version": 1, "frame_index": frame,
+                    "emitted_after_frame": min(frame+14,63),
+                    "objects": [{"id": 7, "score": .9, "box": [0,0,1,1], "mask": mask}]})
+                emitted = 64 if frame == 63 else max(0, frame-13)
+                stats = {"accepted_frames": frame+1, "emitted_frames": emitted, "pending_frames": frame+1-emitted,
+                         "pending_high_water": min(frame+1,15), "active_objects": 1, "retained_records": min(frame+1,27),
+                         "retained_records_high_water": min(frame+1,27), "retained_memory_bytes": min(frame+1,27)*32,
+                         "frame_ms": 10000 if frame < 16 else (1000 if frame == 63 else frame-15),
+                         "tracker_ms": 1, "memory_ms": .5,
+                         "runtime": {"vision_encodes": frame+1, "inferences": frame+1, "text_encodes": 1,
+                                     "metal_nodes": (frame+1)*10, "cpu_nodes": 0, "weight_buffer_bytes": 100,
+                                     "compute_buffer_bytes": 200, "process_peak_rss_bytes": 300}}
+                write_json(root / "trace" / f"{frame:06d}-stats.json", stats)
+                write_json(root / "trace" / f"{frame:06d}.json", {"frame_index": frame,
+                    "births": [{"id":7}] if frame == 0 else [], "removed": [], "groups": [] if frame == 0 else [{"ids":[7]}]})
+            manifest = {"complete": True, "task": "text_video", "frame_count": 64, "threads": 4,
+                        "precision": "f16", "storage_profile": "", "backend": "metal", "max_objects": 8,
+                        "width": 2, "height": 2, "prompt": "truck", "model_load_ms": 5, "stats": stats}
+            write_json(root / "manifest.json", manifest)
+            analyze = lambda: benchmark_video.analyze_run(root, 1, "f16", "metal", 2, 2)
+            valid = analyze()
+            self.assertEqual(valid["timings"]["frame_ms"]["count"], 48)
+            self.assertEqual(valid["timings"]["frame_ms"]["median_ms"], 24.5)
+            self.assertAlmostEqual(valid["timings"]["frame_ms"]["p95_ms"], 45.65)
+            self.assertEqual(valid["timings"]["frame_ms"]["maximum_ms"], 1000)
+            self.assertEqual(valid["first_output"]["emitted_after_frame"], 14)
+            # Counts remain one, but retiring/replacing an ID must not be accepted as continuity.
+            trace_path = root / "trace/000032.json"; trace = read_json(trace_path)
+            changed = copy.deepcopy(trace); changed.update(births=[{"id":8}], removed=[7])
+            write_json(trace_path, changed)
+            with self.assertRaisesRegex(ValueError, "continuity"):
+                analyze()
+            write_json(trace_path, trace)
+            missing = root / "trace/000063-stats.json"; saved = missing.read_bytes(); missing.unlink()
+            with self.assertRaises(OSError):
+                analyze()
+            missing.write_bytes(saved)
+            altered = copy.deepcopy(manifest); altered["complete"] = False
+            write_json(root / "manifest.json", altered)
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                analyze()
+            write_json(root / "manifest.json", manifest)
+            path = root / "trace/000040-stats.json"; before = read_json(path)
+            altered = copy.deepcopy(before); altered["runtime"]["cpu_nodes"] = 1; write_json(path, altered)
+            with self.assertRaisesRegex(ValueError, "placement"):
+                analyze()
+            altered = copy.deepcopy(before); altered["runtime"]["compute_buffer_bytes"] = 201; write_json(path, altered)
+            with self.assertRaisesRegex(ValueError, "plateau"):
+                analyze()
+            write_json(path, before)
+            self.assertEqual(len(analyze()["samples"]), 64)
+        with patch.object(benchmark_video.subprocess, "check_output", return_value="100 1 32 /usr/bin/time\n101 100 2048 /tmp/sam_video\n102 1 99999 /elsewhere/sam_video\n"):
+            self.assertEqual(benchmark_video.current_rss(100, "sam_video"), {"pid":101, "rss_bytes":2097152})
+
+    def test_video_oracle_behavior_and_incomplete_provenance(self):
+        from export_video_reference import verify_behavior
+        from validate_video import check_provenance as check_video_provenance
+
+        visible = lambda *ids: {"objects": [{"id": value} for value in ids]}
+        self.assertTrue(verify_behavior("motion", [visible(4), visible(4)], []))
+        self.assertFalse(verify_behavior("motion", [visible(4), visible(5)], []))
+        entry_traces = [{"births": [], "removed": []} for _ in range(18)]
+        entry_traces[16]["births"] = [{"id": 5}]
+        self.assertTrue(verify_behavior("entry", [visible(4)] * 16 + [visible(4, 5)] * 2, entry_traces))
+        self.assertFalse(verify_behavior("entry", [visible(4)] * 16 + [visible(4, 5)] * 2, []))
+        self.assertFalse(verify_behavior("entry", [visible(4)] * 16 + [visible(4, 5), visible(5)], entry_traces))
+        self.assertFalse(verify_behavior("entry", [visible(4)] * 18, []))
+        trace = [{"births": [{"id": 4}], "removed": []}, {"births": [], "removed": [4]}]
+        self.assertTrue(verify_behavior("hotstart-removal", [visible(), visible()], trace))
+        self.assertFalse(verify_behavior("hotstart-removal", [visible(4), visible()], trace))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "manifest.json").write_text(json.dumps({"complete": False}))
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                check_video_provenance(root / "missing-model.gguf", root)
+            self.assertFalse((root / "missing-model.gguf").exists())
+
+    def test_video_comparison_keeps_birth_mapping_and_rejects_fallback(self):
+        from validate_video import compare_case, read_objects
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); reference, actual = root / "reference", root / "actual"
+            case = {"id": "motion", "frames": 2, "width": 2, "height": 2, "prompt": "truck", "token_ids": [0] * 32}
+            stats = {"accepted_frames": 2, "emitted_frames": 2, "pending_frames": 0, "pending_high_water": 2,
+                     "retained_records": 2, "active_objects": 1, "runtime": {"metal_nodes": 20, "cpu_nodes": 0}}
+            for directory, identifier in ((reference, 4), (actual, 9)):
+                (directory / "trace").mkdir(parents=True)
+                for frame in range(2):
+                    target = directory / f"{frame:06d}"; target.mkdir()
+                    mask = dump_array(target, "mask", np.array([[1, 0], [0, 0]], dtype=np.uint8))
+                    record = {"schema_version": 1, "frame_index": frame, "emitted_after_frame": 1,
+                              "objects": [{"id": identifier, "score": 0.9, "box": [0, 0, 0, 0], "mask": mask}]}
+                    (target / "results.json").write_text(json.dumps(record))
+                    trace = {"frame_index": frame, "groups": [], "births": [{"id": identifier}] if frame == 0 else [], "removed": [],
+                             "propagation": [{"id": identifier, "mask_index": 2, "pointer_index": 2}] if frame else []}
+                    (directory / "trace" / f"{frame:06d}.json").write_text(json.dumps(trace))
+                    (directory / "trace" / f"{frame:06d}-stats.json").write_text(json.dumps(stats))
+                    tensors = directory / "tensors" / f"{frame:06d}"; tensors.mkdir(parents=True)
+                    metadata = dump_array(tensors, "pointer", np.asarray([1, 2], dtype=np.float32))
+                    (tensors / "tensors.json").write_text(json.dumps({"schema_version": 1, "byte_order": "little",
+                                                                    "tensors": {f"object.{identifier}.pointer": metadata}}))
+            manifest = {"complete": True, "task": "text_video", "frame_count": 2, "precision": "f32", "backend": "metal",
+                        "max_objects": 8, "stats": stats, **{key: case[key] for key in ("width", "height", "prompt", "token_ids")}}
+            (actual / "manifest.json").write_text(json.dumps(manifest))
+            gates = read_json(Path(__file__).parents[1] / "tests/data/sam3-video-cases.json")["acceptance"]
+            result = compare_case(reference, actual, case, "f32", "metal", gates, 8)
+            self.assertTrue(result["passed"]); self.assertEqual(result["id_mapping"], {9: 4})
+            trace_path = actual / "trace/000001.json"; trace = read_json(trace_path)
+            trace["propagation"][0]["pointer_index"] = 1; trace_path.write_text(json.dumps(trace))
+            failed = compare_case(reference, actual, case, "f32", "metal", gates, 8)
+            self.assertFalse(failed["passed"])
+            self.assertIn("frame 1: propagated mask/pointer candidate differs", failed["failures"])
+            trace["propagation"][0]["pointer_index"] = 2; trace_path.write_text(json.dumps(trace))
+            manifest.update(precision="hybrid", storage_profile="visual-tracker-f32-v1")
+            (actual / "manifest.json").write_text(json.dumps(manifest))
+            self.assertTrue(compare_case(reference, actual, case, "hybrid", "metal", gates, 8)["passed"])
+            manifest.update(precision="f32", storage_profile="")
+            (actual / "manifest.json").write_text(json.dumps(manifest))
+            # A propagated object cannot acquire a new ID by matching its mask.
+            path = actual / "000001/results.json"; changed = read_json(path)
+            changed["objects"][0]["id"] = 10; path.write_text(json.dumps(changed))
+            with self.assertRaises(KeyError):
+                compare_case(reference, actual, case, "f32", "metal", gates, 8)
+            changed["objects"][0]["id"] = 9; changed["objects"][0]["box"][0] = "bad"
+            path.write_text(json.dumps(changed))
+            with self.assertRaisesRegex(ValueError, "malformed"):
+                read_objects(path.parent, 1, 2, 2, False)
+            manifest["stats"]["runtime"]["cpu_nodes"] = 1
+            (actual / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "CPU fallback"):
+                compare_case(reference, actual, case, "f32", "metal", gates, 8)
 
 
 if __name__ == "__main__":

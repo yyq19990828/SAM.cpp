@@ -12,7 +12,12 @@ import numpy as np
 from sam3_artifacts import BPE_SHA256, SAM3_REVISION
 
 
-KEEP_F32 = ("embed", "tpos", "pe_gaussian", "token", "no_obj", "no_mem", "gamma", "freqs_cis")
+# The original [1,256] score projection is a canonical GGML vector, stored F32.
+KEEP_F32 = ("embed", "tpos", "pe_gaussian", "token", "no_obj", "no_mem", "gamma", "freqs_cis",
+            "sam_dec.pred_obj_score_head.layers.2.weight")
+HYBRID_PROFILE = "visual-tracker-f32-v1"
+HYBRID_F32_PREFIXES = ("vit.", "neck.trk.", "mem_attn.", "mem_enc.", "sam_pe.", "sam_dec.",
+                      "obj_ptr_proj.", "obj_ptr_tpos_proj.", "trk_mask_ds.")
 IMAGE_PARAMETERS = {
     "sam3.vision.image_size": 1008, "sam3.vision.patch_size": 14,
     "sam3.vision.embedding_length": 1024, "sam3.vision.block_count": 32,
@@ -87,9 +92,10 @@ def bytes_to_unicode():
 
 
 def storage_dtype(name, shape, precision):
-    if precision not in ("f32", "f16"):
+    if precision not in ("f32", "f16", "hybrid"):
         raise ValueError(f"unsupported precision: {precision}")
-    use_f16 = precision == "f16" and len(shape) >= 2 and not any(part in name for part in KEEP_F32)
+    keep = any(part in name for part in KEEP_F32) or (precision == "hybrid" and name.startswith(HYBRID_F32_PREFIXES))
+    use_f16 = precision != "f32" and len(shape) >= 2 and not keep
     return np.dtype("<f2" if use_f16 else "<f4")
 
 
@@ -140,12 +146,16 @@ def validate_tokenizer(tokens, merges):
 
 def write_metadata(writer, precision, checkpoint_sha256, tokens, merges, task="image"):
     storage_dtype("", (1,), precision)
+    if precision == "hybrid" and task != "video":
+        raise ValueError("hybrid storage is defined only for full video models")
     if not re.fullmatch("[0-9a-f]{64}", checkpoint_sha256):
         raise ValueError("checkpoint SHA-256 must be 64 lowercase hexadecimal characters")
     merge_strings = [" ".join(pair) for pair in merges]
     validate_tokenizer(tokens, merge_strings)
     writer.add_custom_alignment(32)
-    writer.add_file_type(int(precision == "f16"))
+    writer.add_file_type(int(precision != "f32"))
+    if precision == "hybrid":
+        writer.add_string("sam.storage_profile", HYBRID_PROFILE)
     strings, integers = task_metadata(task)
     for key, value in strings.items():
         if key != "general.architecture":  # The official writer adds architecture in its constructor.
@@ -249,7 +259,15 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
     if reader.get_field("general.alignment") is not None:
         require("general.alignment", [gguf.GGUFValueType.UINT32], 32)
     file_type = require("general.file_type", [gguf.GGUFValueType.UINT32])
-    if file_type not in (0, 1) or (precision is not None and file_type != int(precision == "f16")):
+    if file_type not in (0, 1):
+        raise ValueError("GGUF storage precision disagrees with its provenance")
+    actual_precision = "f16" if file_type else "f32"
+    if reader.get_field("sam.storage_profile") is not None:
+        require("sam.storage_profile", [gguf.GGUFValueType.STRING], HYBRID_PROFILE)
+        if task != "video" or file_type != 1:
+            raise ValueError("hybrid storage requires a mixed full-video container")
+        actual_precision = "hybrid"
+    if precision is not None and precision != actual_precision:
         raise ValueError("GGUF storage precision disagrees with its provenance")
     digest = require("sam.source.checkpoint_sha256", [gguf.GGUFValueType.STRING], checkpoint_sha256)
     if not re.fullmatch("[0-9a-f]{64}", digest):
@@ -257,7 +275,7 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
     tokens = require("tokenizer.ggml.tokens", [gguf.GGUFValueType.ARRAY, gguf.GGUFValueType.STRING])
     merges = require("tokenizer.ggml.merges", [gguf.GGUFValueType.ARRAY, gguf.GGUFValueType.STRING])
     validate_tokenizer(tokens, merges)
-    return "f16" if file_type else "f32", tokens, merges
+    return actual_precision, tokens, merges
 
 
 def inspect_tensors(reader, precision, expected, original_shapes=None):

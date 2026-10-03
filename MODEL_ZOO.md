@@ -1,7 +1,8 @@
 # Model Zoo
 
-The accepted image runtime uses **GGUF v3 with SAM schema 1**, containing named model
-parameters, the complete tokenizer and source hashes. See
+Runtime files use **GGUF v3**, with SAM schema 1 for image-only files and schema
+2 for video files, containing named model parameters, the complete tokenizer
+and source hashes. See
 [GGUF schema and migration](#gguf-schema-and-migration). Performance is recorded in
 [BENCHMARK.md](BENCHMARK.md).
 
@@ -9,10 +10,18 @@ parameters, the complete tokenizer and source hashes. See
 
 | Model | Task supported here | Official weights | Official implementation | Accepted configurations |
 | --- | --- | --- | --- | --- |
-| SAM 3 | Text-prompted image segmentation | [facebook/sam3 on HF](https://huggingface.co/facebook/sam3) | [facebookresearch/sam3 on GitHub](https://github.com/facebookresearch/sam3) | FP32/CPU, FP16/CPU, FP16/Metal; 7/7 reference cases each |
+| SAM 3 | Text-prompted image segmentation | [facebook/sam3 on HF](https://huggingface.co/facebook/sam3) | [facebookresearch/sam3 on GitHub](https://github.com/facebookresearch/sam3) | FP32/CPU, FP32/Metal, FP16/CPU, FP16/Metal; 7/7 reference cases each |
 
-SAM 3 video conversion/loading and internal tracker graphs are in development;
-full video inference is not integrated or accepted. SAM 3.1, SAM 2/2.1,
+SAM 3 forward video inference uses `VideoSession` and `sam_video`. Supported
+video configurations are **F32/CPU, F32/Metal, hybrid/CPU and hybrid/Metal**;
+each passes all five original-reference cases (216 frames). Hybrid
+`visual-tracker-f32-v1` is the video conversion default. Image regressions,
+real session/lifetime isolation and the default's 64-frame one/four-object
+performance protocol also pass. Explicit F16 video remains diagnostic:
+Metal fails candidate selection at entry frames 23/24 and the optional full
+CPU diagnostic is deferred. See the
+[completed M2 record](docs/plans/20261002-182848-m2-complete-acceptance.md).
+SAM 3.1, SAM 2/2.1,
 GroundingSAM and DART remain future integrations. Their extension
 boundaries are described in [architecture.md](docs/architecture.md).
 
@@ -83,21 +92,43 @@ The converter uses `gguf==0.19.0` to stream 1,133 image-model tensors and the
 complete tokenizer into a GGUF file. Its `.gguf.manifest.json` sidecar records
 source/output and per-tensor hashes, canonical dimensions, payload offsets,
 package version and converter/helper identities.
-The default `--task image` validates and excludes known unused tracker tensors.
-`--task video` includes all 1,464 image/tracker tensors in schema 2; choose new
-filenames such as `sam3-video-f32.gguf` or `sam3-video-f16.gguf`. Official video
-conversion hashes and numerical results are pending local validation. Existing output files
-or sidecars are refused; reuse a verified file or choose a new output path.
+The default `--task image` validates and excludes known unused tracker tensors
+and still requires an explicit `--precision`. `--task video` includes all 1,464
+image/tracker tensors in schema 2 and defaults to `hybrid` when precision is
+omitted. Use `sam3-video-hybrid-v1.gguf` or an explicit F32/F16 filename.
+Explicit precisions and the Python conversion API retain their existing payload
+policy. Existing output files or sidecars are refused; reuse a verified file or
+choose a new output path.
 
 | Output | Size (bytes) | SHA-256 | Runtime |
 | --- | ---: | --- | --- |
-| `sam3-f32.gguf` | 3,371,139,456 | `cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486` | Accepted on CPU; explicit Metal path pending local acceptance |
+| `sam3-f32.gguf` | 3,371,139,456 | `cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486` | CPU or explicitly selected Metal; Auto selects CPU |
 | `sam3-f16.gguf` | 1,797,613,888 | `66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120` | CPU or Metal |
+
+Experimental full-profile files were converted from the same original checkpoint:
+
+| Output | Size (bytes) | SHA-256 | Validation scope |
+| --- | ---: | --- | --- |
+| `sam3-video-f32.gguf` | 3,449,345,696 | `02513232afca5ba8c174b66c7fc839c67b32590df4b53bdd6df5089a6a546844` | Original payloads and image subset verified; all five original video cases (216 frames) pass on CPU and Metal. Maximum stage L2: 0.000203 CPU / 0.000346 Metal. |
+| `sam3-video-f16.gguf` | 1,837,925,216 | `9c9bc86c81d11a041db10a46d3d1e8ecaa1cbcf6fad683b00901f641746bf32c` | Explicit diagnostic profile. Full Metal corpus fails exact mask/pointer selection at entry frames 23/24; the other four cases pass. Exact-F16 original-module replay reproduces the failure. Full CPU diagnostic is deferred, not passed. The old 17-frame stress limitation remains. |
+| `sam3-video-hybrid-v1.gguf` | 2,765,012,640 | `3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05` | Video default. All 1,464 payloads verified: 236 original-FP32 visual/tracker payloads and 1,228 unchanged baseline payloads. Original 17-frame stress, full five-case/216-frame video corpus, image and real-session checks pass on CPU/Metal. Full-video max L2: 0.002650 CPU / 0.002594 Metal. All four 64/16/48 performance cells complete; [acceptance record](docs/plans/20261002-182848-m2-complete-acceptance.md). |
+
+For the explicit F32/F16 files, every image-subset tensor matches the corresponding accepted schema-1 file
+byte-for-byte. The FP16 video converter keeps the final single-output object
+score projection in F32, matching its canonical GGML vector shape and runtime
+policy. The original-checkpoint verification remains in the
+[conversion record](docs/plans/20261002-032709-local-model-meta-validation.md);
+the completed video support scope is recorded above.
 
 FP16 uses the converter's mixed storage policy: selected tensors stay FP32.
 CPU promotes half weights exactly to FP32 in memory; Metal keeps packed half
-weights with the required arithmetic corrections. Only F32 and mixed F16 storage
-are supported; quantized Q4/Q8 files are rejected. The converter requires a
+weights with the required arithmetic corrections. The reader supports F32, mixed F16 and the explicit video-only
+`visual-tracker-f32-v1` hybrid storage policy; quantized Q4/Q8 files are rejected.
+Hybrid restores the shared visual trunk, all tracker necks and tracker weights
+from original FP32 values, while detector-only/text weights remain mixed. Its
+video and image validation uses the unchanged mixed normalized-L2 gate of 0.02;
+it is not a full-FP32 artifact. It adds 927,087,368 payload bytes over F16 and
+preserves the BF16 state/transport and temporal policy. The converter requires a
 `.gguf` output suffix and writes genuine GGUF bytes.
 
 Follow [reference export and validation](README.md#convert-and-generate-references)
