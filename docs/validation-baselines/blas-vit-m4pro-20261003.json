@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "kind": "accepted-current-implementation-baseline-index",
+  "status": "accepted-f32-hybrid-cpu-metal-with-cpu-blas",
+  "date": "2026-10-03",
+  "base_commit": "56a4cdeed5e3b408b3318becf32e52500690a195",
+  "implementation_git_state": "uncommitted",
+  "hardware": {
+    "cpu": "Apple M4 Pro, 14 cores",
+    "gpu": "20-core Metal",
+    "memory_gib": 48,
+    "os": "macOS 27.0 (26A428)"
+  },
+  "ggml_revision": "353b63b439f27ab2cc19dac97ab1681ba6d2d084",
+  "meta_revision": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+  "precision": {
+    "video_default": "hybrid visual-tracker-f32-v1",
+    "input_rounding": "f16",
+    "tracker_feature_rounding": "bf16 in f32 buffers",
+    "memory_storage": "bf16, expanded to f32 for compute"
+  },
+  "execution": {
+    "cpu": "CPU weight owner; optional GGML BLAS accelerator, Apple Accelerate here",
+    "metal": "Metal, zero CPU graph fallback in accepted runs",
+    "threads_requested": 4,
+    "VECLIB_MAXIMUM_THREADS": "4",
+    "blas_nodes": "subset of cpu_nodes"
+  },
+  "support": {
+    "video_cells": 4,
+    "numerical_video_frames": 864,
+    "image_cases": 70,
+    "short_sessions": 6,
+    "long_sessions": 2,
+    "long_pushes": 256,
+    "video_performance_cells": 4,
+    "image_performance_cells": 4
+  },
+  "performance_protocols": {
+    "video": {
+      "frames": 64,
+      "warmup": 16,
+      "measured": 48,
+      "final_drain_included": true
+    },
+    "image": {
+      "warmup": 1,
+      "full_image_repeats": 5,
+      "workload": "original truck.jpg via stb JPEG decoder",
+      "same_input_single_inference_bridge": "exact output check, not a new original-Meta oracle"
+    }
+  },
+  "f16_video": {
+    "metal": "failed exact candidate selection at entry23/24",
+    "cpu": "deferred-not-run"
+  },
+  "evidence": {
+    "completion_path": "build/p1-p2/20261003/reaccept/final-evidence.json",
+    "completion_summary_sha256": "04fb62402c919e89e63354b374095d78764ed88fd5f33be43ada17f983c21cb2",
+    "archived_completion_path": "data/00-reaccept/final-evidence.json",
+    "archive_manifest": "models/validation-baselines/blas-vit-m4pro-20261003/bundle/archive.json",
+    "archive_manifest_sha256": "1878684d18433cbf0d6a9a78579accc5fb1e77699633c8b772bd03b4660810b9",
+    "archived_files": 14664,
+    "archived_bytes": 43333663701,
+    "copy_methods": {
+      "apfs-clone": 14664
+    },
+    "verified_run_identities": 373,
+    "verified_output_trees": 104,
+    "model_sha256": {
+      "sam3-video-f16.gguf": "9c9bc86c81d11a041db10a46d3d1e8ecaa1cbcf6fad683b00901f641746bf32c",
+      "sam3-video-f32.gguf": "02513232afca5ba8c174b66c7fc839c67b32590df4b53bdd6df5089a6a546844",
+      "sam3-video-hybrid-v1.gguf": "3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05",
+      "sam3-f32.gguf": "cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486",
+      "sam3-f16.gguf": "66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120"
+    },
+    "reference_manifest_sha256": "00e51649947020c3cab441f35b70ff69df6ff4c88fff9041f40cfee9ce2e4d46"
+  },
+  "shared_parent_resources": {
+    "index": "docs/validation-baselines/m2-m4pro-20261003.json",
+    "index_sha256": "b014b4f7947cfba90b260fafbc8b17e384daed38c9d8c635a8bdb4f8d0f75cfc",
+    "archive_manifest": "models/validation-baselines/m2-m4pro-20261003/bundle/archive.json",
+    "archive_manifest_sha256": "a77d8710137c0653e7405be1bb44f514c11ea26341e024155660890e85c26239",
+    "scope": "Unchanged original checkpoint, GGUF models, BPE and original-Meta reference data; retained in the parent private archive"
+  },
+  "reuse": "Verify both archive identities and exact model/binary/library/input/source receipts. Preserve or restore recorded source paths/RPATHs; this index grants no automatic acceptance to changed executables.",
+  "known_limits": [
+    "F16 video remains diagnostic; historical failed Metal evidence retained and full CPU F16 remains deferred",
+    "Finite64/128 protocols do not establish unlimited-stream RSS bounds",
+    "Remote CI not run; no commit/push performed"
+  ],
+  "retained_failure_records": [
+    "image-performance.json: pre-inference counter correction",
+    "image-performance-v2.json: cross-decoder input mismatch; original failure retained; v3 preserves exact comparison with identical JPEG input"
+  ],
+  "post_acceptance_delta": {
+    "scope": "Metadata/API compatibility and archive verification only; no graph, weight, precision, preprocessing or numerical-gate change",
+    "types_sha256_measured": "74fdcc30f9014706658eee48d191ada34c2ad5c670fa1d4ca95ce8b342800520",
+    "types_sha256_current": "86ff2a7247dc76f0d3266adba32fd7fabcee77bc353594b704289dadd3cf837c",
+    "archive_verifier_sha256_measured": "5ed733156dda5aeba5586697cc3c069337e58dc363ed27766c4127aba2b61b25",
+    "archive_verifier_sha256_current": "f7e8e596bc520f4745670b620d60a1b8dd0b5b7fa2c0478faf1faa79facc1ce7",
+    "focused_receipt": "build/commit-preflight/20261003/focused-parity.json",
+    "focused_receipt_sha256": "cb8e58d8b0db7e8c934eef902d21356cbab1b63f98ba600c822137b739a4b311",
+    "verification": [
+      "Legacy13-value initializer RED before fix and GREEN after",
+      "Isolated CPU and Metal builds plus CTest11/11 each",
+      "11 tensor/mask files per backend bitwise equal to preserved implementation; public detections exact",
+      "Real hybrid video session behavior passes on both backends",
+      "Archive extra-root-file, directory-symlink and byte-total regressions; tools24/24 after fix"
+    ],
+    "reuse": "Heavy recorded matrix/timings remain evidence of the immutable measured builds. Focused checks cover this named delta; old binary receipts are not relabeled for rebuilt executables."
+  }
+}

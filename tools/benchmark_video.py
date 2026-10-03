@@ -38,6 +38,25 @@ def distribution(values):
             "p95_method": "linear interpolation at (n-1)*0.95", "minimum_ms": ordered[0], "maximum_ms": ordered[-1]}
 
 
+def encoding_timings(samples):
+    """Existing runtime timers; historical reports may omit them entirely."""
+    fields = ("image_ms", "inference_ms")
+    present = [sum(name in sample["stats"]["runtime"] for name in fields) for sample in samples]
+    if not any(present):
+        return {"available": False, "reason": "Historical CLI omitted runtime encoding timers."}
+    if any(count != len(fields) for count in present):
+        raise ValueError("runtime encoding timer fields are incomplete")
+    for sample in samples:
+        for name in fields:
+            value = sample["stats"]["runtime"][name]
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError("invalid runtime encoding timing")
+    return {"available": True,
+            "image_encoding": distribution([sample["stats"]["runtime"]["image_ms"] for sample in samples[WARMUP:]]),
+            "detector_pipeline": distribution([sample["stats"]["runtime"]["inference_ms"] for sample in samples[WARMUP:]]),
+            "scope": "image includes ViT/necks/geometry; detector pipeline includes prompt/fusion/detection/masks. Host transfers/allocation included; not GPU-only kernel time."}
+
+
 def analyze_run(directory, expected_objects, precision, backend, width, height):
     """Reject incomplete/wrong workloads before computing a benchmark summary."""
     directory = Path(directory)
@@ -117,7 +136,8 @@ def analyze_run(directory, expected_objects, precision, backend, width, height):
     compute = {sample["stats"]["runtime"]["compute_buffer_bytes"] for sample in samples[WARMUP:]}
     if len(weights) != 1 or len(compute) != 1:
         raise ValueError("weight/compute allocation did not plateau after warmup")
-    return {"samples": samples, "timings": {name: distribution([sample["stats"][name] for sample in samples[WARMUP:]])
+    return {"samples": samples, "encoding_timings": encoding_timings(samples),
+            "timings": {name: distribution([sample["stats"][name] for sample in samples[WARMUP:]])
                                             for name in ("frame_ms", "tracker_ms", "memory_ms")},
             "first_output": {"emitted_after_frame": output_delays[0], "accepted_frames": output_delays[0] + 1,
                              "cumulative_frame_ms": sum(sample["stats"]["frame_ms"] for sample in samples[:15])},
@@ -150,6 +170,18 @@ def conditions():
         except (OSError, subprocess.TimeoutExpired) as error:
             result[name] = "unavailable: " + str(error)
     return result
+
+
+def validate_qualification_records(qualification, expected_objects):
+    records = qualification.get("records", [])
+    expected_ids = records[0]["active_ids"] if records else []
+    if (len(records) != 17 or len(expected_ids) != expected_objects or len(set(expected_ids)) != len(expected_ids)
+            or any(row.get("frame_index") != frame or row.get("active_ids") != expected_ids
+                   or row.get("removed") or (frame and row.get("births"))
+                   or sorted(item["id"] for item in row.get("visible", [])) != expected_ids
+                   or any(item["area"] <= 0 for item in row.get("visible", [])) for frame, row in enumerate(records))
+            or [(row["frame_index"], row["emitted_after_frame"]) for row in qualification.get("emitted", [])] != [(0,14),(1,15),(2,16)]):
+        raise ValueError("original fixture qualification lacks 17 stable object/ID records and the expected delay")
 
 
 def run(args):
@@ -195,15 +227,7 @@ def run(args):
     qualified_inputs = {Path(name).name: digest for name, digest in qualification["input_sha256"].items()}
     if {Path(name).name: digest for name, digest in inputs.items()} != qualified_inputs:
         raise ValueError("qualified PNG identities differ from this workload")
-    records = qualification.get("records", [])
-    expected_ids = records[0]["active_ids"] if records else []
-    if (len(records) != 17 or len(expected_ids) != workload["expected_objects"] or len(set(expected_ids)) != len(expected_ids)
-            or any(row.get("frame_index") != frame or row.get("active_ids") != expected_ids
-                   or row.get("removed") or (frame and row.get("births"))
-                   or sorted(item["id"] for item in row.get("visible", [])) != expected_ids
-                   or any(item["area"] <= 0 for item in row.get("visible", [])) for frame, row in enumerate(records))
-            or [(row["frame_index"], row["emitted_after_frame"]) for row in qualification.get("emitted", [])] != [(0,14),(1,15),(2,16)]):
-        raise ValueError("original fixture qualification lacks 17 stable object/ID records and the expected delay")
+    validate_qualification_records(qualification, workload["expected_objects"])
     if sha256_file(args.recipe_script) != fixture["generator_sha256"]:
         raise ValueError("fixture recipe script changed")
     verify_run_artifacts(qualification["source_sha256"])

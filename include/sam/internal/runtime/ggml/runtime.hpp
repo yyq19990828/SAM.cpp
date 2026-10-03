@@ -29,12 +29,20 @@ public:
                 drivers_.push_back(std::move(metal));
             }
         }
+        if (drivers_[selected_].kind == Backend::Cpu) {
+            auto blas = make_cpu_blas_backend(options.threads);
+            if (blas.handle) {
+                drivers_.push_back(std::move(blas));
+                backends_.push_back(drivers_.back().handle.get());
+            }
+        }
         backends_.push_back(drivers_[selected_].handle.get());
         for (std::size_t i = 0; i < drivers_.size(); ++i)
-            if (i != selected_) backends_.push_back(drivers_[i].handle.get());
+            if (i != selected_ && drivers_[i].node_counter != &RuntimeStats::blas_nodes)
+                backends_.push_back(drivers_[i].handle.get());
     }
     Backend backend() const { return drivers_[selected_].kind; }
-    ggml_backend_t weights_backend() const { return backends_.front(); }
+    ggml_backend_t weights_backend() const { return drivers_[selected_].handle.get(); }
     const std::vector<ggml_backend_t>& backends() const { return backends_; }
     bool promote_f16_weights() const { return drivers_[selected_].promote_f16_weights; }
 
@@ -42,6 +50,7 @@ public:
         for (const auto& driver : drivers_) {
             if (driver.handle.get() == backend && driver.node_counter) {
                 ++(stats.*driver.node_counter);
+                if (driver.node_counter == &RuntimeStats::blas_nodes) ++stats.cpu_nodes;
                 return;
             }
         }

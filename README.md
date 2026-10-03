@@ -86,6 +86,13 @@ Arbitrary GGML revisions are not a supported compatibility promise.
 and `OFF` when embedded. Ordinary tests need no checkpoint or network access
 after dependency configuration.
 
+CPU execution uses a registered GGML BLAS backend when available; build with
+`-DGGML_BLAS=OFF` to use only the native CPU backend. Model weights stay on CPU.
+`runtime.blas_nodes` is a subset of `cpu_nodes`. Thread requests are forwarded
+to GGML/BLAS; Apple Accelerate manages SGEMM threading independently. Controlled
+Apple CPU measurements request `VECLIB_MAXIMUM_THREADS=4` before process startup.
+The current BLAS/ViT implementation passes [full local revalidation](docs/plans/20261003-134534-visual-encoding-profile-and-optimization.md).
+
 ## Integrate into an application
 
 ```cmake
@@ -533,3 +540,5 @@ instead of coverage quotas. Model-specific graphs, weight parsing, and GGML
 execution have separate internal boundaries for later architectures/backends.
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for pinned sources and retained
 licenses. Model/media terms are separate from the C++ dependency licenses.
+
+中文摘要：[模型与精度](MODEL_ZOO_zh.md)、[性能测试](BENCHMARK_zh.md)、[验证与基线复用](docs/validation_zh.md)。

@@ -8,6 +8,9 @@ No releases have been published.
 
 ### Added
 
+- Private validation archiving with exclusive publication, APFS clones and file-hash verification, plus a versioned index of the preserved M4 Pro baseline.
+- Portable one/four-object benchmark generation and original-Meta prefix qualification; identical fixtures can explicitly reuse a sealed parent qualification.
+- Concise English/Chinese model and benchmark summaries with automated table/link checks, and read-only quick CPU/header/tool CI without model downloads.
 - Complete M2 original-reference acceptance for F32 and hybrid on CPU/Metal: four five-case/216-frame cells, 56 fresh image regressions plus 14 sealed hybrid cases, six real short session checks and two 64+64-frame interleaved session/lifetime checks. Explicit F16 remains diagnostic: Metal fails entry candidate selection at frames 23/24, reproduced by exact-F16 original Meta modules; the optional full CPU diagnostic is deferred.
 - A 64-frame video benchmark runner with 16 warmup/48 measured frames, one/four-object qualification, per-frame/stage samples, first-output/final-drain accounting, source/artifact/output guards, current/peak RSS and allocation checks. All four hybrid CPU/Metal workload cells pass; [measurements and limits](BENCHMARK.md#video-64-frame-protocol) retain the raw evidence.
 - Optional `test_video_long_session` CMake/CTest target for two interleaved 64-frame sessions, model/session lifetime, owned outputs, independent caches and bounded state. Both backends pass exact comparison with their accepted standalone positive sequence and empty negative results.
@@ -53,6 +56,9 @@ No releases have been published.
 
 ### Changed
 
+- Fold shared ViT channel-projection positions into GEMM columns and schedule an available registry BLAS accelerator for CPU work, retaining CPU weight ownership and F32 arithmetic. Fresh CPU/Metal numerical, image and session checks pass. The same 64-frame CPU protocol observes 9.155/13.887 s per frame for one/four objects, versus historical 51.102/81.644 s; [current bilingual benchmarks](BENCHMARK.md) retain conditions and limits.
+- CLI runtime JSON now includes existing image/text/inference timers. Benchmark analysis reports encoding stages when available and keeps missing historical data explicit; inference math and prior measurements are unchanged.
+- Clarify benchmark/model precision labels by separating GGUF weight storage, FP32 backend arithmetic, FP16 video normalization and BF16 feature/memory boundaries. Existing inference policies and measurements are unchanged.
 - Video conversion now defaults to hybrid when `--precision` is omitted, following the verified original-reference precision boundary. Image conversion continues to require explicit precision; explicit F16/F32 and the Python conversion API retain their payload policy. A CLI dispatch regression covers all branches without model inference.
 
 - Explicit FP32 Metal requests now initialize Metal and retain F32 weights; Auto FP32 continues choosing CPU. The arithmetic probe and unavailable-device errors remain enforced. This path now passes official local image acceptance without changing numerical gates.
@@ -71,6 +77,8 @@ No releases have been published.
 - Dependency preparation now verifies complete original/patched source trees and the patch itself, including source archives without Git metadata. It repairs generated-source drift while leaving supplied checkouts untouched; custom GGML implementations remain available through caller-owned targets.
 
 ### Fixed
+
+- Preserve existing positional `RuntimeStats` aggregate initializers when adding BLAS statistics, and reject unlisted archive files or inconsistent byte totals during private-bundle verification.
 
 - Reject noncanonical object IDs in video diagnostic tensor names, preventing repeated alias reads from retaining duplicate tensor snapshots. Canonical names and inference behavior are unchanged.
 - Bind image/video validation batches to model, sidecar, executable and selected-build library hashes, and freeze completed output files before comparison. Changed artifacts or outputs now fail validation; a real replacement regression reproduces the earlier false-acceptance path.

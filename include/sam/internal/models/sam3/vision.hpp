@@ -177,7 +177,7 @@ inline struct ggml_tensor* sam3_vit_block_forward(struct ggml_context* ctx,
     const int64_t B_cur = x->ne[3];
 
     {
-        auto* cur = ggml_mul_mat(ctx, blk.qkv_w, x);
+        auto* cur = sam3_channel_projection(ctx, blk.qkv_w, x);
         cur = ggml_add(ctx, cur, blk.qkv_b);
         // cur: [3*E, W_cur, H_cur, B_cur]
 
@@ -218,7 +218,7 @@ inline struct ggml_tensor* sam3_vit_block_forward(struct ggml_context* ctx,
         // so reshaping directly to [E, W, H, B] is correct.
         x = ggml_reshape_4d(ctx, attn_out, E, W_cur, H_cur, B_cur);
 
-        x = ggml_mul_mat(ctx, blk.proj_w, x);
+        x = sam3_channel_projection(ctx, blk.proj_w, x);
         x = ggml_add(ctx, x, blk.proj_b);
     }
 
@@ -231,10 +231,10 @@ inline struct ggml_tensor* sam3_vit_block_forward(struct ggml_context* ctx,
     shortcut = x;
     x = sam3_layer_norm(ctx, x, blk.norm2_w, blk.norm2_b);
 
-    x = ggml_mul_mat(ctx, blk.mlp_fc1_w, x);
+    x = sam3_channel_projection(ctx, blk.mlp_fc1_w, x);
     x = ggml_add(ctx, x, blk.mlp_fc1_b);
     x = ggml_gelu_erf(ctx, x);
-    x = ggml_mul_mat(ctx, blk.mlp_fc2_w, x);
+    x = sam3_channel_projection(ctx, blk.mlp_fc2_w, x);
     x = ggml_add(ctx, x, blk.mlp_fc2_b);
 
     x = ggml_add(ctx, shortcut, x);

@@ -34,6 +34,13 @@ SOFTWARE.
 
 namespace sam::internal::sam3 {
 
+// Shared channel weights: fold spatial/window positions into GEMM columns.
+inline ggml_tensor* sam3_channel_projection(ggml_context* ctx, ggml_tensor* weights, ggml_tensor* values) {
+    auto* columns = ggml_reshape_2d(ctx, values, values->ne[0], values->ne[1] * values->ne[2] * values->ne[3]);
+    auto* result = ggml_mul_mat(ctx, weights, columns);
+    return ggml_reshape_4d(ctx, result, weights->ne[1], values->ne[1], values->ne[2], values->ne[3]);
+}
+
 inline void sam3_name_tensorf(struct ggml_tensor* t, const char* fmt, int index) {
     if (!t) {
         return;

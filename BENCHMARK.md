@@ -1,353 +1,68 @@
 # Benchmarks
 
-The first table records GGUF image measurements on 2026-10-02.
-Model files and conversion instructions are in
-[MODEL_ZOO.md](MODEL_ZOO.md). Each image cell reports **warmed full-image
-median latency / peak process RSS**. Lower latency is better; GB means
-1,000,000,000 bytes. Unmeasured configurations have no inferred numbers.
+[中文](BENCHMARK_zh.md) · [Models and precision](MODEL_ZOO.md#precision-contract)
 
-<table>
-  <thead>
-    <tr>
-      <th rowspan="2" scope="col">Model / checkpoint precision</th>
-      <th colspan="2" scope="colgroup">Apple M4 Pro: 14 CPU cores (10P + 4E), 20 GPU cores, 48 GiB unified memory<br>macOS 27.0 (26A428)</th>
-    </tr>
-    <tr>
-      <th scope="col">CPU: 4 threads<br>GGML 0.25.3, AppleClang 21.0.0</th>
-      <th scope="col">Metal: runtime-compiled shaders<br>GGML 0.25.3, macOS SDK 27.0, AppleClang 21.0.0</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th scope="row">SAM 3 image / FP16 GGUF</th>
-      <td><strong>38.994 s</strong> / 4.927 GB</td>
-      <td><strong>5.576 s</strong> / 2.660 GB</td>
-    </tr>
-    <tr>
-      <th scope="row">SAM 3 image / FP32 GGUF</th>
-      <td><strong>38.986 s</strong> / 4.908 GB</td>
-      <td><strong>5.651 s</strong> / 4.249 GB</td>
-    </tr>
-  </tbody>
-</table>
+Apple M4 Pro (14 CPU / 20 GPU cores, 48 GiB), macOS 27.0, Release
+AppleClang 21.0.0, GGML 0.25.3 with the pinned precision/window patch.
+CPU requests four GGML/BLAS threads; processes request `VECLIB_MAXIMUM_THREADS=4`.
+Accelerate manages SGEMM threading. Times are seconds; RSS uses decimal GB.
+**Labels describe GGUF weight storage, not end-to-end arithmetic.**
 
-Only CPU and Metal have measured results here. CUDA and other model families
-have no benchmark entries. The [64-frame video protocol](#video-64-frame-protocol)
-below measures the accepted hybrid default separately. The historical
-[short video sample](#short-video-sample) and dump-heavy numerical diagnostics
-are not substitutes for that protocol.
+## Image
 
-## Measurement conditions
+One 1800×1200 truck image, 1008×1008 model input, prompt `truck`.
+One warmup plus five full-image samples; load/decode/file writes excluded.
 
-- Official SAM 3 checkpoint revision `3c879f39826c281e95690f02c7821c4de09afae7`;
-  original SHA-256 `9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e`.
-  GGUF v3 / SAM schema 1 conversion hashes are
-  `cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486` (FP32) and
-  `66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120` (FP16).
-- One RGB image, `truck.jpg`, 1800 x 1200, resized to the model's 1008 x 1008
-  input; prompt `truck`, score threshold `0.5`, batch size one.
-- One initial pipeline call followed by five measured complete-image calls.
-  Each measured call replaces the image and runs text segmentation, including
-  preprocessing and postprocessing. Model loading, image decoding, output-file
-  writes and repeated-result-cache calls are excluded from the warm latency.
-- Release build, native CPU instructions, AppleClang
-  `21.0.0` (`clang-2100.3.34.2`), GGML commit
-  `353b63b439f27ab2cc19dac97ab1681ba6d2d084`,
-  [precision/window patch](cmake/patches/README.md)
-  `0a0b80dd15c2a8b5a05d148a31e9e53f8df4d0555852ef301da336a9d97b7c48`.
-  Apple Accelerate/BLAS is enabled; KleidiAI is disabled.
-- CPU uses four threads. Metal also receives a four-thread CPU fallback setting;
-  the tested full image graph runs 3,332 Metal nodes for FP32 or 3,342 for FP16,
-  zero CPU nodes and six graph partitions. Host preprocessing/postprocessing still run on CPU.
-- Fresh processes ran sequentially: FP32/Metal, FP16/Metal, FP32/CPU, FP16/CPU,
-  from 03:47 to 03:56 Asia/Shanghai. AC power was attached and the battery was
-  not charging (19% to 13%). Other project computation stopped during timing;
-  ordinary desktop activity remained. No thermal or performance warning was reported;
-  constant CPU/GPU clocks were not verified.
+| Weight storage | CPU median / peak RSS | Metal median / peak RSS |
+| --- | ---: | ---: |
+| Mixed F16/F32 | 7.338 / 4.918 | 5.354 / 2.661 |
+| F32 | 7.316 / 4.922 | 5.364 / 4.248 |
 
-FP16 names the checkpoint storage policy, which preserves selected tensors in
-FP32. CPU loading promotes stored FP16 values exactly to FP32; Metal retains
-packed FP16 weights and requests precise arithmetic. See the
-[precision contract](cmake/patches/README.md). Peak RSS is the process high-water
-mark across loading and inference. It is not dedicated GPU VRAM, and must not
-be added to backend buffer sizes.
-
-These single-image timings do not establish video frame rate. The independent
-seven-case numerical suite passed FP32/CPU, FP32/Metal, FP16/CPU and FP16/Metal
-acceptance (28/28 cases). CPU promotes FP16 weights to the same F32 execution
-representation; its similar FP32/FP16 latency is expected from that policy.
-Raw samples, memory figures and provenance are preserved in the
-[local acceptance record](docs/plans/20261002-032709-local-model-meta-validation.md).
-The local ignored receipts are
-`build/fp32-validation/20261002-032709/benchmark-{cpu,metal}-{f32,f16}/results.json`,
-`benchmark-summary.json`, `benchmark-conditions.json`, `binary-identities.json`
-and `artifact-identities.json` in that run directory. The old FP16 measurements
-(60.588 s CPU, 6.556 s Metal) and their receipts remain in the
-[GGUF acceptance record](docs/plans/20261001-020507-gguf-conversion-loading.md).
-
-Earlier custom-container measurements and controlled GGML/window comparisons
-remain in the [previous performance record](docs/plans/20261001-002850-metal-window-cpu-performance-official-weights.md).
-The current table is a new measurement batch, not a controlled before/after
-comparison. Power state and measurement conditions differ from the old batch;
-these numbers do not establish a software or container speedup.
+All four configurations pass the seven-case image reference suite.
 
 ## Video: 64-frame protocol
 
-The accepted default `visual-tracker-f32-v1` hybrid artifact was measured on
-2026-10-03. Each cell reports **frame median / p95 / peak process RSS**.
-All 64 frames run in one fresh process; frames 0–15 warm up the session and
-frames 16–63 supply 48 measured samples. CPU and Metal run sequentially with
-four threads, `max_objects=8` and no tensor dumps.
+Default hybrid `visual-tracker-f32-v1`, 64 frames at 1800×1200, `truck`,
+`max_objects=8`; 16 warmup + 48 measured, final drain included, no tensor dumps.
+All cells ran serially on AC power with no system sleep or overlapping inference.
 
-<table>
-  <thead>
-    <tr>
-      <th rowspan="2" scope="col">Model / workload</th>
-      <th colspan="2" scope="colgroup">Apple M4 Pro: 14 CPU cores (10P + 4E), 20 GPU cores, 48 GiB unified memory<br>macOS 27.0 (26A428)</th>
-    </tr>
-    <tr>
-      <th scope="col">CPU: 4 threads<br>GGML 0.25.3, AppleClang 21.0.0</th>
-      <th scope="col">Metal: runtime-compiled shaders<br>GGML 0.25.3, macOS SDK 27.0, AppleClang 21.0.0</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <th scope="row">SAM 3 hybrid / 1 object</th>
-      <td><strong>51.102 s</strong> / 52.174 s / 5.183 GB</td>
-      <td><strong>7.833 s</strong> / 7.861 s / 4.166 GB</td>
-    </tr>
-    <tr>
-      <th scope="row">SAM 3 hybrid / 4 objects</th>
-      <td><strong>81.644 s</strong> / 85.855 s / 5.291 GB</td>
-      <td><strong>13.356 s</strong> / 13.430 s / 4.295 GB</td>
-    </tr>
-  </tbody>
-</table>
+| Objects | CPU median / p95 / peak RSS | Metal median / p95 / peak RSS |
+| ---: | ---: | ---: |
+| 1 | 9.155 / 9.352 / 5.212 | 7.550 / 7.595 / 4.193 |
+| 4 | 13.887 / 14.555 / 5.356 | 13.166 / 13.370 / 4.340 |
 
-The original checkpoint, pinned GGML revision/patch, Release compiler and
-Accelerate settings are the same as the image conditions above. The schema-2
-hybrid file is 2,765,012,640 bytes, SHA-256
-`3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05`.
-It preserves original FP32 visual/tracker values and mixed detector/text
-weights. Each backend first passes all five original-reference video cases
-(216 frames), under the unchanged mixed gate. Explicit F16 fails that
-eligibility check and has no accepted video performance cell.
+The official hotstart policy emits frame0 after processing frame14. Observed
+first-output times: CPU 130.681/178.184 s; Metal 103.536/155.065 s (1/4 objects).
+Finite measurements do not establish unlimited-stream memory bounds or real-time throughput.
+F32/hybrid CPU/Metal numerical acceptance passes all five cases (216 frames each).
+F16 video remains diagnostic and has no accepted performance row.
 
-The separate deterministic fixtures use 1800 x 1200 RGB canvases, gray value
-127, and the pinned `truck.jpg` resized with Pillow bicubic to 800 x 533.
-The one-object base is (500,330); the four bases are (40,30), (960,30),
-(40,630), (960,630). The second and third copies are mirrored. Motion phases
-are 0 for one object and 0/8/16/24 for four; horizontal/vertical offsets are
-`2*(16-abs(((frame+phase)%32)-16)-8)` and
-`8-abs(((frame+phase)%16)-8)` pixels. Prompt is `truck`. The original Meta
-modules qualify a 17-frame prefix with declared length 64: exactly one/four
-nonempty masks, stable IDs and no later birth/removal. The benchmark then
-checks those counts and IDs on all 64 actual C++ frames. No object cap is used
-to conceal additional detections. The frozen five-case correctness corpus
-is unchanged.
+## Precision and profiling
 
-Every frame/stage sample is retained. `frame_ms` includes preprocessing,
-inference and output emission inside `push_frame`; PNG decoding and file
-writes are outside it. The available stage fields are tracker and memory;
-there are no separately exposed visual-trunk/detector timings. Median and
-linearly interpolated p95 use the 48 samples (percentile position
-`(n-1)*0.95`). Frame 63 drains 15 delayed results and remains in the sample:
-7.956/13.754 seconds on Metal and 52.096/86.152 seconds on CPU for one/four
-objects. These are finite-sequence measurements, not an indefinite stream.
+Hybrid restores original FP32 visual/tracker weights; other weights remain
+mixed F16/F32. CPU promotes stored half weights to F32; Metal retains mixed
+weights and requests the specified F32 arithmetic. Video normalization rounds
+to F16; tracker features round to BF16 in F32 buffers; mask-memory records are
+BF16 and expanded to F32 for computation. Image inference has no temporal BF16
+state. See the [full precision map](MODEL_ZOO.md#precision-contract).
 
-| Backend / objects | Tracker median / p95 (s) | Memory median / p95 (s) | Model load (s) | First output observed (s) |
-| --- | ---: | ---: | ---: | ---: |
-| Metal / 1 | 1.796 / 1.819 | 0.039 / 0.040 | 0.942 | 108.750 |
-| Metal / 4 | 7.181 / 7.247 | 0.160 / 0.161 | 0.902 | 158.408 |
-| CPU / 1 | 10.042 / 11.098 | 0.160 / 0.161 | 0.991 | 709.934 |
-| CPU / 4 | 40.092 / 44.275 | 0.645 / 0.650 | 0.982 | 993.105 |
+Current CLI JSON exposes existing `runtime.image_ms` (ViT/necks/geometry) and
+`runtime.inference_ms` (prompt/fusion/detection/masks), including transfers and
+allocation. `text_ms` is the last text encode: once per video session; image
+replacement encodes text again, already included in image `inference_ms`.
+Current stage distributions are in the detail record; historical missing times
+remain unavailable. `frame_ms`, `tracker_ms`, `memory_ms` retain their meanings.
 
-First output is frame 0 after processing frame 14 in every cell. Observation
-is sampled about once per second from process launch and includes model load,
-decode and file work; it is separate from summed frame time. Each process
-encodes text once, runs vision 64 times and emits all 64 frames. CPU cells
-execute zero Metal nodes and Metal cells execute zero CPU graph nodes.
+## Reproduction and evidence
 
-| Backend / objects | Current RSS after warmup, min / median / max (GB) | Weight buffers (bytes) | Graph allocation high-water (bytes) | Max retained records / bytes |
-| --- | ---: | ---: | ---: | ---: |
-| Metal / 1 | 3.270 / 3.478 / 4.166 | 2,763,224,992 | 1,245,268,288 | 27 / 17,943,552 |
-| Metal / 4 | 3.424 / 3.681 / 4.295 | 2,763,224,992 | 1,245,268,288 | 108 / 71,774,208 |
-| CPU / 1 | 3.924 / 4.268 / 5.118 | 3,447,558,112 | 1,020,660,736 | 27 / 17,943,552 |
-| CPU / 4 | 4.091 / 4.426 / 5.246 | 3,447,558,112 | 1,020,660,736 | 108 / 71,774,208 |
+Use the [portable workflow](docs/validation.md) for fixture generation, original
+Meta qualification/reuse, validation, profiling and private archive verification.
+The [current M4 Pro record](docs/benchmarks/m4-pro-blas-vit-20261003.md) retains
+stage samples, RSS, conditions, hashes and validation scope. The
+[historical record](docs/benchmarks/m4-pro-20261003.md) preserves earlier measurements.
+The [baseline index](docs/validation-baselines/blas-vit-m4pro-20261003.json) identifies
+accepted evidence; model/media/raw files stay outside Git.
 
-Current RSS comes from asynchronous `ps` samples tagged with the latest
-completed frame, using tags 16–62. Peak RSS in the main table is the independent
-`/usr/bin/time -l` process high-water mark, including load and final drain;
-it need not equal the maximum sampled current RSS. Weight buffers and graph
-high-water remain constant after warmup. Retained state respects the 27-record
-per-object bound. These observations do not establish a universal process-RSS
-plateau; allocation counters must not be added to RSS.
-
-Runs occurred sequentially from 05:43 to 08:21 Asia/Shanghai, with AC power,
-100% battery at every start/end, no reported thermal/performance warning and
-no system sleep event during any cell. Task-scoped `caffeinate` prevented idle
-sleep without changing system settings. No other SAM/Meta inference or
-compilation overlapped; ordinary desktop services remained active. Clocks
-were not forced. The earlier sleeping, dump-heavy CPU correctness run is
-excluded from all performance numbers.
-
-`tools/benchmark_video.py` requires a passing full numerical receipt and the
-original-module fixture qualification, verifies source/model/binary/library/
-input/output hashes, and refuses malformed frame counts, IDs, fallback or
-allocation evidence. The local receipt bundle is
-`build/video-validation/20261002-182848/`: `hybrid-performance-matrix.json`,
-`performance-values.json`, `prepare_performance_fixtures.py`,
-`qualify_performance_prefix.py`, `{one,four}-object-oracle-prefix.json` and
-`run_benchmarks.py`. Raw 64-frame samples and RSS streams are in
-`/private/tmp/sam-video-20261002-182848/benchmark-hybrid-{metal,cpu}-{one-object,four-object}/`.
-The fixture manifest SHA-256 is
-`68d7b5574a69d015256c53265e7be1e9e258020e3694f3a0a38e7a823003c37f`.
-Models, media and generated receipts stay outside Git.
-
-For a local rerun with that verified input/qualification bundle, choose a fresh
-output and run this command for each backend/workload sequentially (change all
-matching backend/workload arguments):
-
-```sh
-build/reference-runtime/venv/bin/python tools/benchmark_video.py \
-  --build-dir /private/tmp/sam-video-20261002-133548/metal \
-  --model models/sam3-video-hybrid-v1.gguf \
-  --reference /private/tmp/sam-video-20261002-133548/reference-full \
-  --validation /private/tmp/sam-video-20261002-133548/validation-metal-hybrid-full/metrics.json \
-  --fixture-manifest /private/tmp/sam-video-20261002-182848/performance-fixtures/fixture-manifest.json \
-  --qualification build/video-validation/20261002-182848/one-object-oracle-prefix.json \
-  --recipe-script build/video-validation/20261002-182848/prepare_performance_fixtures.py \
-  --workload one-object --backend metal --threads 4 \
-  --output /private/tmp/sam-video-benchmark-metal-one-64-rerun
-```
-
-New fixtures require their own original-module prefix qualification before
-measurement. Preserve AC/sleep conditions and keep other inference stopped;
-the local serial wrapper records these conditions and rejects contaminated
-cells. See the [completion record](docs/plans/20261002-182848-m2-complete-acceptance.md)
-for numerical and lifetime evidence.
-
-## Short video sample
-
-The explicit `visual-tracker-f32-v1` hybrid video artifact was measured on the
-same M4 Pro, macOS and toolchain described above. It passes the original
-five-case/216-frame video suite and seven image-regression cases on both CPU
-and Metal. The checkpoint is the same original Meta file; GGUF SHA-256 is
-`3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05`
-(2,765,012,640 bytes, schema 2, original-FP32 visual/tracker plus mixed detector/text).
-
-Each backend ran once in a fresh process with threads=4, max_objects=8 and no
-tensor dumps, using the first three frozen `motion` PNGs (1800 x 1200, prompt
-`truck`). The declared sequence length is **3**, including its normal pointer
-temporal normalization. Frame 0 initializes the sequence; frames 1 and 2 are
-propagated-frame samples with growing memory. Frame 2 also resizes/drains all
-three delayed outputs. Its cost is included below. These two propagated samples
-are not steady-state throughput or the full M2 performance protocol.
-
-| Backend | Frame 0 / initialization (s) | Frame 1 (s) | Frame 2 + drain (s) | Frames 1–2 median (s) | Model load (s) | Peak process RSS (GB) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Metal | 6.174 | 6.529 | 6.705 | 6.617 | 0.921 | 3.808 |
-| CPU | 41.438 | 42.925 | 43.809 | 43.367 | 0.958 | 5.170 |
-
-Per-frame times are `VideoStats::frame_ms`, including preprocessing, inference
-and any output emission inside `push_frame`. PNG decoding and file writes are
-outside these samples. `/usr/bin/time -l` measured complete process wall times
-of 20.43 s (Metal) and 129.24 s (CPU), and peak RSS of 3,807,756,288 and
-5,170,331,648 bytes. The runtime's RSS counters agree with those process peaks.
-
-| Backend | Weight buffers (bytes) | Maximum graph compute buffers (bytes) | Retained memory after frame 2 (bytes) | CPU / Metal graph nodes |
-| --- | ---: | ---: | ---: | ---: |
-| Metal | 2,763,224,992 | 1,245,268,288 | 1,993,728 | 0 / 14,111 |
-| CPU | 3,447,558,112 | 1,020,660,736 | 1,993,728 | 14,081 / 0 |
-
-Both runs retain 1, 2 and 3 memory records across the three frames: 664,576,
-1,329,152 and 1,993,728 bytes. Pending outputs are 1, 2 and 0 after each call
-(high-water 3); all three frames are emitted at the end. Weight/compute/state
-counters describe different allocations and must not be added to process RSS.
-CPU promotes stored F16 values to F32; the hybrid storage label does not imply
-F16 CPU execution. Neither run has unexpected backend fallback.
-
-Metal ran from 18:12:56 to 18:13:17 and CPU from 18:13:52 to 18:16:01
-Asia/Shanghai on 2026-10-02, after the validation batches. No validation or other
-SAM inference overlapped either measurement. AC power was attached, battery
-100%, and no thermal/performance warning was recorded. Ordinary desktop and
-macOS background services remained active; there was no forced cool-down or
-clock control, and OS/shader caches could already be warm. This sample supplies
-measured latency and memory for the stated short workload. The completed
-64-frame protocol above supplies the M2 performance evidence; these earlier
-three-frame samples remain separately scoped.
-
-Reproduce the workload after generating the frozen motion recipe and converting
-the hybrid model as described in the README. Use fresh directories and run the
-two commands sequentially:
-
-```sh
-mkdir models/video-cases/motion-first3
-cp models/video-cases/motion/000000.png models/video-cases/motion-first3/
-cp models/video-cases/motion/000001.png models/video-cases/motion-first3/
-cp models/video-cases/motion/000002.png models/video-cases/motion-first3/
-/usr/bin/time -l build/metal/examples/sam_video \
-  --model models/sam3-video-hybrid-v1.gguf --frames models/video-cases/motion-first3 \
-  --text truck --backend metal --threads 4 --max-objects 8 \
-  --output /private/tmp/sam-video-benchmark-metal-3frames
-/usr/bin/time -l build/cpu/examples/sam_video \
-  --model models/sam3-video-hybrid-v1.gguf --frames models/video-cases/motion-first3 \
-  --text truck --backend cpu --threads 4 --max-objects 8 \
-  --output /private/tmp/sam-video-benchmark-cpu-3frames
-```
-
-The local ignored receipts are in `build/video-validation/20261002-133548/`:
-`benchmark-{metal,cpu}-hybrid-3frames.json`, their raw `/usr/bin/time -l` logs,
-`benchmark-summary.json` and `benchmark_hybrid_three_frames.py`. They record all
-samples, conditions, fixed input hashes and model/binary/library/output hashes.
-The independent fixture is
-`/private/tmp/sam-video-20261002-133548/benchmark-motion-3frames/fixture-manifest.json`.
-
-## Reproduce
-
-Run from the repository root after following [model conversion](MODEL_ZOO.md#convert-the-supported-runtime-files)
-and the [CPU/Metal build instructions](README.md#build). Prepare the pinned input:
-
-```sh
-mkdir -p models/fixtures
-curl -fL https://raw.githubusercontent.com/facebookresearch/sam3/2345a4ad109ac29c569da749c91d84f10dc08c40/assets/images/truck.jpg \
-  -o models/fixtures/truck.jpg
-shasum -a 256 models/fixtures/truck.jpg
-```
-
-Expected image SHA-256:
-`941715e721c8864324a1425b445ea4dde0498b995c45ddce0141a58971c6ff99`.
-Choose new output directories on a local, unsynchronized disk; the CLI refuses
-to overwrite existing directories. Run the following commands sequentially:
-
-```sh
-sam_benchmark_run="$(TZ=Asia/Shanghai date +%Y%m%d-%H%M%S)"
-for sam_benchmark_backend in metal cpu; do
-  for sam_benchmark_precision in f32 f16; do
-    "build/$sam_benchmark_backend/examples/sam_image" \
-      --model "models/sam3-$sam_benchmark_precision.gguf" \
-      --image models/fixtures/truck.jpg --text truck \
-      --backend "$sam_benchmark_backend" --threads 4 --score-threshold 0.5 \
-      --repeat 5 \
-      --output "/private/tmp/sam-benchmark-$sam_benchmark_run-$sam_benchmark_backend-$sam_benchmark_precision" || exit
-  done
-done
-```
-
-Read `timing_ms.warmed_full_image_median` (milliseconds) and
-`runtime.process_peak_rss_bytes` from each `results.json` for the table.
-Retain `warmed_full_image_runs` and `repeated_result_cache_runs` for inspection.
-The inference stage includes text encoding; do not add those stage times twice.
-`cold_start` includes initial loading/decoding but excludes process startup and
-may reuse OS/shader caches. Cache timing measures reuse of the previous result.
-
-## Add a result
-
-Add a model/checkpoint/precision row and a hardware column group using the same
-two header rows. Record exact CPU/GPU variant, RAM/VRAM, OS, backend, compiler,
-GGML revision/patch and relevant backend versions. A CUDA column must name the
-actual GPU, CUDA Toolkit and NVIDIA driver versions; add cuDNN only if used.
-Record the checkpoint hash, input/workload, thread count, warmup/repeats,
-individual samples, peak-memory definition, power state and numerical acceptance.
-Keep different workloads in separate tables and mark unsupported or unmeasured
-combinations explicitly.
+Relative to the same-protocol historical CPU video rows, observed speedups are
+5.58×/5.88× (1/4 objects). These batches were not interleaved A/B measurements.
+Four-object Metal remains dominated by tracking (7.277 s versus 5.043 s encoding).

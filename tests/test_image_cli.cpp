@@ -44,6 +44,12 @@ int main() {
         try { (void) parse({"sam_image"}); } catch (const std::invalid_argument&) { rejected = true; }
         require(rejected, "Required arguments were not enforced");
         require(sam_example::json_string("\"\\\n") == "\"\\\"\\\\\\u000a\"", "JSON escaping failed");
+        sam::RuntimeStats timings;
+        timings.image_ms = 1.25; timings.text_ms = 2.5; timings.inference_ms = 3.75;
+        std::ostringstream timing_json;
+        sam_example::write_runtime_stats(timing_json, timings);
+        for (const auto& field : {"\"image_ms\":1.25", "\"text_ms\":2.5", "\"inference_ms\":3.75"})
+            require(timing_json.str().find(field) != std::string::npos, "Runtime encoding timer was omitted from JSON");
 
         const auto directory = std::filesystem::temp_directory_path() /
             ("sam-image-io-" + std::to_string(sam_example::Clock::now().time_since_epoch().count()));

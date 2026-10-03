@@ -39,6 +39,10 @@ void check_scheduled_attribution(sam::internal::GgmlRuntime& runtime, sam::Backe
             ", actual CPU=" + std::to_string(stats.cpu_nodes) + " Metal=" + std::to_string(stats.metal_nodes) +
             " partitions=" + std::to_string(stats.graph_partitions));
     }
+    const bool expects_blas = expected == sam::Backend::Cpu &&
+        std::string(ggml_backend_name(runtime.backends().front())) == "BLAS";
+    if (stats.blas_nodes != (expects_blas ? 1U : 0U) || stats.blas_nodes > stats.cpu_nodes)
+        throw std::runtime_error("BLAS work was not attributed as a CPU subset");
     std::cout << ggml_backend_name(runtime.weights_backend()) << (weight_backed ? " weights" : " host inputs")
               << ": scheduled CPU nodes=" << stats.cpu_nodes
               << ", Metal nodes=" << stats.metal_nodes << '\n';
@@ -69,6 +73,9 @@ int main() {
             throw std::runtime_error("CPU/FP32 Auto selection did not preserve FP16 values through promotion");
         }
         check_scheduled_attribution(cpu, sam::Backend::Cpu);
+        check_scheduled_attribution(cpu, sam::Backend::Cpu, true);
+        if (std::string(ggml_backend_name(cpu.weights_backend())) != "CPU")
+            throw std::runtime_error("CPU acceleration changed model weight ownership");
         // A live backend from another runtime has the same kind, but is not an
         // owned scheduler backend. Never fabricate an invalid pointer to test it.
         check_unknown_attribution(cpu, auto_fp32.weights_backend());

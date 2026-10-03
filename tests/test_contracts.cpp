@@ -24,6 +24,14 @@ void require(bool condition, const char* message) {
     if (!condition) { throw std::runtime_error(message); }
 }
 
+void test_stats_aggregate_compatibility() {
+    const sam::RuntimeStats stats{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.25, 12.5, 13.75};
+    require(stats.host_upload_bytes == 7 && stats.host_download_bytes == 8 &&
+            stats.weight_buffer_bytes == 9 && stats.compute_buffer_bytes == 10 &&
+            stats.image_ms == 11.25 && stats.text_ms == 12.5 && stats.inference_ms == 13.75 &&
+            stats.blas_nodes == 0, "Legacy stats aggregate positions changed");
+}
+
 template<class Exception, class Function>
 void rejects(Function function, const char* message) {
     try { function(); }
@@ -402,6 +410,7 @@ void test_checkpoint(const std::string& path, const std::filesystem::path& direc
 int main(int argc, char** argv) {
     try {
         TemporaryDirectory temporary;
+        test_stats_aggregate_compatibility();
         test_tokenizer(); test_images(); test_results(); test_weight_failures(temporary.path);
         if (argc > 1) {
             test_checkpoint(argv[1], temporary.path);

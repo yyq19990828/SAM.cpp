@@ -224,11 +224,15 @@ inline void write_runtime_stats(std::ostream& stream, const sam::RuntimeStats& s
     stream << "{\"vision_encodes\":" << stats.vision_encodes
            << ",\"text_encodes\":" << stats.text_encodes << ",\"inferences\":" << stats.inferences
            << ",\"cpu_nodes\":" << stats.cpu_nodes << ",\"metal_nodes\":" << stats.metal_nodes
+           << ",\"blas_nodes\":" << stats.blas_nodes
            << ",\"graph_partitions\":" << stats.graph_partitions
            << ",\"host_upload_bytes\":" << stats.host_upload_bytes
            << ",\"host_download_bytes\":" << stats.host_download_bytes
            << ",\"weight_buffer_bytes\":" << stats.weight_buffer_bytes
            << ",\"compute_buffer_bytes\":" << stats.compute_buffer_bytes
+           << ",\"image_ms\":" << stats.image_ms
+           << ",\"text_ms\":" << stats.text_ms
+           << ",\"inference_ms\":" << stats.inference_ms
            << ",\"process_peak_rss_bytes\":" << process_peak_rss_bytes() << "}";
 }
 

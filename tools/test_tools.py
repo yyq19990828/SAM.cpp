@@ -22,6 +22,114 @@ from validate_image import GATES, check_provenance, mask_iou, read_results, tens
 
 
 class ToolChecks(unittest.TestCase):
+    def test_private_archive_integrity_and_exclusive_output(self):
+        from archive_validation import create_bundle, verify_bundle
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            source.mkdir()
+            (source / "receipt.json").write_text('{"passed": true}')
+            output = root / "saved"
+            manifest = create_bundle([source], output)
+            self.assertEqual(len(verify_bundle(manifest.parent)["files"]), 1)
+            with self.assertRaises(ValueError):
+                create_bundle([source], source / "nested")
+            with self.assertRaises(FileExistsError):
+                create_bundle([source], output)
+            (manifest.parent / "extra.txt").write_text("unlisted")
+            with self.assertRaises(ValueError):
+                verify_bundle(manifest.parent)
+            (manifest.parent / "extra.txt").unlink()
+            (manifest.parent / "external").symlink_to(source, target_is_directory=True)
+            with self.assertRaises(ValueError):
+                verify_bundle(manifest.parent)
+            (manifest.parent / "external").unlink()
+            saved = manifest.read_text()
+            altered = json.loads(saved)
+            altered["bytes"] += 1
+            manifest.write_text(json.dumps(altered))
+            with self.assertRaises(ValueError):
+                verify_bundle(manifest.parent)
+            manifest.write_text(saved)
+            verify_bundle(manifest.parent)
+            (manifest.parent / "data/00-source/receipt.json").write_text("corrupted")
+            with self.assertRaises(ValueError):
+                verify_bundle(manifest.parent)
+
+    def test_bilingual_measurement_table_drift(self):
+        from check_docs import table_facts
+
+        english = "| Mixed F16/F32 | 38.994 / 4.927 | 5.576 / 2.660 |"
+        chinese = "| 混合 F16/F32 | 38.994 / 4.927 | 5.576 / 2.660 |"
+        self.assertEqual(table_facts(english), table_facts(chinese))
+        self.assertNotEqual(table_facts(english), table_facts(chinese.replace("5.576", "5.575")))
+
+    def test_encoding_timers_keep_historical_missing_data_explicit(self):
+        from benchmark_video import encoding_timings
+
+        samples = [{"stats": {"runtime": {}}} for _ in range(64)]
+        self.assertFalse(encoding_timings(samples)["available"])
+        for sample in samples:
+            sample["stats"]["runtime"]["image_ms"] = 10
+        with self.assertRaises(ValueError):
+            encoding_timings(samples)
+        for frame, sample in enumerate(samples):
+            sample["stats"]["runtime"] = {"image_ms": 1000 if frame < 16 else 10,
+                                            "inference_ms": 1000 if frame < 16 else 20}
+        timings = encoding_timings(samples)
+        self.assertEqual(timings["image_encoding"]["count"], 48)
+        self.assertEqual(timings["image_encoding"]["median_ms"], 10)
+        self.assertEqual(timings["detector_pipeline"]["median_ms"], 20)
+        del samples[-1]["stats"]["runtime"]["image_ms"]
+        with self.assertRaises(ValueError):
+            encoding_timings(samples)
+
+    def test_qualification_reuse_requires_identical_inputs_and_valid_prefix(self):
+        from generate_video_benchmark import SOURCE_SHA256
+        from qualify_video_benchmark import CHECKPOINT_SHA256, reuse_qualification
+        from sam3_artifacts import sha256_file, write_json
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ("old", "new"):
+                frames = root / name / "one-object"
+                frames.mkdir(parents=True)
+                for frame in range(64):
+                    (frames / f"{frame:06d}.png").write_bytes(b"same trusted fixture bytes")
+                hashes = [sha256_file(frames / f"{frame:06d}.png") for frame in range(64)]
+                fixture = {"complete": True, "frames": 64, "warmup_frames": 16, "measured_frames": 48,
+                           "prompt": "truck", "max_objects": 8, "width": 1800, "height": 1200,
+                           "pillow_version": "11.2.1", "source_sha256": SOURCE_SHA256,
+                           "workloads": [{"id": "one-object", "expected_objects": 1, "directory": "one-object",
+                                          "positions_xy_mirror_phase": [[500, 330, False, 0]], "input_sha256": hashes}]}
+                write_json(root / name / "fixture.json", fixture)
+            source = root / "source.py"
+            source.write_text("trusted source")
+            parent = {"complete": True, "passed": True, "qualified_for_performance": True,
+                      "reference_kind": "official-original-performance-prefix", "checkpoint_sha256": CHECKPOINT_SHA256,
+                      "sam3_revision": SAM3_REVISION, "declared_frame_count": 64, "prefix_frames": 17,
+                      "workload": "one-object", "expected_objects": 1,
+                      "fixture_manifest_sha256": sha256_file(root / "old/fixture.json"),
+                      "input_sha256": {str(root / "old/one-object" / f"{frame:06d}.png"): hashes[frame] for frame in range(64)},
+                      "source_sha256": {str(source): sha256_file(source)},
+                      "records": [{"frame_index": frame, "active_ids": [0], "births": [0] if frame == 0 else [],
+                                   "removed": [], "visible": [{"id": 0, "area": 1}]} for frame in range(17)],
+                      "emitted": [{"frame_index": frame, "emitted_after_frame": frame + 14} for frame in range(3)]}
+            write_json(root / "parent.json", parent)
+            result = reuse_qualification(root / "new/fixture.json", "one-object", root / "parent.json",
+                                         root / "old/fixture.json", root / "reuse.json")
+            self.assertEqual(read_json(result)["reused_qualification"]["parent_sha256"], sha256_file(root / "parent.json"))
+            parent["records"][-1]["active_ids"] = []
+            write_json(root / "parent.json", parent)
+            with self.assertRaises(ValueError):
+                reuse_qualification(root / "new/fixture.json", "one-object", root / "parent.json",
+                                    root / "old/fixture.json", root / "invalid.json")
+            (root / "new/one-object/000063.png").write_bytes(b"different input")
+            with self.assertRaises(ValueError):
+                reuse_qualification(root / "new/fixture.json", "one-object", root / "parent.json",
+                                    root / "old/fixture.json", root / "different.json")
+
     def test_converter_cli_video_precision_default(self):
         import io
         import convert_sam3

@@ -6,8 +6,34 @@
 #include <cmath>
 #include <iostream>
 
+void check_channel_projection() {
+    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 2}, true);
+    sam::RuntimeStats stats;
+    sam::internal::GraphExecution graph(runtime, 32, stats);
+    auto* weights = sam::internal::input_tensor(graph.context(), "channel_weights", 64, 64);
+    auto* values = sam::internal::input_tensor(graph.context(), "channel_values", 64, 17, 3, 2);
+    auto* result = sam::internal::sam3::sam3_channel_projection(graph.context(), weights, values);
+    graph.output(result); graph.allocate();
+    std::vector<float> w(64 * 64), x(64 * 102);
+    for (int row = 0; row < 64; ++row) for (int k = 0; k < 64; ++k)
+        w[row * 64 + k] = ((k + row) % 7 - 3) * 0.125f;
+    for (int column = 0; column < 102; ++column) for (int k = 0; k < 64; ++k)
+        x[column * 64 + k] = ((column + 3 * k) % 13 - 6) * 0.25f;
+    sam::internal::upload(weights, w, stats); sam::internal::upload(values, x, stats); graph.compute();
+    const auto actual = sam::internal::download(result, stats);
+    if (result->ne[0] != 64 || result->ne[1] != 17 || result->ne[2] != 3 || result->ne[3] != 2)
+        throw std::runtime_error("Channel projection changed spatial/window layout");
+    for (int column = 0; column < 102; ++column) for (int row = 0; row < 64; ++row) {
+        float expected = 0;
+        for (int k = 0; k < 64; ++k) expected += w[row * 64 + k] * x[column * 64 + k];
+        if (actual[column * 64 + row] != expected)
+            throw std::runtime_error("Channel projection mixed spatial positions or batches");
+    }
+}
+
 int main() {
     try {
+        check_channel_projection();
         const std::vector<std::uint16_t> half_bits = {0, 0x8000, 0x3c00, 0xbc00, 1, 0x03ff, 0x0400, 0x7bff};
         std::vector<char> half_bytes;
         for (const auto bits : half_bits) {

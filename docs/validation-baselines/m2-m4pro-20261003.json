@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "kind": "historical-accepted-baseline-index",
+  "status": "accepted-f32-hybrid-cpu-metal",
+  "date": "2026-10-03",
+  "documentation_commit": "56a4cde",
+  "hardware": {
+    "cpu": "Apple M4 Pro, 14 cores",
+    "gpu": "20-core Metal",
+    "memory_gib": 48,
+    "os": "macOS 27.0 (26A428)"
+  },
+  "ggml_revision": "353b63b439f27ab2cc19dac97ab1681ba6d2d084",
+  "meta_revision": "2345a4ad109ac29c569da749c91d84f10dc08c40",
+  "precision": {
+    "video_default": "hybrid visual-tracker-f32-v1",
+    "input_rounding": "f16",
+    "tracker_feature_rounding": "bf16 in f32 buffers",
+    "memory_storage": "bf16, expanded to f32 for compute"
+  },
+  "support": {
+    "profiles": [
+      "f32/cpu",
+      "f32/metal",
+      "hybrid/cpu",
+      "hybrid/metal"
+    ],
+    "frames_per_profile": 216,
+    "image_cases": 70,
+    "short_sessions": 6,
+    "long_pushes_per_backend": 128,
+    "performance": {
+      "cells": 4,
+      "frames": 64,
+      "warmup": 16,
+      "measured": 48
+    }
+  },
+  "f16_video": {
+    "metal": "failed exact candidate selection at entry23/24",
+    "cpu": "deferred-not-run"
+  },
+  "evidence": {
+    "completion_summary_sha256": "918f4f08e1dcc63c7c68d3916673acb45a6173ae21ef69aa983c80bc1bbf4ed3",
+    "archive_manifest": "models/validation-baselines/m2-m4pro-20261003/bundle/archive.json",
+    "archive_manifest_sha256": "a77d8710137c0653e7405be1bb44f514c11ea26341e024155660890e85c26239",
+    "archived_files": 21239,
+    "archived_bytes": 85994641754,
+    "sealed_receipts_checked": 151,
+    "reference_manifest_sha256": "00e51649947020c3cab441f35b70ff69df6ff4c88fff9041f40cfee9ce2e4d46"
+  },
+  "reuse": "Verify archive bytes and exact model/binary/library/input identities; this discovery index never grants automatic acceptance to changed executables. Historical receipts retain their original paths and source identities.",
+  "model_sha256": {
+    "sam3-video-f16.gguf": "9c9bc86c81d11a041db10a46d3d1e8ecaa1cbcf6fad683b00901f641746bf32c",
+    "sam3-video-f32.gguf": "02513232afca5ba8c174b66c7fc839c67b32590df4b53bdd6df5089a6a546844",
+    "sam3-video-hybrid-v1.gguf": "3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05",
+    "sam3-f32.gguf": "cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486",
+    "sam3-f16.gguf": "66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120"
+  }
+}

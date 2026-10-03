@@ -68,7 +68,7 @@ callback and metadata serialization APIs, checked by the CMake compatibility pro
 | --- | --- |
 | `resources.hpp` | RAII ownership of contexts, buffers, backends, schedulers; metadata context allocation |
 | `backend.hpp` | Small driver/device contract for backend identity, storage policy and node statistics |
-| `backends/cpu.hpp` | CPU discovery, initialization, thread configuration and exact FP16 promotion policy |
+| `backends/cpu.hpp` | CPU/optional BLAS discovery, initialization, thread configuration and exact FP16 promotion policy |
 | `backends/metal.hpp` | Metal discovery, Metal initialization and the FP32 arithmetic probe |
 | `runtime.hpp` | Supported-driver selection, ordered execution backends and ownership |
 | `graph.hpp` | Shared scheduling, operation checks, transfers and execution statistics |
@@ -82,6 +82,11 @@ scheduled backend. Unknown assignments are errors, not CPU work by default.
 individual graph on CPU according to its input/weight buffers; the statistics
 follow that actual placement. Backend tests cover both host-input CPU execution
 and Metal execution with a Metal weight buffer.
+
+For selected CPU execution, an available registry BLAS device receives eligible
+matrix operations before the native CPU backend; weights remain CPU-owned.
+`blas_nodes` counts a subset of `cpu_nodes`. Without BLAS registration, native
+CPU execution remains available. Metal's selected/fallback order is unchanged.
 
 SAM's local GGML patch implements native Metal `WIN_PART` and `WIN_UNPART` for
 contiguous F32 tensors, including padded windows. The tested full image graph

@@ -33,6 +33,7 @@ struct RuntimeStats {
     std::uint64_t host_upload_bytes = 0, host_download_bytes = 0;
     std::size_t weight_buffer_bytes = 0, compute_buffer_bytes = 0;
     double image_ms = 0.0, text_ms = 0.0, inference_ms = 0.0;
+    std::uint64_t blas_nodes = 0; // Subset of cpu_nodes, not additional device work.
 };
 
 struct TensorData {
