@@ -1,0 +1,478 @@
+{
+  "schema_version": 1,
+  "kind": "sam3-modular-weight-output-quality",
+  "status": "completed-fixed-corpus-output-quality-accepted",
+  "model_adapter": "sam3",
+  "task": "text_image",
+  "hardware": {
+    "cpu": "Apple M4 Pro",
+    "memory_bytes": 51539607552
+  },
+  "schema": 4,
+  "module_order": [
+    "vision",
+    "text",
+    "fusion",
+    "decoder"
+  ],
+  "eligible_linear_matrices": {
+    "vision": 128,
+    "text": 97,
+    "fusion": 36,
+    "decoder": 87,
+    "full": 348
+  },
+  "acceptance_score_threshold": 0.5,
+  "visual_sample_score_threshold": 0.2,
+  "quantized_preset_cases": 112,
+  "quantized_output_quality_passed_cases": 112,
+  "legacy_regression_cases": 28,
+  "legacy_passed_cases": 28,
+  "raw_tensor_fidelity_is_primary_gate": false,
+  "matrix": "build/modular-quantization/20261004/matrix.json",
+  "matrix_sha256": "026b05862bc129c193725208ef9807d05e1b8e3be0026a0094f399a76cf6df97",
+  "post_review_audit": "build/modular-quantization/20261004/final-audit.json",
+  "post_review_audit_sha256": "8f631901c726e66784a412a6570651ab88de3444985f2a3f92c1fb1246b0e9fd",
+  "full_models": [
+    {
+      "precision": "q8_0",
+      "model": "build/modular-quantization/20261004/models/image-full-linear-q8_0-v1.gguf",
+      "bytes": 1096595296,
+      "model_sha256": "e41f2c652ba97c1081e07317731370482e1adbc0582fb91b44852395be36ebfb",
+      "manifest_sha256": "b10472285a2fa7c533e6450174ead07e6e7ccf1674ad95e6bb0808fadb88cad8",
+      "dtype_distribution": {
+        "float32": 785,
+        "q8_0": 348
+      }
+    },
+    {
+      "precision": "q6_k",
+      "model": "build/modular-quantization/20261004/models/image-full-linear-q6_k-v1.gguf",
+      "bytes": 946651328,
+      "model_sha256": "13fbcee22d8d163345c0c2d963bf64890955e48dbadfa9bb6f99d341ca06cd02",
+      "manifest_sha256": "0d65de362a0d2ac5fb17d0128328a53b4095e9b78de06626c6b88dea05b15e4d",
+      "dtype_distribution": {
+        "float32": 785,
+        "q6_k": 316,
+        "q8_0": 32
+      }
+    },
+    {
+      "precision": "q5_k",
+      "model": "build/modular-quantization/20261004/models/image-full-linear-q5_k-v1.gguf",
+      "bytes": 864423904,
+      "model_sha256": "a4689672c8669fedc282fffdae3c28e70376af546bdf824b52aa807a8bb68e25",
+      "manifest_sha256": "f71730b2a6b342bcac25834e562fddca98c7a0796d51c52cb170fd99ec2c292b",
+      "dtype_distribution": {
+        "float32": 785,
+        "q5_k": 316,
+        "q8_0": 32
+      }
+    },
+    {
+      "precision": "q4_k",
+      "model": "build/modular-quantization/20261004/models/image-full-linear-q4_k-v1.gguf",
+      "bytes": 787033440,
+      "model_sha256": "a46044cb86da6ef314b42d63956a57559b6cbdd04b5ee044164c6799198590ff",
+      "manifest_sha256": "899b394156fc8ec7d19fb5adcb4f45af46cc1ae1ad394fd265a5d714ad195116",
+      "dtype_distribution": {
+        "float32": 785,
+        "q4_k": 316,
+        "q8_0": 32
+      }
+    }
+  ],
+  "profiles": [
+    {
+      "preset": "full",
+      "precision": "q8_0",
+      "backend": "cpu",
+      "storage_profile": "image-full-linear-q8_0-v1",
+      "quantization_modules": [
+        "vision",
+        "text",
+        "fusion",
+        "decoder"
+      ],
+      "model_sha256": "e41f2c652ba97c1081e07317731370482e1adbc0582fb91b44852395be36ebfb",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9985270290175283,
+      "maximum_score_error": 0.0010402206027526617,
+      "maximum_box_fraction_error": 0.0003744123168944569,
+      "worst_raw_tensor": [
+        0.09706658480637329,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/full-q8_0-cpu/metrics.json",
+      "metrics_sha256": "1af6050f718c680b57a4eed613a6c16b9bc0124e1ee1e4258d98e5ec5c92652d"
+    },
+    {
+      "preset": "full",
+      "precision": "q8_0",
+      "backend": "metal",
+      "storage_profile": "image-full-linear-q8_0-v1",
+      "quantization_modules": [
+        "vision",
+        "text",
+        "fusion",
+        "decoder"
+      ],
+      "model_sha256": "e41f2c652ba97c1081e07317731370482e1adbc0582fb91b44852395be36ebfb",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9982326951399116,
+      "maximum_score_error": 0.0008949046027526553,
+      "maximum_box_fraction_error": 0.0003748888793944971,
+      "worst_raw_tensor": [
+        0.0996433950446524,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/full-q8_0-metal/metrics.json",
+      "metrics_sha256": "a5f5f3bda819ac27fe63a50c840befeb30610871b39cb2f0c3695af7e6ba509d"
+    },
+    {
+      "preset": "full",
+      "precision": "q6_k",
+      "backend": "cpu",
+      "storage_profile": "image-full-linear-q6_k-v1",
+      "quantization_modules": [
+        "vision",
+        "text",
+        "fusion",
+        "decoder"
+      ],
+      "model_sha256": "13fbcee22d8d163345c0c2d963bf64890955e48dbadfa9bb6f99d341ca06cd02",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.997074122236671,
+      "maximum_score_error": 0.004477798516571041,
+      "maximum_box_fraction_error": 0.0010649621223958168,
+      "worst_raw_tensor": [
+        0.27506698418768577,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/full-q6_k-cpu/metrics.json",
+      "metrics_sha256": "d043fda3d108afb3aabf82c8bfe63c0f4ea8fef4e7ba924f574bdc19a6da2cfb"
+    },
+    {
+      "preset": "full",
+      "precision": "q6_k",
+      "backend": "metal",
+      "storage_profile": "image-full-linear-q6_k-v1",
+      "quantization_modules": [
+        "vision",
+        "text",
+        "fusion",
+        "decoder"
+      ],
+      "model_sha256": "13fbcee22d8d163345c0c2d963bf64890955e48dbadfa9bb6f99d341ca06cd02",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.997074122236671,
+      "maximum_score_error": 0.004367589516571013,
+      "maximum_box_fraction_error": 0.0010657246223957865,
+      "worst_raw_tensor": [
+        0.2756240326284321,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/full-q6_k-metal/metrics.json",
+      "metrics_sha256": "632f652d6f76d9b065b607afe702828ec08d07a07c36bd8a1a33e80012d0042f"
+    },
+    {
+      "preset": "full",
+      "precision": "q5_k",
+      "backend": "cpu",
+      "storage_profile": "image-full-linear-q5_k-v1",
+      "quantization_modules": [
+        "vision",
+        "text",
+        "fusion",
+        "decoder"
+      ],
+      "model_sha256": "a4689672c8669fedc282fffdae3c28e70376af546bdf824b52aa807a8bb68e25",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.993199481865285,
+      "maximum_score_error": 0.01042485239724733,
+      "maximum_box_fraction_error": 0.0016346935668945406,
+      "worst_raw_tensor": [
+        0.3353348732164276,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/full-q5_k-cpu/metrics.json",
+      "metrics_sha256": "0c2e1500b8c13134c23590afe2a11b71151b89f57834dcd8be50063dd4294d78"
+    },
+    {
+      "preset": "full",
+      "precision": "q5_k",
+      "backend": "metal",
+      "storage_profile": "image-full-linear-q5_k-v1",
+      "quantization_modules": [
+        "vision",
+        "text",
+        "fusion",
+        "decoder"
+      ],
+      "model_sha256": "a4689672c8669fedc282fffdae3c28e70376af546bdf824b52aa807a8bb68e25",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.993199481865285,
+      "maximum_score_error": 0.010252714397247287,
+      "maximum_box_fraction_error": 0.0016310685668944557,
+      "worst_raw_tensor": [
+        0.3342489846251409,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/full-q5_k-metal/metrics.json",
+      "metrics_sha256": "bb27c90309a77e76dba0483244f2e5a1b0b313c92172ace6a9840ccf109e1793"
+    },
+    {
+      "preset": "full",
+      "precision": "q4_k",
+      "backend": "cpu",
+      "storage_profile": "image-full-linear-q4_k-v1",
+      "quantization_modules": [
+        "vision",
+        "text",
+        "fusion",
+        "decoder"
+      ],
+      "model_sha256": "a46044cb86da6ef314b42d63956a57559b6cbdd04b5ee044164c6799198590ff",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9693619709412508,
+      "maximum_score_error": 0.01963341203161617,
+      "maximum_box_fraction_error": 0.002322322439236157,
+      "worst_raw_tensor": [
+        0.4134631130215097,
+        "groceries-fruit",
+        "text_features"
+      ],
+      "metrics": "build/modular-quantization/20261004/full-q4_k-cpu/metrics.json",
+      "metrics_sha256": "f755f65a3c0d08ac51414de2f1b65834ca4dbd5bf2a953bddeb8198028c561db"
+    },
+    {
+      "preset": "full",
+      "precision": "q4_k",
+      "backend": "metal",
+      "storage_profile": "image-full-linear-q4_k-v1",
+      "quantization_modules": [
+        "vision",
+        "text",
+        "fusion",
+        "decoder"
+      ],
+      "model_sha256": "a46044cb86da6ef314b42d63956a57559b6cbdd04b5ee044164c6799198590ff",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9699652228896617,
+      "maximum_score_error": 0.01935279403161616,
+      "maximum_box_fraction_error": 0.002396138642578099,
+      "worst_raw_tensor": [
+        0.4139655345308733,
+        "groceries-fruit",
+        "text_features"
+      ],
+      "metrics": "build/modular-quantization/20261004/full-q4_k-metal/metrics.json",
+      "metrics_sha256": "fc71cd356dddb630926a07e927e64add59d25dd3c2e9db89c6d85d72ee9202ff"
+    },
+    {
+      "preset": "vision",
+      "precision": "q8_0",
+      "backend": "cpu",
+      "storage_profile": "image-vision-linear-q8_0-v1",
+      "quantization_modules": [],
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.998379970544919,
+      "maximum_score_error": 0.0007060175165710669,
+      "maximum_box_fraction_error": 5.630461263024244e-05,
+      "worst_raw_tensor": [
+        0.10062636549041476,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/vision-q8_0-cpu/metrics.json",
+      "metrics_sha256": "27b3182210b53599688507ca0061c42a86d898dc723f1a0085248cee6cacc7c9"
+    },
+    {
+      "preset": "vision",
+      "precision": "q8_0",
+      "backend": "metal",
+      "storage_profile": "image-vision-linear-q8_0-v1",
+      "quantization_modules": [],
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9982326951399116,
+      "maximum_score_error": 0.0008676645165710539,
+      "maximum_box_fraction_error": 5.9254612630184056e-05,
+      "worst_raw_tensor": [
+        0.10681004279436321,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/vision-q8_0-metal/metrics.json",
+      "metrics_sha256": "a27c76d9e253d93eb053503d49dda0b58b3e17a8902b2eae47367f09aa3d7c02"
+    },
+    {
+      "preset": "vision",
+      "precision": "q6_k",
+      "backend": "cpu",
+      "storage_profile": "image-vision-linear-q6_k-v1",
+      "quantization_modules": [],
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9977220956719818,
+      "maximum_score_error": 0.00685656051657102,
+      "maximum_box_fraction_error": 0.00015872717187499983,
+      "worst_raw_tensor": [
+        0.2696542184365413,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/vision-q6_k-cpu/metrics.json",
+      "metrics_sha256": "0ce9e78b3cc0f55ba843b8d2b0039929beeca639c50e74ee64bbefe316817c6d"
+    },
+    {
+      "preset": "vision",
+      "precision": "q6_k",
+      "backend": "metal",
+      "storage_profile": "image-vision-linear-q6_k-v1",
+      "quantization_modules": [],
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9977220956719818,
+      "maximum_score_error": 0.006805539516571035,
+      "maximum_box_fraction_error": 0.000158369546875,
+      "worst_raw_tensor": [
+        0.27000277215665214,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/vision-q6_k-metal/metrics.json",
+      "metrics_sha256": "fb8c5191c92ef801d6591be633c709941c4252545a6da775f5effc1eafe3b379"
+    },
+    {
+      "preset": "vision",
+      "precision": "q5_k",
+      "backend": "cpu",
+      "storage_profile": "image-vision-linear-q5_k-v1",
+      "quantization_modules": [],
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9948529411764706,
+      "maximum_score_error": 0.0037615893972473557,
+      "maximum_box_fraction_error": 0.00041675606689448583,
+      "worst_raw_tensor": [
+        0.26939232022158865,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/vision-q5_k-cpu/metrics.json",
+      "metrics_sha256": "d78737f942ffdb8355986795cee60ea897a0a1f30e737c078f732f85e5a005ce"
+    },
+    {
+      "preset": "vision",
+      "precision": "q5_k",
+      "backend": "metal",
+      "storage_profile": "image-vision-linear-q5_k-v1",
+      "quantization_modules": [],
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.9949992645977349,
+      "maximum_score_error": 0.0036218763972473145,
+      "maximum_box_fraction_error": 0.00041427637939452924,
+      "worst_raw_tensor": [
+        0.2705250923385518,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/vision-q5_k-metal/metrics.json",
+      "metrics_sha256": "2c6749719db2d09ee9177d9bfcd86a55f87ac5119fde09bb3a82655fb372fd9e"
+    },
+    {
+      "preset": "vision",
+      "precision": "q4_k",
+      "backend": "cpu",
+      "storage_profile": "image-vision-linear-q4_k-v1",
+      "quantization_modules": [],
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.978614746249601,
+      "maximum_score_error": 0.01044565451657109,
+      "maximum_box_fraction_error": 0.000696766904296832,
+      "worst_raw_tensor": [
+        0.3047742074078206,
+        "groceries-fruit",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/vision-q4_k-cpu/metrics.json",
+      "metrics_sha256": "5391f9c357f5a0022e5a98954fdf887e897d4d8345d520bdefeb8101f3fb0b59"
+    },
+    {
+      "preset": "vision",
+      "precision": "q4_k",
+      "backend": "metal",
+      "storage_profile": "image-vision-linear-q4_k-v1",
+      "quantization_modules": [],
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "cases": 7,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "minimum_mask_iou": 0.978614746249601,
+      "maximum_score_error": 0.010253667516571086,
+      "maximum_box_fraction_error": 0.0006880185709635119,
+      "worst_raw_tensor": [
+        0.3057776610464035,
+        "groceries-fruit",
+        "mask_logits"
+      ],
+      "metrics": "build/modular-quantization/20261004/vision-q4_k-metal/metrics.json",
+      "metrics_sha256": "66a3b4b301f4bb4146331793488583a7827d5933e9ddc84cb27e187e97312b83"
+    }
+  ],
+  "custom_combinations": {
+    "policy": "diagnostic-user-configurable-not-exhaustively-quality-validated",
+    "integration_sample": "text,decoder q6_k cpu",
+    "cases": 7,
+    "passed": true,
+    "release_support_eligible": false
+  },
+  "visual_samples": {
+    "full_q5_k_wheel_candidates": 6,
+    "full_q4_k_wheel_candidates": 4,
+    "reference_wheel_candidates": 7,
+    "query_confidence_labels": true
+  },
+  "source_plan": "docs/plans/20261004-021711-sam3-modular-weight-quantization.md",
+  "performance": "not-remeasured-for-full-presets"
+}

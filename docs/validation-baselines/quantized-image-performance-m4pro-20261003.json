@@ -1,0 +1,1663 @@
+{
+  "schema_version": 1,
+  "kind": "completed-original-qualified-quantized-image-performance-index",
+  "date": "2026-10-03",
+  "started_at": "2026-10-03T23:13:48.204924+08:00",
+  "ended_at": "2026-10-03T23:59:53.038356+08:00",
+  "base_commit": "37206da13f70f2122a788e2ce05a7c63909c394e",
+  "implementation_git_state": "uncommitted",
+  "status": "18-of-18-formal-performance-cells-accepted",
+  "hardware": "Apple M4 Pro 14 CPU / 20 GPU cores, 48 GiB, macOS 27.0",
+  "numerical_parent_index": "docs/validation-baselines/quantized-image-output-m4pro-20261003.json",
+  "numerical_parent_index_sha256": "d65d6751efff95c0a117724606d54d0564d92591acba2b69f567c6b6ec71c3da",
+  "matrix_report": "build/quantization-performance/20261003-v2/report.json",
+  "matrix_report_sha256": "61f50c10aaa7ec4f4a664ffd3307dea119b244b5ec3a195c8686b4ad08de5397",
+  "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+  "environment": {
+    "cpu_memory_cores": "machdep.cpu.brand_string: Apple M4 Pro\nhw.memsize: 51539607552\nhw.physicalcpu: 14\nhw.logicalcpu: 14",
+    "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0\nBuildVersion:\t\t26A428",
+    "builds": {
+      "quant-repair-cpu": {
+        "cmake_cache": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quant-repair-cpu/CMakeCache.txt"
+      },
+      "quant-repair-cpu-no-blas": {
+        "cmake_cache": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quant-repair-cpu-no-blas/CMakeCache.txt"
+      },
+      "quant-repair-metal": {
+        "cmake_cache": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quant-repair-metal/CMakeCache.txt"
+      }
+    },
+    "monitoring_limit": "Before/during/after process snapshots at approximately ten-second intervals; transient external processes between samples may be missed. Ordinary desktop services remain active; frequency is not fixed."
+  },
+  "protocol": {
+    "input": "official-reference truck-truck/input.ppm",
+    "input_dimensions": [
+      1800,
+      1200
+    ],
+    "model_input_dimensions": [
+      1008,
+      1008
+    ],
+    "prompt": "truck",
+    "score_threshold": 0.5,
+    "warmup": 1,
+    "measured_full_image_samples": 5,
+    "cached_result_samples_excluded": true,
+    "threads_requested": 4,
+    "VECLIB_MAXIMUM_THREADS": "4",
+    "peak_rss": "/usr/bin/time -l whole child, including loading and final PNG output",
+    "BLAS_internal_workspace": "not independently available; covered by process peak RSS",
+    "same_backend_baselines": "fresh F32 and F16 from same qualified build and input",
+    "order": "CPU/BLAS then Metal then no-BLAS CPU; F32,Q8,Q6,Q5,Q4,F16 within each; not interleaved A/B"
+  },
+  "timed_cells": 18,
+  "quantized_cells": 12,
+  "original_reference_output_quality_passed_cells": 18,
+  "extra_no_blas_numerical_cases": 14,
+  "cells": [
+    {
+      "cell": "cpu-blas",
+      "precision": "f32",
+      "median_full_image_ms": 7352.64225,
+      "minimum_ms": 7301.61767,
+      "maximum_ms": 7385.79775,
+      "peak_rss_bytes": 4927963136,
+      "model_file_bytes": 3371139456,
+      "model_sha256": "cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/legacy-f32-cpu-blas/metrics.json",
+        "sha256": "5d7f46a33448f9edff98a1c6de97fc5407dee3dd7c8e76e4610a51a6a7eae2fc",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": true
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 1.0,
+          "score_error": 5.963972473654877e-07,
+          "box_fraction_error": 1.0206380210320276e-07,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 3369375008,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 1.01225,
+        "model_load": 945.001125,
+        "cold_start": 8333.594,
+        "warmed_full_image_median": 7352.64225,
+        "repeated_result_cache_median": 7.535,
+        "last_computed_image": 6172.7585,
+        "last_computed_text": 29.832083,
+        "last_computed_inference": 1140.96475,
+        "warmed_full_image_runs": [
+          {
+            "total": 7352.64225,
+            "image": 6195.62333,
+            "text": 29.059083,
+            "inference": 1133.56938
+          },
+          {
+            "total": 7301.61767,
+            "image": 6153.74038,
+            "text": 29.722708,
+            "inference": 1124.94496
+          },
+          {
+            "total": 7385.79775,
+            "image": 6222.37746,
+            "text": 29.963625,
+            "inference": 1140.38717
+          },
+          {
+            "total": 7365.75579,
+            "image": 6207.37675,
+            "text": 30.306792,
+            "inference": 1135.21463
+          },
+          {
+            "total": 7337.35671,
+            "image": 6172.7585,
+            "text": 29.832083,
+            "inference": 1140.96475
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.535,
+          7.579083,
+          7.714333,
+          7.518209,
+          7.516542
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/f32-cpu-blas/run.json",
+      "receipt_sha256": "1937852148a82cecf250ef30b0b725e3c526748ddda19891a727b5ec134425a7"
+    },
+    {
+      "cell": "cpu-blas",
+      "precision": "q8_0",
+      "median_full_image_ms": 7352.25454,
+      "minimum_ms": 7329.32204,
+      "maximum_ms": 7355.681,
+      "peak_rss_bytes": 3751231488,
+      "model_file_bytes": 2065138144,
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/fresh-q8-cpu-blas/metrics.json",
+        "sha256": "2711b5bc87d284f1e43f2608f11c70c639c2d57f571dbcc6b5e7601a042644b5",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9999418490432596,
+          "score_error": 0.0006160733972473409,
+          "box_fraction_error": 1.6394699435764436e-05,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 2063373600,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 0.8965,
+        "model_load": 845.180833,
+        "cold_start": 8222.87258,
+        "warmed_full_image_median": 7352.25454,
+        "repeated_result_cache_median": 7.519875,
+        "last_computed_image": 6214.45475,
+        "last_computed_text": 28.856625,
+        "last_computed_inference": 1114.11583,
+        "warmed_full_image_runs": [
+          {
+            "total": 7345.67729,
+            "image": 6198.28979,
+            "text": 29.153375,
+            "inference": 1123.60296
+          },
+          {
+            "total": 7353.07929,
+            "image": 6206.90608,
+            "text": 29.246584,
+            "inference": 1123.09887
+          },
+          {
+            "total": 7329.32204,
+            "image": 6187.90708,
+            "text": 29.166583,
+            "inference": 1118.258
+          },
+          {
+            "total": 7355.681,
+            "image": 6210.36667,
+            "text": 28.965041,
+            "inference": 1122.45767
+          },
+          {
+            "total": 7352.25454,
+            "image": 6214.45475,
+            "text": 28.856625,
+            "inference": 1114.11583
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.527792,
+          7.519875,
+          7.519333,
+          7.516917,
+          7.524292
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q8_0-cpu-blas/run.json",
+      "receipt_sha256": "b48fca17c0f1629777f19a4db505b096f7e12dd7eef65f10bc5b7ed5113b79e6"
+    },
+    {
+      "cell": "cpu-blas",
+      "precision": "q6_k",
+      "median_full_image_ms": 7347.74708,
+      "minimum_ms": 7337.369,
+      "maximum_ms": 7376.35021,
+      "peak_rss_bytes": 3677962240,
+      "model_file_bytes": 1995047392,
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/quantized-q6_k-cpu-blas/metrics.json",
+        "sha256": "db0c7532b393c8765d6065237c0121357a3ed17d88d85d6d1b05def467a815ab",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9998459850825552,
+          "score_error": 0.00037240960275264356,
+          "box_fraction_error": 3.814706380211419e-05,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1993282848,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 1.024209,
+        "model_load": 865.406792,
+        "cold_start": 8293.72167,
+        "warmed_full_image_median": 7347.74708,
+        "repeated_result_cache_median": 7.580083,
+        "last_computed_image": 6187.47037,
+        "last_computed_text": 29.418,
+        "last_computed_inference": 1126.87975,
+        "warmed_full_image_runs": [
+          {
+            "total": 7347.74708,
+            "image": 6198.14963,
+            "text": 28.99425,
+            "inference": 1125.65821
+          },
+          {
+            "total": 7376.35021,
+            "image": 6226.86808,
+            "text": 28.950041,
+            "inference": 1126.47338
+          },
+          {
+            "total": 7338.31963,
+            "image": 6194.02258,
+            "text": 28.843125,
+            "inference": 1121.40237
+          },
+          {
+            "total": 7365.58954,
+            "image": 6219.82933,
+            "text": 28.859667,
+            "inference": 1122.53858
+          },
+          {
+            "total": 7337.369,
+            "image": 6187.47037,
+            "text": 29.418,
+            "inference": 1126.87975
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.587708,
+          7.580083,
+          7.598666,
+          7.571833,
+          7.569917
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q6_k-cpu-blas/run.json",
+      "receipt_sha256": "46c1217e123cdd170b0336b5d6950f60584dd862c6cd56fc53abcdaf6082a69a"
+    },
+    {
+      "cell": "cpu-blas",
+      "precision": "q5_k",
+      "median_full_image_ms": 7364.04079,
+      "minimum_ms": 7342.96908,
+      "maximum_ms": 7383.83267,
+      "peak_rss_bytes": 3641114624,
+      "model_file_bytes": 1956610528,
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/quantized-q5_k-cpu-blas/metrics.json",
+        "sha256": "142e1705fe8246f2bfe7a9691539cefb484a31403367c6aa3e6032fb1bf81440",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9996291593860388,
+          "score_error": 0.0037615893972473557,
+          "box_fraction_error": 0.00024215706380203983,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1954845984,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 1.020416,
+        "model_load": 847.92125,
+        "cold_start": 8214.684,
+        "warmed_full_image_median": 7364.04079,
+        "repeated_result_cache_median": 7.555625,
+        "last_computed_image": 6213.54083,
+        "last_computed_text": 28.907292,
+        "last_computed_inference": 1127.49454,
+        "warmed_full_image_runs": [
+          {
+            "total": 7357.22688,
+            "image": 6198.74804,
+            "text": 29.721625,
+            "inference": 1134.46954
+          },
+          {
+            "total": 7342.96908,
+            "image": 6194.53933,
+            "text": 28.87275,
+            "inference": 1125.38629
+          },
+          {
+            "total": 7370.45583,
+            "image": 6225.90746,
+            "text": 28.7505,
+            "inference": 1121.09833
+          },
+          {
+            "total": 7383.83267,
+            "image": 6237.48554,
+            "text": 28.968959,
+            "inference": 1123.52646
+          },
+          {
+            "total": 7364.04079,
+            "image": 6213.54083,
+            "text": 28.907292,
+            "inference": 1127.49454
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.559125,
+          7.519542,
+          7.580333,
+          7.555625,
+          7.551083
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q5_k-cpu-blas/run.json",
+      "receipt_sha256": "8360f01d42b79f36d7ffc17227c6acf65612303af1eff848863ac311a9a580b6"
+    },
+    {
+      "cell": "cpu-blas",
+      "precision": "q4_k",
+      "median_full_image_ms": 7360.20696,
+      "minimum_ms": 7347.75958,
+      "maximum_ms": 7375.57717,
+      "peak_rss_bytes": 3605856256,
+      "model_file_bytes": 1920434656,
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/quantized-q4_k-cpu-blas/metrics.json",
+        "sha256": "7a882c9d67a4645ad5d2147788f4740716095752000d19588630465d90cb4feb",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9991893305850174,
+          "score_error": 0.005578935602752688,
+          "box_fraction_error": 0.0004861958661024267,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1918670112,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 0.969459,
+        "model_load": 877.22,
+        "cold_start": 8260.34417,
+        "warmed_full_image_median": 7360.20696,
+        "repeated_result_cache_median": 7.549792,
+        "last_computed_image": 6218.29388,
+        "last_computed_text": 29.331625,
+        "last_computed_inference": 1118.77488,
+        "warmed_full_image_runs": [
+          {
+            "total": 7353.24896,
+            "image": 6195.91071,
+            "text": 28.751583,
+            "inference": 1134.02571
+          },
+          {
+            "total": 7366.13204,
+            "image": 6218.71229,
+            "text": 28.823875,
+            "inference": 1124.27437
+          },
+          {
+            "total": 7375.57717,
+            "image": 6219.53304,
+            "text": 28.901375,
+            "inference": 1132.94571
+          },
+          {
+            "total": 7347.75958,
+            "image": 6203.41829,
+            "text": 28.876375,
+            "inference": 1120.99104
+          },
+          {
+            "total": 7360.20696,
+            "image": 6218.29388,
+            "text": 29.331625,
+            "inference": 1118.77488
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.550708,
+          7.545375,
+          7.549792,
+          7.541167,
+          7.673583
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q4_k-cpu-blas/run.json",
+      "receipt_sha256": "ffd55a3ccbb8df183fc3f5ac63014d523a25f28002d178dd22938d06352e6338"
+    },
+    {
+      "cell": "cpu-blas",
+      "precision": "f16",
+      "median_full_image_ms": 7375.20667,
+      "minimum_ms": 7364.42154,
+      "maximum_ms": 7393.0815,
+      "peak_rss_bytes": 4954079232,
+      "model_file_bytes": 1797613888,
+      "model_sha256": "66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/legacy-f16-cpu-blas/metrics.json",
+        "sha256": "5f179ec8e56686c4152cc8b12936477e1a68bc8e9c0f0477ce782d6a653b26ad",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": true
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 1.0,
+          "score_error": 0.00011670560275267583,
+          "box_fraction_error": 2.0335503472779237e-06,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 3369375008,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 1.174083,
+        "model_load": 927.229041,
+        "cold_start": 8338.48008,
+        "warmed_full_image_median": 7375.20667,
+        "repeated_result_cache_median": 7.563833,
+        "last_computed_image": 6206.80512,
+        "last_computed_text": 29.481042,
+        "last_computed_inference": 1134.62746,
+        "warmed_full_image_runs": [
+          {
+            "total": 7383.66975,
+            "image": 6213.16838,
+            "text": 29.243583,
+            "inference": 1146.22021
+          },
+          {
+            "total": 7370.34487,
+            "image": 6209.13983,
+            "text": 29.292167,
+            "inference": 1138.08188
+          },
+          {
+            "total": 7393.0815,
+            "image": 6221.75958,
+            "text": 29.351458,
+            "inference": 1148.15879
+          },
+          {
+            "total": 7375.20667,
+            "image": 6223.16767,
+            "text": 29.297625,
+            "inference": 1128.27325
+          },
+          {
+            "total": 7364.42154,
+            "image": 6206.80512,
+            "text": 29.481042,
+            "inference": 1134.62746
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.559042,
+          7.552208,
+          7.563833,
+          7.613416,
+          7.668625
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/f16-cpu-blas/run.json",
+      "receipt_sha256": "c5c53daa0586edea82c4b1a9087cc841af990f7cf19eca928d99a7e6e721ed89"
+    },
+    {
+      "cell": "metal",
+      "precision": "f32",
+      "median_full_image_ms": 5373.35604,
+      "minimum_ms": 5370.01342,
+      "maximum_ms": 5382.16458,
+      "peak_rss_bytes": 4245209088,
+      "model_file_bytes": 3371139456,
+      "model_sha256": "cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/legacy-f32-metal/metrics.json",
+        "sha256": "c4a6d29a4ad60e9ad67795108a9763ab0e6b580578976daaff2971f69db2120d",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": true
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 1.0,
+          "score_error": 3.573972473525089e-07,
+          "box_fraction_error": 1.3355034727485165e-07,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 3369375008,
+      "compute_buffer_bytes": 1242646848,
+      "timing_ms": {
+        "decode": 2.279833,
+        "model_load": 1099.10208,
+        "cold_start": 6489.30833,
+        "warmed_full_image_median": 5373.35604,
+        "repeated_result_cache_median": 11.502334,
+        "last_computed_image": 4709.34421,
+        "last_computed_text": 12.259667,
+        "last_computed_inference": 638.657,
+        "warmed_full_image_runs": [
+          {
+            "total": 5382.16458,
+            "image": 4712.89004,
+            "text": 12.512625,
+            "inference": 640.440875
+          },
+          {
+            "total": 5371.83537,
+            "image": 4706.20483,
+            "text": 12.265708,
+            "inference": 638.583375
+          },
+          {
+            "total": 5370.01342,
+            "image": 4709.12692,
+            "text": 12.366375,
+            "inference": 634.047042
+          },
+          {
+            "total": 5373.35604,
+            "image": 4709.65092,
+            "text": 12.300375,
+            "inference": 636.636333
+          },
+          {
+            "total": 5375.07138,
+            "image": 4709.34421,
+            "text": 12.259667,
+            "inference": 638.657
+          }
+        ],
+        "repeated_result_cache_runs": [
+          11.538083,
+          11.502334,
+          11.531833,
+          11.498916,
+          11.500292
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/f32-metal/run.json",
+      "receipt_sha256": "253905fd93e6ba4e7bfc40741e251e65cfd961e6b76e2e82b0fc81c97b280ade"
+    },
+    {
+      "cell": "metal",
+      "precision": "q8_0",
+      "median_full_image_ms": 5321.9965,
+      "minimum_ms": 5315.70392,
+      "maximum_ms": 5332.98312,
+      "peak_rss_bytes": 2936668160,
+      "model_file_bytes": 2065138144,
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/quantized-q8_0-metal/metrics.json",
+        "sha256": "5abf7dd0104a222f388416bb2c77ba362ee76aa0761fb92a79fe50e17df34ec1",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9999387056519675,
+          "score_error": 0.0006796713972473389,
+          "box_fraction_error": 1.4724754991317152e-05,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 2063373600,
+      "compute_buffer_bytes": 1242646848,
+      "timing_ms": {
+        "decode": 1.023792,
+        "model_load": 911.616458,
+        "cold_start": 6244.55742,
+        "warmed_full_image_median": 5321.9965,
+        "repeated_result_cache_median": 11.508875,
+        "last_computed_image": 4654.37913,
+        "last_computed_text": 12.399584,
+        "last_computed_inference": 634.967209,
+        "warmed_full_image_runs": [
+          {
+            "total": 5332.98312,
+            "image": 4666.76987,
+            "text": 12.382208,
+            "inference": 637.769792
+          },
+          {
+            "total": 5324.18821,
+            "image": 4659.78838,
+            "text": 12.314583,
+            "inference": 636.389042
+          },
+          {
+            "total": 5319.91125,
+            "image": 4660.71721,
+            "text": 12.184167,
+            "inference": 632.073083
+          },
+          {
+            "total": 5321.9965,
+            "image": 4655.98596,
+            "text": 12.589875,
+            "inference": 638.986875
+          },
+          {
+            "total": 5315.70392,
+            "image": 4654.37913,
+            "text": 12.399584,
+            "inference": 634.967209
+          }
+        ],
+        "repeated_result_cache_runs": [
+          11.585833,
+          11.505417,
+          11.508875,
+          11.509834,
+          11.493584
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q8_0-metal/run.json",
+      "receipt_sha256": "f95c50bd4f518bd5c35955b3e899f49150bac4e9bc92bbfc51135721a3830b53"
+    },
+    {
+      "cell": "metal",
+      "precision": "q6_k",
+      "median_full_image_ms": 5348.35817,
+      "minimum_ms": 5344.21042,
+      "maximum_ms": 5354.99983,
+      "peak_rss_bytes": 2868101120,
+      "model_file_bytes": 1995047392,
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/quantized-q6_k-metal/metrics.json",
+        "sha256": "245b03f29dac38667e1ca240e392cb803bc123d3e0b7766e8f6d7a1a63125a2d",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.999847556423768,
+          "score_error": 1.9431602752639776e-05,
+          "box_fraction_error": 3.4077897135394625e-05,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1993282848,
+      "compute_buffer_bytes": 1242646848,
+      "timing_ms": {
+        "decode": 0.992917,
+        "model_load": 905.285458,
+        "cold_start": 6271.78292,
+        "warmed_full_image_median": 5348.35817,
+        "repeated_result_cache_median": 11.496917,
+        "last_computed_image": 4686.00413,
+        "last_computed_text": 12.555166,
+        "last_computed_inference": 636.000083,
+        "warmed_full_image_runs": [
+          {
+            "total": 5352.12779,
+            "image": 4686.84496,
+            "text": 12.746875,
+            "inference": 637.592084
+          },
+          {
+            "total": 5354.99983,
+            "image": 4688.77679,
+            "text": 12.607291,
+            "inference": 639.288542
+          },
+          {
+            "total": 5344.21042,
+            "image": 4684.7525,
+            "text": 12.591958,
+            "inference": 632.665875
+          },
+          {
+            "total": 5346.08333,
+            "image": 4683.11717,
+            "text": 12.556167,
+            "inference": 636.728458
+          },
+          {
+            "total": 5348.35817,
+            "image": 4686.00413,
+            "text": 12.555166,
+            "inference": 636.000083
+          }
+        ],
+        "repeated_result_cache_runs": [
+          11.719791,
+          11.489333,
+          11.494,
+          11.519833,
+          11.496917
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q6_k-metal/run.json",
+      "receipt_sha256": "7add7f7d4373e531c93f7ef52473ea7a4199cecc4630d72961942d5f4ea961d2"
+    },
+    {
+      "cell": "metal",
+      "precision": "q5_k",
+      "median_full_image_ms": 5370.19558,
+      "minimum_ms": 5359.60125,
+      "maximum_ms": 5383.22471,
+      "peak_rss_bytes": 2828582912,
+      "model_file_bytes": 1956610528,
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/quantized-q5_k-metal/metrics.json",
+        "sha256": "867092b5ae2575594abb510749576609faed241c562018785fe3d4761cf2dfe6",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9996307301643172,
+          "score_error": 0.0036218763972473145,
+          "box_fraction_error": 0.00024281789713541003,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1954845984,
+      "compute_buffer_bytes": 1242646848,
+      "timing_ms": {
+        "decode": 1.003667,
+        "model_load": 905.007,
+        "cold_start": 6295.31362,
+        "warmed_full_image_median": 5370.19558,
+        "repeated_result_cache_median": 11.503083,
+        "last_computed_image": 4703.99237,
+        "last_computed_text": 12.636625,
+        "last_computed_inference": 636.196625,
+        "warmed_full_image_runs": [
+          {
+            "total": 5383.22471,
+            "image": 4718.22058,
+            "text": 12.699125,
+            "inference": 636.934917
+          },
+          {
+            "total": 5359.60125,
+            "image": 4700.18867,
+            "text": 12.467958,
+            "inference": 633.065917
+          },
+          {
+            "total": 5374.91892,
+            "image": 4715.47033,
+            "text": 12.682666,
+            "inference": 632.811792
+          },
+          {
+            "total": 5370.19558,
+            "image": 4711.02408,
+            "text": 12.535458,
+            "inference": 632.377292
+          },
+          {
+            "total": 5366.58487,
+            "image": 4703.99237,
+            "text": 12.636625,
+            "inference": 636.196625
+          }
+        ],
+        "repeated_result_cache_runs": [
+          11.493041,
+          11.511292,
+          11.503083,
+          11.494792,
+          11.551125
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q5_k-metal/run.json",
+      "receipt_sha256": "7290328362c2b8bd1e03d6111ca9e712c3d8c0cb789baa0dd5136e39ec721f2b"
+    },
+    {
+      "cell": "metal",
+      "precision": "q4_k",
+      "median_full_image_ms": 5338.68296,
+      "minimum_ms": 5333.814,
+      "maximum_ms": 5353.93271,
+      "peak_rss_bytes": 2792964096,
+      "model_file_bytes": 1920434656,
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/quantized-q4_k-metal/metrics.json",
+        "sha256": "a3ae01f20b5dd2694cb2c00d46399b6b43318279f82b8f930c7fdb89f4f1e1c5",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9991830411920057,
+          "score_error": 0.00500398860275264,
+          "box_fraction_error": 0.0004812198105468784,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1918670112,
+      "compute_buffer_bytes": 1242646848,
+      "timing_ms": {
+        "decode": 0.964209,
+        "model_load": 925.183167,
+        "cold_start": 6275.14471,
+        "warmed_full_image_median": 5338.68296,
+        "repeated_result_cache_median": 11.533208,
+        "last_computed_image": 4677.47221,
+        "last_computed_text": 12.57275,
+        "last_computed_inference": 635.325166,
+        "warmed_full_image_runs": [
+          {
+            "total": 5333.814,
+            "image": 4671.53158,
+            "text": 12.329375,
+            "inference": 633.703334
+          },
+          {
+            "total": 5337.13683,
+            "image": 4666.67688,
+            "text": 12.412208,
+            "inference": 642.249625
+          },
+          {
+            "total": 5338.68296,
+            "image": 4677.08937,
+            "text": 12.513875,
+            "inference": 631.4695
+          },
+          {
+            "total": 5353.93271,
+            "image": 4687.11671,
+            "text": 12.766291,
+            "inference": 639.068541
+          },
+          {
+            "total": 5339.91929,
+            "image": 4677.47221,
+            "text": 12.57275,
+            "inference": 635.325166
+          }
+        ],
+        "repeated_result_cache_runs": [
+          11.564833,
+          11.508667,
+          11.533208,
+          11.551667,
+          11.512583
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q4_k-metal/run.json",
+      "receipt_sha256": "a64d8d78e8147d3ed05107e9003d544649e31207369c53f2d1216813fe532e16"
+    },
+    {
+      "cell": "metal",
+      "precision": "f16",
+      "median_full_image_ms": 5349.16221,
+      "minimum_ms": 5344.67062,
+      "maximum_ms": 5361.43387,
+      "peak_rss_bytes": 2661367808,
+      "model_file_bytes": 1797613888,
+      "model_sha256": "66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/legacy-f16-metal/metrics.json",
+        "sha256": "2e6233ad298aa28475c9a51a34e79cd573525c96b34d894550dd9fba3831822a",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": true
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 1.0,
+          "score_error": 0.00011700360275268551,
+          "box_fraction_error": 2.0335503472779237e-06,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1795849440,
+      "compute_buffer_bytes": 1245268288,
+      "timing_ms": {
+        "decode": 1.008667,
+        "model_load": 699.93875,
+        "cold_start": 6063.14167,
+        "warmed_full_image_median": 5349.16221,
+        "repeated_result_cache_median": 11.532041,
+        "last_computed_image": 4681.67771,
+        "last_computed_text": 11.386458,
+        "last_computed_inference": 639.100625,
+        "warmed_full_image_runs": [
+          {
+            "total": 5350.752,
+            "image": 4687.01033,
+            "text": 11.292375,
+            "inference": 636.389625
+          },
+          {
+            "total": 5361.43387,
+            "image": 4698.0815,
+            "text": 11.294458,
+            "inference": 635.884292
+          },
+          {
+            "total": 5344.67062,
+            "image": 4682.10812,
+            "text": 11.373417,
+            "inference": 635.410708
+          },
+          {
+            "total": 5349.16221,
+            "image": 4688.33637,
+            "text": 11.363,
+            "inference": 633.222833
+          },
+          {
+            "total": 5347.09037,
+            "image": 4681.67771,
+            "text": 11.386458,
+            "inference": 639.100625
+          }
+        ],
+        "repeated_result_cache_runs": [
+          11.519334,
+          11.54575,
+          11.518166,
+          11.53825,
+          11.532041
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/f16-metal/run.json",
+      "receipt_sha256": "73510c022601f83963cdebd6ea6cf500529e6b3743b7016bd407fa2c7a0371a3"
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "f32",
+      "median_full_image_ms": 38857.1803,
+      "minimum_ms": 38777.7991,
+      "maximum_ms": 39007.5964,
+      "peak_rss_bytes": 4833427456,
+      "model_file_bytes": 3371139456,
+      "model_sha256": "cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-performance/20261003-v2/qualification-f32-cpu-no-blas/metrics.json",
+        "sha256": "974b85f8120b13decda40e859b9364f4d9cd20b74dc7105bed0f97748d925a48",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": true
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 1.0,
+          "score_error": 1.786027526984313e-07,
+          "box_fraction_error": 1.3355034727485165e-07,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 3369375008,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 2.438584,
+        "model_load": 986.267292,
+        "cold_start": 40375.8448,
+        "warmed_full_image_median": 38857.1803,
+        "repeated_result_cache_median": 7.754666,
+        "last_computed_image": 36113.4596,
+        "last_computed_text": 131.878666,
+        "last_computed_inference": 2870.80392,
+        "warmed_full_image_runs": [
+          {
+            "total": 38894.1879,
+            "image": 36001.0355,
+            "text": 129.657292,
+            "inference": 2868.69254
+          },
+          {
+            "total": 38857.1803,
+            "image": 35964.126,
+            "text": 134.424375,
+            "inference": 2869.07787
+          },
+          {
+            "total": 38777.7991,
+            "image": 35893.3625,
+            "text": 134.509084,
+            "inference": 2861.06988
+          },
+          {
+            "total": 38835.3533,
+            "image": 35937.96,
+            "text": 133.879166,
+            "inference": 2873.68758
+          },
+          {
+            "total": 39007.5964,
+            "image": 36113.4596,
+            "text": 131.878666,
+            "inference": 2870.80392
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.971375,
+          7.773125,
+          7.675375,
+          7.684042,
+          7.754666
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/f32-cpu-no-blas/run.json",
+      "receipt_sha256": "8705e9855fe87eca928be5db15f31ce9f84989053e6e9204af2b134b257b794d"
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "q8_0",
+      "median_full_image_ms": 39234.264,
+      "minimum_ms": 38878.069,
+      "maximum_ms": 39464.6752,
+      "peak_rss_bytes": 3543269376,
+      "model_file_bytes": 2065138144,
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/fresh-q8_0-cpu-no-blas/metrics.json",
+        "sha256": "86d04af59bc485e7b0d93823988976326ea4eb467195f25e46c37bc6ba5dd79b",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9999418490432596,
+          "score_error": 0.0006157163972473345,
+          "box_fraction_error": 1.6454088324656544e-05,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 2063373600,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 0.966625,
+        "model_load": 859.973208,
+        "cold_start": 39977.6567,
+        "warmed_full_image_median": 39234.264,
+        "repeated_result_cache_median": 7.624125,
+        "last_computed_image": 36326.134,
+        "last_computed_text": 130.467167,
+        "last_computed_inference": 2884.61929,
+        "warmed_full_image_runs": [
+          {
+            "total": 39464.6752,
+            "image": 36552.8758,
+            "text": 130.89,
+            "inference": 2887.72729
+          },
+          {
+            "total": 39179.4546,
+            "image": 36273.7157,
+            "text": 131.984583,
+            "inference": 2881.62929
+          },
+          {
+            "total": 38878.069,
+            "image": 35986.2633,
+            "text": 129.906041,
+            "inference": 2869.42367
+          },
+          {
+            "total": 39311.4353,
+            "image": 36417.592,
+            "text": 129.715417,
+            "inference": 2870.34767
+          },
+          {
+            "total": 39234.264,
+            "image": 36326.134,
+            "text": 130.467167,
+            "inference": 2884.61929
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.863625,
+          7.50025,
+          7.465583,
+          7.661292,
+          7.624125
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q8_0-cpu-no-blas/run.json",
+      "receipt_sha256": "e9ffeb658c54cceb3f0f906d1e9bcf96c3055ef84c0971a38620f374272c56e2"
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "q6_k",
+      "median_full_image_ms": 38850.9665,
+      "minimum_ms": 38798.7434,
+      "maximum_ms": 39079.4892,
+      "peak_rss_bytes": 3676225536,
+      "model_file_bytes": 1995047392,
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/fresh-q6_k-cpu-no-blas/metrics.json",
+        "sha256": "0bf745aca33ae96a56e0f1d32de947b82b12849120860d5451b4e836d8f42c37",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9998459850825552,
+          "score_error": 0.00037348260275271716,
+          "box_fraction_error": 3.814706380211419e-05,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1993282848,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 0.954583,
+        "model_load": 844.649208,
+        "cold_start": 40267.9724,
+        "warmed_full_image_median": 38850.9665,
+        "repeated_result_cache_median": 7.584,
+        "last_computed_image": 36153.3124,
+        "last_computed_text": 130.032959,
+        "last_computed_inference": 2872.37883,
+        "warmed_full_image_runs": [
+          {
+            "total": 38850.9665,
+            "image": 35959.9936,
+            "text": 130.160375,
+            "inference": 2866.48013
+          },
+          {
+            "total": 38798.7434,
+            "image": 35908.7443,
+            "text": 132.681041,
+            "inference": 2866.65863
+          },
+          {
+            "total": 38810.7289,
+            "image": 35923.3505,
+            "text": 129.9745,
+            "inference": 2864.22579
+          },
+          {
+            "total": 39079.4892,
+            "image": 36180.7377,
+            "text": 130.239417,
+            "inference": 2875.67083
+          },
+          {
+            "total": 39048.8987,
+            "image": 36153.3124,
+            "text": 130.032959,
+            "inference": 2872.37883
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.685959,
+          7.577334,
+          7.56275,
+          7.584,
+          7.668459
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q6_k-cpu-no-blas/run.json",
+      "receipt_sha256": "bad8dacea0ed4ee678d2627e728ec8ea9c49e521da04ee30a671f36881c3c47d"
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "q5_k",
+      "median_full_image_ms": 39230.358,
+      "minimum_ms": 39022.6765,
+      "maximum_ms": 39252.441,
+      "peak_rss_bytes": 3644850176,
+      "model_file_bytes": 1956610528,
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/fresh-q5_k-cpu-no-blas/metrics.json",
+        "sha256": "61d89ff75351eacc2727254a5c35772044a05d92ae59eb3b5af43c68fa0113de",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9996291593860388,
+          "score_error": 0.003761053397247305,
+          "box_fraction_error": 0.0002422078971354343,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1954845984,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 0.9615,
+        "model_load": 850.994666,
+        "cold_start": 39840.5509,
+        "warmed_full_image_median": 39230.358,
+        "repeated_result_cache_median": 7.569208,
+        "last_computed_image": 36335.4128,
+        "last_computed_text": 130.788333,
+        "last_computed_inference": 2894.0075,
+        "warmed_full_image_runs": [
+          {
+            "total": 39022.6765,
+            "image": 36136.4209,
+            "text": 129.729875,
+            "inference": 2862.32671
+          },
+          {
+            "total": 39231.6314,
+            "image": 36332.9081,
+            "text": 130.617458,
+            "inference": 2875.84121
+          },
+          {
+            "total": 39230.358,
+            "image": 36322.3697,
+            "text": 133.556583,
+            "inference": 2885.04271
+          },
+          {
+            "total": 39099.0217,
+            "image": 36196.5818,
+            "text": 133.172417,
+            "inference": 2879.38958
+          },
+          {
+            "total": 39252.441,
+            "image": 36335.4128,
+            "text": 130.788333,
+            "inference": 2894.0075
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.581042,
+          7.562875,
+          7.568917,
+          7.569208,
+          7.572333
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q5_k-cpu-no-blas/run.json",
+      "receipt_sha256": "be7fa2857fc725a7dceac70707da8f0e46ba9158fad4b7ce085b775a04fc3833"
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "q4_k",
+      "median_full_image_ms": 39179.674,
+      "minimum_ms": 38805.1868,
+      "maximum_ms": 39496.6339,
+      "peak_rss_bytes": 3412639744,
+      "model_file_bytes": 1920434656,
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-repair/20261003/fresh-q4_k-cpu-no-blas/metrics.json",
+        "sha256": "6ba94e18aa6b2d80c2d3cda5ea035679b523a7142be7f355bc55a66c6c121080",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": false
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 0.9991909003786272,
+          "score_error": 0.00557941160275266,
+          "box_fraction_error": 0.0004861661994357607,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 1918670112,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 0.982708,
+        "model_load": 900.255459,
+        "cold_start": 40391.7258,
+        "warmed_full_image_median": 39179.674,
+        "repeated_result_cache_median": 7.5695,
+        "last_computed_image": 36370.6673,
+        "last_computed_text": 130.133541,
+        "last_computed_inference": 2863.48387,
+        "warmed_full_image_runs": [
+          {
+            "total": 39179.674,
+            "image": 36275.4736,
+            "text": 130.495708,
+            "inference": 2879.76667
+          },
+          {
+            "total": 39496.6339,
+            "image": 36582.0946,
+            "text": 130.160166,
+            "inference": 2890.70962
+          },
+          {
+            "total": 38805.1868,
+            "image": 35903.5751,
+            "text": 132.062333,
+            "inference": 2878.46367
+          },
+          {
+            "total": 39042.2137,
+            "image": 36131.2823,
+            "text": 132.083667,
+            "inference": 2887.04942
+          },
+          {
+            "total": 39257.2383,
+            "image": 36370.6673,
+            "text": 130.133541,
+            "inference": 2863.48387
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.583333,
+          7.5695,
+          7.564542,
+          7.584875,
+          7.560083
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/q4_k-cpu-no-blas/run.json",
+      "receipt_sha256": "77d1c96430e85038911abe9e7027b1f031011843ca7f1f1447612ed48985e325"
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "f16",
+      "median_full_image_ms": 39006.9494,
+      "minimum_ms": 38795.2194,
+      "maximum_ms": 39100.3385,
+      "peak_rss_bytes": 4900732928,
+      "model_file_bytes": 1797613888,
+      "model_sha256": "66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120",
+      "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+      "qualification": {
+        "path": "/Users/yangyiqing/Documents/ChatGPT/SAM.cpp/build/quantization-performance/20261003-v2/qualification-f16-cpu-no-blas/metrics.json",
+        "sha256": "4970545c6d512e9eba11857008c74f824a3ac1111d7438b2b46e95753acb67e9",
+        "output_quality_passed": true,
+        "tensor_fidelity_passed": true
+      },
+      "last_output_quality": [
+        {
+          "query": 144,
+          "mask_iou": 1.0,
+          "score_error": 0.00011670560275267583,
+          "box_fraction_error": 2.0335503472779237e-06,
+          "passed": true
+        }
+      ],
+      "weight_buffer_bytes": 3369375008,
+      "compute_buffer_bytes": 961062048,
+      "timing_ms": {
+        "decode": 0.964875,
+        "model_load": 927.936417,
+        "cold_start": 39878.2493,
+        "warmed_full_image_median": 39006.9494,
+        "repeated_result_cache_median": 7.547,
+        "last_computed_image": 35931.603,
+        "last_computed_text": 130.687833,
+        "last_computed_inference": 2858.41813,
+        "warmed_full_image_runs": [
+          {
+            "total": 39006.9494,
+            "image": 36108.9586,
+            "text": 130.204458,
+            "inference": 2873.65733
+          },
+          {
+            "total": 39059.9873,
+            "image": 36155.4676,
+            "text": 131.165916,
+            "inference": 2879.33617
+          },
+          {
+            "total": 38795.2194,
+            "image": 35897.1504,
+            "text": 133.810583,
+            "inference": 2874.64113
+          },
+          {
+            "total": 39100.3385,
+            "image": 36194.7388,
+            "text": 132.939834,
+            "inference": 2881.39637
+          },
+          {
+            "total": 38813.2497,
+            "image": 35931.603,
+            "text": 130.687833,
+            "inference": 2858.41813
+          }
+        ],
+        "repeated_result_cache_runs": [
+          7.559208,
+          7.549417,
+          7.534084,
+          7.547,
+          7.543958
+        ]
+      },
+      "receipt": "build/quantization-performance/20261003-v2/f16-cpu-no-blas/run.json",
+      "receipt_sha256": "3f3ffa3301a83dcb70c486c968d75a1116eeb1fb4de39a0fc132f56e589c8b8a"
+    }
+  ],
+  "comparisons": [
+    {
+      "cell": "cpu-blas",
+      "precision": "q8_0",
+      "quant_to_f32_time_ratio": 0.999947269296286,
+      "quant_to_f16_time_ratio": 0.9968879339892451,
+      "quant_to_f32_peak_rss_ratio": 0.7612133825832256,
+      "quant_to_f16_peak_rss_ratio": 0.7572005436993382,
+      "quant_to_f32_weight_buffer_ratio": 0.6123906051124838,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "cpu-blas",
+      "precision": "q6_k",
+      "quant_to_f32_time_ratio": 0.9993342298137788,
+      "quant_to_f16_time_ratio": 0.9962767700989728,
+      "quant_to_f32_peak_rss_ratio": 0.7463453233104704,
+      "quant_to_f16_peak_rss_ratio": 0.7424108634038092,
+      "quant_to_f32_weight_buffer_ratio": 0.5915883044384473,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "cpu-blas",
+      "precision": "q5_k",
+      "quant_to_f32_time_ratio": 1.0015502644644516,
+      "quant_to_f16_time_ratio": 0.9984860247990854,
+      "quant_to_f32_peak_rss_ratio": 0.7388680725715558,
+      "quant_to_f16_peak_rss_ratio": 0.7349730299993716,
+      "quant_to_f32_weight_buffer_ratio": 0.5801805911655886,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "cpu-blas",
+      "precision": "q4_k",
+      "quant_to_f32_time_ratio": 1.0010288423865585,
+      "quant_to_f16_time_ratio": 0.9979661980102859,
+      "quant_to_f32_peak_rss_ratio": 0.7317133177515718,
+      "quant_to_f16_peak_rss_ratio": 0.7278559924331868,
+      "quant_to_f32_weight_buffer_ratio": 0.5694439198499569,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "metal",
+      "precision": "q8_0",
+      "quant_to_f32_time_ratio": 0.9904418133439006,
+      "quant_to_f16_time_ratio": 0.9949215019224478,
+      "quant_to_f32_peak_rss_ratio": 0.6917605468011285,
+      "quant_to_f16_peak_rss_ratio": 1.1034431810486527,
+      "quant_to_f32_weight_buffer_ratio": 0.6123906051124838,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "metal",
+      "precision": "q6_k",
+      "quant_to_f32_time_ratio": 0.9953478106021801,
+      "quant_to_f16_time_ratio": 0.9998496886113312,
+      "quant_to_f32_peak_rss_ratio": 0.6756089183233182,
+      "quant_to_f16_peak_rss_ratio": 1.0776793464543177,
+      "quant_to_f32_weight_buffer_ratio": 0.5915883044384473,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "metal",
+      "precision": "q5_k",
+      "quant_to_f32_time_ratio": 0.9994118275475377,
+      "quant_to_f16_time_ratio": 1.0039320867781274,
+      "quant_to_f32_peak_rss_ratio": 0.6663000227705157,
+      "quant_to_f16_peak_rss_ratio": 1.0628305127526365,
+      "quant_to_f32_weight_buffer_ratio": 0.5801805911655886,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "metal",
+      "precision": "q4_k",
+      "quant_to_f32_time_ratio": 0.9935472208165831,
+      "quant_to_f16_time_ratio": 0.9980409549031043,
+      "quant_to_f32_peak_rss_ratio": 0.6579096666628073,
+      "quant_to_f16_peak_rss_ratio": 1.0494468624759137,
+      "quant_to_f32_weight_buffer_ratio": 0.5694439198499569,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "q8_0",
+      "quant_to_f32_time_ratio": 1.0097043505753298,
+      "quant_to_f16_time_ratio": 1.0058275410791289,
+      "quant_to_f32_peak_rss_ratio": 0.7330759400560661,
+      "quant_to_f16_peak_rss_ratio": 0.7230080537047376,
+      "quant_to_f32_weight_buffer_ratio": 0.6123906051124838,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "q6_k",
+      "quant_to_f32_time_ratio": 0.9998400861835053,
+      "quant_to_f16_time_ratio": 0.9960011510154138,
+      "quant_to_f32_peak_rss_ratio": 0.7605835754163432,
+      "quant_to_f16_peak_rss_ratio": 0.7501379059030413,
+      "quant_to_f32_weight_buffer_ratio": 0.5915883044384473,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "q5_k",
+      "quant_to_f32_time_ratio": 1.0096038286133695,
+      "quant_to_f16_time_ratio": 1.0057274050761837,
+      "quant_to_f32_peak_rss_ratio": 0.7540922480331108,
+      "quant_to_f16_peak_rss_ratio": 0.7437357288285186,
+      "quant_to_f32_weight_buffer_ratio": 0.5801805911655886,
+      "f32_peak_rss_requirement_passed": true
+    },
+    {
+      "cell": "cpu-no-blas",
+      "precision": "q4_k",
+      "quant_to_f32_time_ratio": 1.008299462223202,
+      "quant_to_f16_time_ratio": 1.0044280468649005,
+      "quant_to_f32_peak_rss_ratio": 0.7060496459430051,
+      "quant_to_f16_peak_rss_ratio": 0.6963529321302366,
+      "quant_to_f32_weight_buffer_ratio": 0.5694439198499569,
+      "f32_peak_rss_requirement_passed": true
+    }
+  ],
+  "limits": [
+    "Single fixed-input protocol; five warmed samples, no fixed frequency; ordinary desktop services remained active.",
+    "Approximate 10-second process/AC/thermal snapshots may miss transient external processes; no absolute exclusivity proof.",
+    "Current PPM inputs and old JPEG benchmarks are separate batches, not matched historical A/B evidence.",
+    "CPU quantized arithmetic keeps packed weights resident and uses transient F32 casts; Metal uses native quantized kernels.",
+    "Output quality remains primary; original full-tensor fidelity failures are preserved independently.",
+    "No claim of speedup from small timing differences; the measured memory comparison is specific to this protocol.",
+    "Initial v1 attempts were excluded due to incomplete monitoring/build checks and preserved as diagnostics.",
+    "No commit, push or remote CI in this task."
+  ],
+  "independent_summary": {
+    "path": "build/quantization-performance/20261003-v2/performance-summary.json",
+    "sha256": "394d3d2b63a6aec3f2cfe5d8796a35ffdaded5e3ce498bf24457a0eae853c2bb"
+  },
+  "extra_no_blas_qualification": [
+    {
+      "precision": "f32",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-performance/20261003-v2/qualification-f32-cpu-no-blas/metrics.json",
+      "metrics_sha256": "974b85f8120b13decda40e859b9364f4d9cd20b74dc7105bed0f97748d925a48"
+    },
+    {
+      "precision": "f16",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-performance/20261003-v2/qualification-f16-cpu-no-blas/metrics.json",
+      "metrics_sha256": "4970545c6d512e9eba11857008c74f824a3ac1111d7438b2b46e95753acb67e9"
+    }
+  ],
+  "original_frame_output_checks_passed": 18,
+  "f32_peak_rss_requirement_passed_cells": 12,
+  "archive": {
+    "path": "models/validation-baselines/quantized-image-performance-m4pro-20261003/bundle/archive.json",
+    "sha256": "ceebaa60464db07f1d4f5ed13a599bd2f5347beded8eb4acfdf896f2f2342970",
+    "files": 11477,
+    "bytes": 17482190076,
+    "complete": true,
+    "verification": "independent full inventory and every file SHA256 verification passed"
+  },
+  "final_documentation_archive": {
+    "path": "models/validation-baselines/quantized-image-performance-docs-m4pro-20261004/bundle/archive.json",
+    "sha256": "bc4f2fde2fa354ef2433aa033596deea7539d25d62d957b0a905e9c1f6f76b4c",
+    "files": 165,
+    "bytes": 2470397,
+    "complete": true,
+    "verification": "independent full inventory and every file SHA256 verification passed"
+  },
+  "final_source_documentation_snapshot": {
+    "path": "build/quantization-performance/20261003-v2/final-source-snapshot/snapshot.json",
+    "sha256": "d7a32c9b866ff705486bf2117e833de776339f49736edb9b047b5d83d152f27d",
+    "files": 164,
+    "unchanged": true
+  },
+  "documentation_checks": {
+    "bilingual_tables_and_local_links": "46 documents passed",
+    "git_diff_check": "passed"
+  },
+  "post_archive_documentation_correction": "Corrected historical JPEG heading date to 2026-10-03 from the preserved blas-vit record; table values unchanged; final source/docs saved in supplemental archive without replacing primary archive."
+}

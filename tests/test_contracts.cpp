@@ -1,8 +1,10 @@
 #include "sam/internal/models/sam3/image_ops.hpp"
+#include "sam/internal/models/sam3/model.hpp"
 #include "sam/internal/models/sam3/tokenizer.hpp"
 #include "sam/internal/models/sam3/weights.hpp"
 #include "sam/internal/input_validation.hpp"
 #include "sam/internal/io/gguf_reader.hpp"
+#include "../examples/image_support.hpp"
 
 #include <array>
 #include <chrono>
@@ -15,6 +17,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -30,6 +33,22 @@ void test_stats_aggregate_compatibility() {
             stats.weight_buffer_bytes == 9 && stats.compute_buffer_bytes == 10 &&
             stats.image_ms == 11.25 && stats.text_ms == 12.5 && stats.inference_ms == 13.75 &&
             stats.blas_nodes == 0, "Legacy stats aggregate positions changed");
+    const sam::ModelInfo info{"sam3", "q8_0", sam::Backend::Cpu, 2, 1, 34, false};
+    require(info.arithmetic_profile.empty() && info.quantization_modules.empty(),
+            "Legacy ModelInfo aggregate fields changed or schema-4 modules leaked into old models");
+}
+
+void test_model_quantization_modules_json() {
+    sam::ModelInfo info;
+    std::ostringstream stream;
+    sam_example::write_model_profile(stream, info);
+    require(stream.str().find(",\"quantization_modules\":[]") != std::string::npos,
+            "legacy model JSON profile must emit an empty quantization module array");
+    info.quantization_modules = {"vision", "text", "fusion", "decoder"};
+    std::ostringstream modular;
+    sam_example::write_model_profile(modular, info);
+    require(modular.str().find(",\"quantization_modules\":[\"vision\",\"text\",\"fusion\",\"decoder\"]") != std::string::npos,
+            "schema-4 module names were not serialized as a canonical JSON array");
 }
 
 template<class Exception, class Function>
@@ -72,6 +91,44 @@ void write_fixture(const std::filesystem::path& path,
     }
     if (change) change(file.get());
     require(gguf_write_to_file(file.get(), path.string().c_str(), false), "cannot write GGUF fixture");
+}
+
+void write_quant_fixture(const std::filesystem::path& path) {
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> context(ggml_init({65536, nullptr, false}), &ggml_free);
+    require(context != nullptr, "cannot allocate quantized GGUF fixture");
+    auto* tensor = ggml_new_tensor_2d(context.get(), GGML_TYPE_Q8_0, 32, 2);
+    ggml_set_name(tensor, "probe.quant");
+    std::array<float, 32> row{};
+    for (int i = 0; i < 32; ++i) row[i] = static_cast<float>(i - 16) / 16.0f;
+    const auto* traits = ggml_get_type_traits(GGML_TYPE_Q8_0);
+    for (int i = 0; i < 2; ++i)
+        traits->from_float_ref(row.data(), static_cast<char*>(tensor->data) + i * traits->type_size, row.size());
+    sam::internal::GgufPtr file(gguf_init_empty());
+    gguf_add_tensor(file.get(), tensor);
+    require(gguf_write_to_file(file.get(), path.string().c_str(), false), "cannot write quantized GGUF fixture");
+}
+
+void write_schema4_module_fixture(const std::filesystem::path& path, const char* modules,
+                                  bool missing_modules = false, bool wrong_module_type = false,
+                                  const char* profile = "image-full-linear-q8_0-v1") {
+    std::unique_ptr<ggml_context, decltype(&ggml_free)> context(ggml_init({4096, nullptr, false}), &ggml_free);
+    require(context != nullptr, "cannot allocate schema-4 GGUF fixture");
+    auto* tensor = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, 32, 2);
+    ggml_set_name(tensor, "probe.weight");
+    std::memset(tensor->data, 0, ggml_nbytes(tensor));
+    sam::internal::GgufPtr file(gguf_init_empty());
+    gguf_set_val_str(file.get(), "general.architecture", "sam3");
+    gguf_set_val_u32(file.get(), "sam.schema_version", 4);
+    gguf_set_val_str(file.get(), "sam.task", "text_image");
+    gguf_set_val_u32(file.get(), "general.file_type", 7);
+    gguf_set_val_u32(file.get(), "general.quantization_version", 2);
+    gguf_set_val_str(file.get(), "sam.storage_profile", profile);
+    if (!missing_modules) {
+        if (wrong_module_type) gguf_set_val_u32(file.get(), "sam.quantization.modules", 1);
+        else gguf_set_val_str(file.get(), "sam.quantization.modules", modules);
+    }
+    gguf_add_tensor(file.get(), tensor);
+    require(gguf_write_to_file(file.get(), path.string().c_str(), false), "cannot write schema-4 GGUF fixture");
 }
 
 std::vector<char> fixture_bytes(const std::filesystem::path& path) {
@@ -273,6 +330,14 @@ void test_weight_failures(const std::filesystem::path& directory) {
     rejects<std::runtime_error>([&] { file.array("probe.scalar", GGUF_TYPE_UINT32, 1); }, "scalar reached an array getter");
     rejects<std::runtime_error>([&] { file.array("probe.labels", GGUF_TYPE_UINT32, 2); }, "wrong array element type was accepted");
     rejects<std::runtime_error>([&] { file.array("probe.indices", GGUF_TYPE_UINT32, 3); }, "wrong array count was accepted");
+    write_quant_fixture(path);
+    mutate_fixture(path, [](auto& bytes) {
+        const auto row_width = text_at(bytes, "probe.quant") + std::string("probe.quant").size() + 4;
+        integer_at(bytes, row_width, 16);
+        integer_at(bytes, row_width + 8, 4);
+    });
+    rejects<std::runtime_error>([&] { sam::internal::GgufReader invalid(path.string()); },
+                                "a quantized tensor with a misaligned row width but block-aligned element count was accepted");
     auto reject_bytes = [&](const std::function<void(std::vector<char>&)>& change, const char* message, bool second = false) {
         write_fixture(path, {}, second);
         mutate_fixture(path, change);
@@ -343,6 +408,32 @@ void test_weight_failures(const std::filesystem::path& directory) {
     }
 }
 
+void test_schema4_module_metadata(const std::filesystem::path& directory) {
+    const auto path = directory / "schema4-modules.gguf";
+    const auto full_modules = "vision,text,fusion,decoder";
+    const auto expect_error = [&](const char* modules, bool missing, bool wrong_type,
+                                  const char* profile, const char* expected_message) {
+        write_schema4_module_fixture(path, modules, missing, wrong_type, profile);
+        bool rejected = false;
+        try { (void)sam::internal::sam3::inspect_weights(path.string()); }
+        catch (const std::runtime_error& error) {
+            rejected = std::string(error.what()).find(expected_message) != std::string::npos;
+        }
+        require(rejected, "schema-4 module metadata was accepted or failed at the wrong contract");
+    };
+    expect_error("text,vision", false, false, "image-full-linear-q8_0-v1", "canonical");
+    expect_error("vision", false, false, "image-full-linear-q8_0-v1", "canonical");
+    expect_error(nullptr, true, false, "image-full-linear-q8_0-v1", "sam.quantization.modules");
+    expect_error(nullptr, false, true, "image-full-linear-q8_0-v1", "sam.quantization.modules");
+
+    // Reaching the next required checkpoint key proves these canonical module
+    // selections pass the profile binding. Even a diagnostic modules-profile
+    // containing all four modules must remain distinct from the full preset.
+    expect_error(full_modules, false, false, "image-full-linear-q8_0-v1", "sam.source.checkpoint_sha256");
+    expect_error(full_modules, false, false, "image-modules-linear-q8_0-v1", "sam.source.checkpoint_sha256");
+    expect_error("vision", false, false, "image-modules-linear-q8_0-v1", "sam.source.checkpoint_sha256");
+}
+
 void test_checkpoint(const std::string& path, const std::filesystem::path& directory) {
     const auto file = sam::internal::sam3::inspect_weights(path);
     sam::internal::sam3::Tokenizer tokenizer(file.tokenizer);
@@ -381,7 +472,7 @@ void test_checkpoint(const std::string& path, const std::filesystem::path& direc
     write_sparse();
     rejects<std::runtime_error>([&] { sam::internal::sam3::inspect_weights(output_path.string()); },
                                 "corrupted GGUF tokenizer merge sequence was accepted");
-    if (!file.storage_profile.empty()) {
+    if (!file.quantized && !file.storage_profile.empty()) {
         merges[0] = original_first_merge;
         gguf_set_arr_str(corrupted.get(), "tokenizer.ggml.merges", merges.data(), merges.size());
         for (const auto* profile : {"unknown", "visual-tracker-f32-v1"}) {
@@ -403,6 +494,47 @@ void test_checkpoint(const std::string& path, const std::filesystem::path& direc
         }
         require(rejected, "F16 visual weight was accepted in the hybrid profile");
     }
+    if (file.quantized && !file.modular_quantized && file.precision == "q8_0") {
+        const auto* q6_profile = sam::internal::sam3::image_quantization_profile("image-linear-q6_k-v1");
+        sam::internal::GgufPtr malformed(gguf_init_empty());
+        gguf_set_kv(malformed.get(), file.reader->metadata());
+        gguf_set_val_str(malformed.get(), "sam.storage_profile", q6_profile->name);
+        gguf_set_val_u32(malformed.get(), "general.file_type", q6_profile->file_type);
+        for (const auto& info : file.tensors) {
+            const auto shape = sam::internal::sam3::canonical_dimensions(info.dimensions);
+            std::array<std::int64_t, 4> dimensions = shape;
+            if (info.name == "vit.blocks.0.mlp.lin2.weight") dimensions[0] = 4864;
+            const std::vector<std::int64_t> logical_shape(dimensions.begin(), dimensions.end());
+            ggml_tensor tensor{};
+            tensor.type = sam::internal::sam3::image_quantized_tensor_type(info.name, logical_shape, *q6_profile);
+            ggml_set_name(&tensor, info.name.c_str());
+            std::copy(dimensions.begin(), dimensions.end(), tensor.ne);
+            const auto block = static_cast<std::uint64_t>(ggml_blck_size(tensor.type));
+            tensor.nb[0] = ggml_type_size(tensor.type);
+            tensor.nb[1] = tensor.nb[0] * (tensor.ne[0] / block);
+            for (int dimension = 2; dimension < GGML_MAX_DIMS; ++dimension)
+                tensor.nb[dimension] = tensor.nb[dimension - 1] * tensor.ne[dimension - 1];
+            gguf_add_tensor(malformed.get(), &tensor);
+        }
+        const auto output_path = directory / "mis-shaped-q6-model.gguf";
+        require(gguf_write_to_file(malformed.get(), output_path.string().c_str(), true),
+                "cannot write malformed sparse K-profile fixture");
+        const auto last = gguf_get_n_tensors(malformed.get()) - 1;
+        const auto last_size = gguf_get_tensor_size(malformed.get(), last);
+        const auto data_bytes = gguf_get_tensor_offset(malformed.get(), last) + last_size + (32 - last_size % 32) % 32;
+        std::fstream sparse(output_path, std::ios::binary | std::ios::in | std::ios::out);
+        sparse.seekp(static_cast<std::streamoff>(gguf_get_meta_size(malformed.get()) + data_bytes - 1));
+        sparse.put(0);
+        sparse.close();
+        require(static_cast<bool>(sparse), "cannot size malformed sparse K-profile fixture");
+        bool shape_rejected = false;
+        try {
+            (void)sam::internal::sam3::load_state(output_path.string(), {sam::Backend::Cpu, 2});
+        } catch (const std::runtime_error& error) {
+            shape_rejected = std::string(error.what()).find("tensor shape") != std::string::npos;
+        }
+        require(shape_rejected, "malformed K row shape reached quantized tensor construction or backend allocation");
+    }
 }
 
 } // namespace
@@ -411,7 +543,9 @@ int main(int argc, char** argv) {
     try {
         TemporaryDirectory temporary;
         test_stats_aggregate_compatibility();
+        test_model_quantization_modules_json();
         test_tokenizer(); test_images(); test_results(); test_weight_failures(temporary.path);
+        test_schema4_module_metadata(temporary.path);
         if (argc > 1) {
             test_checkpoint(argv[1], temporary.path);
         }

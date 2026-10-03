@@ -130,6 +130,18 @@ inline std::string json_string(std::string_view value) {
     return result + '"';
 }
 
+inline void write_model_profile(std::ostream& stream, const sam::ModelInfo& info) {
+    stream << ",\"precision\":" << json_string(info.precision)
+           << ",\"storage_profile\":" << json_string(info.storage_profile)
+           << ",\"arithmetic_profile\":" << json_string(info.arithmetic_profile)
+           << ",\"quantization_modules\":[";
+    for (std::size_t i = 0; i < info.quantization_modules.size(); ++i) {
+        if (i) stream << ',';
+        stream << json_string(info.quantization_modules[i]);
+    }
+    stream << ']';
+}
+
 inline std::ofstream output_file(const std::filesystem::path& path, bool binary = false) {
     std::ofstream stream(path, std::ios::out | (binary ? std::ios::binary : std::ios::openmode(0)));
     stream.exceptions(std::ios::failbit | std::ios::badbit);

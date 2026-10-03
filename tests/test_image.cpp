@@ -59,10 +59,9 @@ int main(int argc, char** argv) {
         results << "{\"schema_version\":1,\"width\":" << image.width << ",\"height\":" << image.height
                 << ",\"prompt\":" << sam_example::json_string(options.text)
                 << ",\"score_threshold\":" << options.score_threshold
-                << ",\"backend\":" << sam_example::json_string(sam_example::backend_name(model.backend()))
-                << ",\"precision\":" << sam_example::json_string(model.info().precision)
-                << ",\"storage_profile\":" << sam_example::json_string(model.info().storage_profile)
-                << ",\"tokenizer_compatibility_repaired\":"
+                << ",\"backend\":" << sam_example::json_string(sam_example::backend_name(model.backend()));
+        sam_example::write_model_profile(results, model.info());
+        results << ",\"tokenizer_compatibility_repaired\":"
                 << (model.info().tokenizer_compatibility_repaired ? "true" : "false")
                 << ",\"runtime\":";
         sam_example::write_runtime_stats(results, session.stats());

@@ -2,7 +2,7 @@
 
 ## Project Structure
 
-Experimental SAM 3 text image segmentation on GGML CPU/Metal. See the first plan for numerical acceptance; video/SAM 3.1 follow separate plans.
+Header-only C++17 inference for multiple SAM variants and platforms. SAM 3 is the current model adapter; CPU and Metal are the current backends. Keep repository goals distinct from implemented and hardware-validated combinations.
 
 - `include/sam/sam.hpp`: public entry; `types.hpp`: backend-independent values.
 - `include/sam/internal/models/<family>/`: model adapters/graphs; `internal/runtime/ggml/backends/`: device drivers; `internal/runtime/ggml/`: shared execution. See [architecture](docs/architecture.md).
@@ -24,6 +24,10 @@ Separate model namespaces and task contracts: SAM 2/2.1 need point/box/memory pa
 ## Planning Before Implementation
 
 First write `docs/plans/YYYYMMDD-HHMMSS-topic.md` using Asia/Shanghai time and kebab-case topics. Include scope, approach, steps, verification, and subsequent results; scale detail appropriately.
+
+## Documentation Audience
+
+README and user guides explain installation, APIs, model/backend support, conversion, stable format contracts, and concise performance results. Experimental procedures, failed attempts, diagnostic tensor statistics, receipt hashes, private archive inventories, and historical measurements belong in the corresponding `docs/plans/` file. Keep immutable machine-readable evidence unchanged and link it from plans. Hardware used for a measurement is not the repository's platform boundary; one implemented adapter is not the full model roadmap.
 
 ## Build and Test
 

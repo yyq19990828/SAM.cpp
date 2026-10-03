@@ -17,7 +17,7 @@ struct BackendOptions {
 
 struct ModelInfo {
     std::string architecture;
-    std::string precision; // Container precision; CPU computation preserves values in F32.
+    std::string precision; // Storage precision; arithmetic follows the backend and profile.
     Backend backend = Backend::Cpu;
     int threads = 4;
     std::size_t tensor_count = 0, weight_bytes = 0; // Loaded representation, excluding buffer padding.
@@ -25,6 +25,8 @@ struct ModelInfo {
     std::string task;
     std::string profile;
     std::string storage_profile; // Versioned weight policy, separate from the temporal profile.
+    std::string arithmetic_profile; // Empty for legacy profiles; names the quantized runtime arithmetic contract.
+    std::vector<std::string> quantization_modules; // Populated only by schema-4 modular image profiles.
 };
 
 struct RuntimeStats {

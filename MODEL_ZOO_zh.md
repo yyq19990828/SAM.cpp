@@ -1,75 +1,80 @@
-# 模型列表
+# 模型与精度
 
 [English](MODEL_ZOO.md) · [性能测试](BENCHMARK_zh.md)
 
-## 支持范围
+SAM.cpp 面向多种 SAM 模型适配器，以及由检测和分割模型组合的跨平台流水线。
+本页分别说明当前可用功能和后续接入方向。
 
-SAM 3 文本图像分割：CPU/Metal 的 F32/F16，各通过七个参考场景。
-前向视频：CPU/Metal 的 F32/hybrid，各通过五场景、216 帧及图像、生命周期、
-长会话检查。视频转换默认 hybrid `visual-tracker-f32-v1`；图像转换仍需显式精度。
+## 当前可用
 
-F16 视频属于诊断配置：Metal 全量比较在 entry23/24 帧候选选择失败，
-Meta 加载相同舍入权重也复现该结果。CPU 全量诊断延后，不计通过。
-CUDA、Q4/Q8、反向或交互式视频、SAM3.1 及其他模型尚未在此完成支持验收。
+| 模型与任务 | 权重选择 | 当前后端 | 建议起点 |
+| --- | --- | --- | --- |
+| SAM 3 文本图像分割 | F32、混合 F16/F32 | CPU、Metal | Metal 使用 F16；参考配置使用 F32 |
+| SAM 3 文本提示图像分割（量化权重） | 视觉 Q8_0、Q6_K、Q5_K、Q4_K | CPU、Metal | 优先试用 Q8_0 |
+| SAM 3 文本提示图像分割（全模块混合权重量化） | 全模块线性 Q8_0、Q6_K、Q5_K、Q4_K | CPU、Metal | 压缩优先可选全模块预设，再检查应用数据 |
+| SAM 3 前向视频跟踪 | F32、hybrid | CPU、Metal | `visual-tracker-f32-v1` hybrid |
 
-## 来源与文件
+表中的视觉量化仅覆盖 ViT 的注意力投影和 MLP 线性权重；文本编码器、融合模块、检测与掩码头，以及其余权重保留 F32。推理任务仍是文本提示图像分割。
+全模块预设还覆盖文本、融合、检测与掩码等解码部分的目标线性权重，共 348 个矩阵；嵌入、卷积、偏置、归一化和明确的小权重例外继续保留 F32，激活精度保持原有策略。
 
-原始权重：[facebook/sam3](https://huggingface.co/facebook/sam3/tree/3c879f39826c281e95690f02c7821c4de09afae7)，
-版本 `3c879f39826c281e95690f02c7821c4de09afae7`。
-Meta 代码：[2345a4ad](https://github.com/facebookresearch/sam3/tree/2345a4ad109ac29c569da749c91d84f10dc08c40)。
-`sam3.pt` SHA-256：`9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e`。
-GGUF v3 图像文件使用 schema1，完整视频使用 schema2；侧车清单记录元数据、
-源文件和张量哈希。模型访问权限与许可接受分别确认；权重、媒体不进入 Git。
-许可见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。
+用户可以用 `--quantize-modules vision,text` 等选择局部量化。仓库数值验收聚焦固定视觉和全模块预设，自定义组合需要另行验证，见[量化指南](docs/quantization_zh.md)。
 
-| 文件 | 字节数 | SHA-256 |
-| --- | ---: | --- |
-| `sam3-f32.gguf` | 3371139456 | `cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486` |
-| `sam3-f16.gguf` | 1797613888 | `66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120` |
-| `sam3-video-f32.gguf` | 3449345696 | `02513232afca5ba8c174b66c7fc839c67b32590df4b53bdd6df5089a6a546844` |
-| `sam3-video-f16.gguf` | 1837925216 | `9c9bc86c81d11a041db10a46d3d1e8ecaa1cbcf6fad683b00901f641746bf32c` |
-| `sam3-video-hybrid-v1.gguf` | 2765012640 | `3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05` |
+[可视化样例](docs/visual-examples_zh.md)在相同图片、提示词和 0.2 检出阈值下比较各图像权重版本的 CPU、Metal 输出。量化版本以最终输出质量验收，张量误差单独供参考。
+
+当前 SAM 3 实现仍属实验阶段，验证语料规模较小，接入应用时应检查自己的输入质量。
+F16 视频、旧 `image-linear-*` 和自定义 `image-modules-linear-*` profile 保留诊断标签，应用集成应验证自己的数据。
+目前没有量化视频、反向跟踪或交互式视频提示。
+
+CPU 是跨平台执行路径。目前完成的平台验证为 macOS CPU 和 Metal；Linux、Windows、
+其他 CPU 硬件和新增加速后端仍需各自构建与数值检查。Metal 属于 Apple 平台后端，
+不是公共模型接口的前提。
+
+## 模型与流水线方向
+
+| 模型家族或流水线 | 目标任务 | 当前状态 |
+| --- | --- | --- |
+| 其他 SAM 代际，包括 SAM 2/2.1 | 点框图像提示、基于记忆的视频跟踪 | 待接入适配器 |
+| SAM 3.1 | 独立的模型与任务契约 | 待接入适配器 |
+| GroundingSAM | 文本检测模型与 SAM 分割适配器组合 | 待组合流水线 |
+| DART 类流水线 | 复用检测阶段，允许跳过掩码解码 | 预留扩展边界 |
+
+这些条目说明仓库方向，不表示已经实现。新适配器负责自己的张量格式、分词器、
+变换和时序规则。[架构说明](docs/architecture.md)介绍公共接口及模型、后端的扩展边界。
 
 ## 精度约定
 
-| 权重标签 | 磁盘 / Metal 驻留权重 | CPU 驻留权重 |
+权重标签表示存储格式，计算和状态可以采用不同格式。以下策略属于当前 SAM 3
+适配器及其后端，不应直接套用于后续模型。
+
+| 权重标签 | 磁盘及 Metal 驻留权重 | CPU 驻留权重 |
 | --- | --- | --- |
 | F32 | 原始 F32 | F32 |
 | F16 | 混合 F16/F32 | 保存的 F16 升为 F32 |
-| Hybrid | 视觉与跟踪器保留原始 F32，其余混合 | 剩余 F16 升为 F32 |
+| Hybrid | 视觉与跟踪器 F32，检测及文本混合 | 剩余 F16 升为 F32 |
+| 视觉量化 | 视觉线性层保留压缩 Q8/K，其余 F32 | 压缩权重驻留，计算使用临时 F32 矩阵权重 |
 
-升格只保留已舍入数值，不能恢复原始 F32。计算图使用 F32 激活和
-[指定的 F32 算术](cmake/patches/README.md)，注意力掩码可以是 F16。
-没有 BF16 GGUF 权重，也不宣称全流程使用原生 BF16 运算。
-运行 VideoSession 时，**三种权重配置都保留**以下边界：
+升格保留已舍入的值，不能恢复原始 F32。量化 Metal 使用原生 kernel；CPU 保留压缩
+权重，并以临时 F32 权重完成矩阵运算。`ModelInfo::precision`、`storage_profile` 和
+`arithmetic_profile` 表示实际加载配置，具体名称见[量化指南](docs/quantization_zh.md)。
 
-| 视频边界 | 精度 / 表示 |
+SAM 3 视频在 F32、F16、hybrid 存储下均保留以下状态边界：
+
+| 边界 | 表示 |
 | --- | --- |
-| 归一化 | 每步按 F16 舍入，输出为 F32 缓冲 |
-| 跟踪 neck 特征 | 按 BF16 舍入，缓冲仍为 F32 |
-| 掩码记忆特征 | BF16 保存，注意力计算前展开为 F32 |
-| 对象指针 / 主机掩码 logits | F32，最终二值掩码为 uint8 |
+| 归一化 | F16 舍入，输出为 F32 缓冲 |
+| 跟踪 neck 特征 | BF16 舍入，保存在 F32 向量中 |
+| 掩码记忆记录 | BF16 保存，注意力计算前展开为 F32 |
+| 对象指针与主机掩码 logits | F32，最终二值掩码使用 uint8 |
 
-F32 视频标签表示权重，不表示端到端全 F32。图像推理没有跟踪 BF16 状态。
-Hybrid 恢复 236 个权重载荷、保留 1228 个基线载荷，比 F16 视频增加约 884 MiB。
+F32 视频文件不表示整条流程都采用 F32，图像推理没有跟踪 BF16 状态。
 
-## 使用
+## 下载与使用
 
-按[下载与转换说明](docs/models/sam3-details.md#download)准备 Python3.12 和锁定的
-参考环境；运行 C++ 推理不需要 Python。
+当前适配器使用原始 [facebook/sam3](https://huggingface.co/facebook/sam3) 权重和分词资源。
+模型访问权限、模型许可与依赖许可分别处理，见[许可说明](THIRD_PARTY_NOTICES.md)。
 
-```sh
-.venv-reference/bin/python tools/convert_sam3.py --task video \
-  --checkpoint "$sam3_weights_dir/sam3.pt" \
-  --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
-  --output models/sam3-video-hybrid-v1.gguf
-```
+按[SAM 3 下载与转换指南](docs/models/sam3-details.md)准备固定版本源码、认证、Python
+工具环境及图像或视频文件。运行 C++ 推理不需要 Python，转换输出必须使用新路径。
 
-输出必须使用新路径，已有文件会被拒绝。仍可显式选择 F32/F16。
-[README](README.md#forward-video-tracking)说明公开 API，
-[验证工作流](docs/validation_zh.md)说明基线复用与诊断。
-[详细记录](docs/models/sam3-details.md)保留映射、分词器、容器迁移和原始转换证据。
-
-当前 ViT 投影与可选 CPU BLAS 实现已重新通过完整视频矩阵、70 项图像、
-六项短会话和两组各 128 次交错推帧检查。四项视频和四项图像性能测量也已通过，
-见[性能测试](BENCHMARK_zh.md)和[优化记录](docs/plans/20261003-134534-visual-encoding-profile-and-optimization.md)。
+[README](README.md)提供图像、视频 API 和 CLI 示例；[模型验证](docs/validation_zh.md)
+介绍转换后模型的参考对照方法；[性能测试](BENCHMARK_zh.md)按模型、硬件和后端列出测量。

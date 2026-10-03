@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "gate_set": "sam3-full-image-output-quality-v1",
+  "status": "frozen-before-full-profile-model-runs",
+  "frozen_at": "2026-10-04T02:28:25+08:00",
+  "source_plan": "docs/plans/20261004-021711-sam3-modular-weight-quantization.md",
+  "parent_tensor_gate_sha256": "17447e93cbec08233a9be3b50f43574da057d5ce05f79493e662fb757071d0bb",
+  "quantization_modules": [
+    "vision",
+    "text",
+    "fusion",
+    "decoder"
+  ],
+  "scope": "text-prompted SAM 3 image output quality for schema-4 full quantized profiles; raw tensor fidelity remains a separate report axis and custom profiles are diagnostic only",
+  "oracle": {
+    "reference_kind": "official-checkpoint",
+    "eligible_for_milestone": true,
+    "precision": "float32",
+    "compile": false,
+    "autocast": false,
+    "tf32": false
+  },
+  "hard_requirements": {
+    "frozen_original_input_bytes": true,
+    "official_token_ids_equal": true,
+    "canonical_tensor_inventory_and_shapes": true,
+    "all_required_tensor_outputs_finite": true,
+    "preprocessed_image_max_abs": 0.00784313725490196,
+    "score_threshold": 0.5,
+    "high_confidence_reference_score_min": 0.6,
+    "low_confidence_reference_score_max": 0.4,
+    "threshold_adjacent_interval": [
+      0.4,
+      0.6
+    ],
+    "selected_query_sets_match_outside_threshold_adjacent_interval": true,
+    "every_high_confidence_reference_query_remains_selected": true,
+    "no_low_confidence_reference_query_becomes_selected": true
+  },
+  "selected_detection_quality": {
+    "mask_iou_scope": "each high-confidence reference detection",
+    "score_units": "absolute error on 0-1 probability",
+    "box_error_units": "per-coordinate fraction of corresponding image width or height",
+    "tensor_fidelity_is_primary_pass_gate": false
+  },
+  "profiles": {
+    "image-full-linear-q8_0-v1": {
+      "precision": "q8_0",
+      "mask_iou_min": 0.96,
+      "score_absolute_error_max": 0.02,
+      "box_dimension_fraction_max": 0.01
+    },
+    "image-full-linear-q6_k-v1": {
+      "precision": "q6_k",
+      "mask_iou_min": 0.94,
+      "score_absolute_error_max": 0.03,
+      "box_dimension_fraction_max": 0.015
+    },
+    "image-full-linear-q5_k-v1": {
+      "precision": "q5_k",
+      "mask_iou_min": 0.92,
+      "score_absolute_error_max": 0.04,
+      "box_dimension_fraction_max": 0.02
+    },
+    "image-full-linear-q4_k-v1": {
+      "precision": "q4_k",
+      "mask_iou_min": 0.9,
+      "score_absolute_error_max": 0.05,
+      "box_dimension_fraction_max": 0.03
+    }
+  }
+}

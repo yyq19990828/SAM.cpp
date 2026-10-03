@@ -58,3 +58,10 @@ retained separately in [licenses/SAM-model-license.txt](licenses/SAM-model-licen
 Model checkpoints and upstream media are external artifacts; these C++ dependency
 licenses do not grant rights to those artifacts. Conversion/reference tools
 record artifact provenance, and runtime inference does not download weights.
+
+The [visual example gallery](docs/visual-examples.md) contains comparison images
+derived from the pinned Meta SAM 3 `assets/images/truck.jpg` and `groceries.jpg`,
+with actual inference masks rendered by SAM.cpp. Those source-media pixels and
+derived comparison images follow the separately retained [SAM license](licenses/SAM-model-license.txt),
+rather than the C++ code's MIT license. Credit: Meta, official SAM 3 example
+media and FP32 model reference.

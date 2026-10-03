@@ -81,6 +81,8 @@ public:
             const auto type = gguf_get_tensor_type(context_.get(), i);
             const auto block = static_cast<std::uint64_t>(ggml_blck_size(type));
             const auto bytes = static_cast<std::uint64_t>(ggml_type_size(type));
+            if (block > 1 && static_cast<std::uint64_t>(dimensions[0]) % block != 0)
+                throw std::runtime_error("GGUF tensor row width is not quantization-block aligned: " + tensor.name);
             if (block == 0 || bytes == 0 || elements % block != 0 || elements / block > UINT64_MAX / bytes)
                 throw std::runtime_error("invalid or overflowing GGUF tensor byte count: " + tensor.name);
             tensor.type = static_cast<std::int32_t>(type);

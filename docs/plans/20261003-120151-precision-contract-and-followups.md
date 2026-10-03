@@ -50,3 +50,93 @@ image metadata has no tracker BF16 declaration; all measured HTML table cells
 and every GGUF artifact size/hash row are unchanged; all local doc link targets
 exist. `git diff --check` passes. No runtime/model/measurement file was changed,
 no model test rerun, and no commit or push was performed in this documentation task.
+
+## User-document cleanup archive: architecture details (2026-10-04)
+
+This appendix preserves implementation-specific precision and local acceptance
+details removed from the user-facing architecture guide. The current public
+support summary and quantization status live in their dedicated docs; these
+values describe the completed local runs below.
+
+### Image and quantized acceptance notes
+
+- On the fixed seven-case corpus, the four vision-only schema-3 profiles pass
+  output quality across CPU/BLAS, native CPU and Metal (84/84). Raw tensor
+  fidelity is independent: 0/84 cells pass its full gate; 500/840
+  tensor-by-case comparisons pass and 340 fail. This does not establish
+  dataset-wide accuracy. The serial 18-cell performance matrix measured lower
+  process peak RSS for all 12 quantized cells than same-backend F32; quantized
+  Metal RSS exceeded Metal F16, and the medians did not establish a speedup.
+- The full image graph executes 3,332 FP32 or 3,342 FP16 nodes on Metal in six
+  partitions with no CPU graph fallback. Host preprocessing/postprocessing
+  still run on CPU.
+- Explicit FP32 Metal retained F32 weight storage and passed the seven original
+  image cases plus the real-checkpoint session lifetime/cache checks locally
+  on 2026-10-02. Auto FP32 continued to select CPU.
+- Native Metal `WIN_PART` and `WIN_UNPART` handle contiguous F32 tensors,
+  including padded windows. Direct GPU checks and full-model results were kept
+  with the window/performance validation records.
+
+### Implementation notes removed from the concise architecture overview
+
+The video adapter shares the ViT trunk between detector and tracker necks and
+rounds tracker feature transport through BF16. Its ordinary image path retains
+the existing preprocessing and detector. Memory attention tiles 128 queries
+at a time while retaining all spatial/pointer keys in each softmax. Forward
+retention keeps hotstart group history; after group membership is fixed it
+protects an eight-frame correction window, four conditioning records and 15
+older eligible records, and preserves the number of pruned conditioning
+records for the official ordering policy. This is forward-only behavior, not a
+reverse/editable-session policy.
+
+`tracking/session.hpp` integrates logical birth groups, quality recomputation
+after hotstart removal, association, periodic reconditioning, overlap
+suppression and a 15-frame delayed queue. Tensor work runs serially per object;
+group membership and original batch-quality broadcasting semantics stay
+intact. `tracking/execution.hpp` connects conditioned memory, temporal pointers,
+SAM decoding and BF16 memory encoding to shared graphs. SAM decoder head-16
+cross-attention uses F32 GGML matmul/softmax because the pinned Metal flash
+implementation does not support that head size; head-32 self-attention keeps
+the precise flash path.
+
+The public video facade retains the model and owns prompt/temporal state and
+returned results. It enforces fixed finite forward input and requires reset
+after execution failure. `sam_video` decodes host PNGs, publishes exclusive
+output and writes an incomplete/complete receipt. The source adapter, official
+exporter and differential validator record F16/BF16 boundaries and retain
+Meta's association/lifecycle modules. The original CPU component fallback
+requires an empty-batch adaptation when no object is born. Snapshots preserve
+propagated conditioned features and selected masks before periodic correction,
+plus the normalized mask passed to memory encoding, so correction cannot
+overwrite recurrence diagnostics.
+
+Weight-free tests compare resized bytes and F16 normalization against Pillow
+11.2.1, attention against an independent full-key computation, and 2,024 memory
+selections against hash-verified pinned Meta functions. Checkpoint-stage,
+temporal, session and backend-placement evidence is retained in the separate
+video validation records.
+
+### Precision detail moved from the SAM 3 model guide
+
+GGUF precision labels describe stored weights, not every activation or video
+state value. Image F32 uses F32 weights; image F16 stores selected multi-
+dimensional weights in F16 and retains designated vectors/embeddings/constants
+in F32. CPU promotes rounded F16 weights to F32 in memory; Metal keeps stored
+half weights and stages the specified dense operations in F32. The video-only
+`visual-tracker-f32-v1` profile restores original F32 values for the shared
+visual trunk and tracker while retaining the mixed detector/text allocation.
+This profile adds storage fidelity; it does not change temporal precision
+boundaries.
+
+| Video stage/state | Rounding/storage boundary | Runtime representation |
+| --- | --- | --- |
+| RGB normalization | FP16 rounding after scale, center and normalize | FP32 output/upload buffer contains FP16-rounded values |
+| Tracker-neck feature transport | BF16 rounding | FP32 feature vectors contain BF16-rounded values; no native BF16 graph kernel is implied |
+| Retained mask-memory features | BF16 storage | `ggml_bf16_t` records expanded to FP32 for memory attention |
+| Object pointers and host mask logits | FP32 | FP32 vectors; returned binary masks are uint8 |
+
+Therefore F32 video denotes F32 weights with explicit FP16 input and BF16
+transport/memory boundaries, not an end-to-end FP32 sequence. Hybrid changes
+weight allocation, not these boundaries. The original video reference also
+used FP32 arithmetic with explicit FP16 inputs/BF16 storage, with autocast and
+TF32 disabled.

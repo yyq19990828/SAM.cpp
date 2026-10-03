@@ -37,9 +37,10 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
     state->context = make_context(4096);
     auto& definition = state->definition.weights;
     definition.ctx = state->context.get();
-    definition.weight_type = file.ftype == 0 ? GGML_TYPE_F32 : GGML_TYPE_F16;
-    for (const auto& tensor : file.tensors)
-        definition.source_types.emplace(tensor.name, static_cast<ggml_type>(tensor.type));
+    // Register the canonical F32 graph first. Validate all untrusted shapes
+    // before source_types can request a quantized tensor with an incompatible
+    // ne[0] and trigger GGML's tensor-construction assertions.
+    definition.weight_type = GGML_TYPE_F32;
     sam3_register_tensors(definition, file.video);
     std::map<std::string, const TensorInfo*> inventory;
     for (const auto& tensor : file.tensors) inventory.emplace(tensor.name, &tensor);
@@ -47,23 +48,31 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         const auto found = inventory.find(required.first);
         if (found == inventory.end()) throw std::runtime_error("missing SAM 3 tensor: " + required.first);
         const auto expected = required.second;
-        const int required_type = file.ftype == 1 &&
-            !tensor_kept_f32(required.first, ggml_n_dims(expected), !file.storage_profile.empty()) ? 1 : 0;
-        if (found->second->type != required_type)
-            throw std::runtime_error("incompatible SAM 3 tensor precision: " + required.first);
         const auto shape = canonical_dimensions(found->second->dimensions);
         if (!std::equal(shape.begin(), shape.end(), expected->ne))
             throw std::runtime_error("incompatible SAM 3 tensor shape: " + required.first);
-        if (expected->type != static_cast<ggml_type>(found->second->type) ||
-            ggml_nbytes(expected) != found->second->size_bytes)
-            throw std::runtime_error("incompatible SAM 3 tensor storage: " + required.first);
+        std::int32_t required_type = 0;
+        if (file.modular_quantized) {
+            required_type = static_cast<std::int32_t>(image_modular_quantized_tensor_type(
+                required.first, found->second->dimensions,
+                *modular_image_quantization_profile(file.storage_profile), file.quantization_modules));
+        } else if (file.quantized) {
+            required_type = static_cast<std::int32_t>(image_quantized_tensor_type(
+                required.first, found->second->dimensions, *image_quantization_profile(file.storage_profile)));
+        } else {
+            required_type = file.ftype == 1 &&
+                !tensor_kept_f32(required.first, ggml_n_dims(expected), !file.storage_profile.empty()) ? 1 : 0;
+        }
+        if (found->second->type != required_type)
+            throw std::runtime_error("incompatible SAM 3 tensor precision: " + required.first);
     }
     for (const auto& tensor : file.tensors) {
         if (!definition.tensors.count(tensor.name))
             throw std::runtime_error("unknown SAM 3 tensor: " + tensor.name);
     }
-    state->runtime = std::make_unique<GgmlRuntime>(options, file.ftype == 0);
-    if (file.ftype == 1 && state->runtime->promote_f16_weights()) {
+    state->runtime = std::make_unique<GgmlRuntime>(options, file.ftype == 0, file.quantized);
+    const bool promote_weights_f16 = file.ftype == 1 && state->runtime->promote_f16_weights();
+    if (promote_weights_f16) {
         // The CPU F16 dot path narrows activations to F16. Preserve the exact
         // stored values while using F32 arithmetic, after the source schema
         // has passed validation. Only the allocated representation changes.
@@ -72,6 +81,22 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         definition.ctx = state->context.get();
         definition.weight_type = GGML_TYPE_F32;
         sam3_register_tensors(definition, file.video);
+    } else if (file.ftype == 1 || file.quantized) {
+        state->definition = ModelDefinition{};
+        state->context = make_context(4096);
+        definition.ctx = state->context.get();
+        definition.weight_type = file.ftype == 1 ? GGML_TYPE_F16 : GGML_TYPE_F32;
+        for (const auto& tensor : file.tensors)
+            definition.source_types.emplace(tensor.name, static_cast<ggml_type>(tensor.type));
+        sam3_register_tensors(definition, file.video);
+    }
+    if (!promote_weights_f16) {
+        for (const auto& required : definition.tensors) {
+            const auto* tensor = inventory.at(required.first);
+            if (required.second->type != static_cast<ggml_type>(tensor->type) ||
+                ggml_nbytes(required.second) != tensor->size_bytes)
+                throw std::runtime_error("incompatible SAM 3 tensor storage: " + required.first);
+        }
     }
     state->buffer.reset(ggml_backend_alloc_ctx_tensors(state->context.get(), state->runtime->weights_backend()));
     if (!state->buffer) throw std::runtime_error("failed to allocate SAM 3 model weights");
@@ -82,6 +107,8 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         if (found == definition.tensors.end()) continue;
         std::vector<char> bytes(static_cast<std::size_t>(tensor.size_bytes));
         file.reader->read(tensor.offset, bytes.data(), bytes.size());
+        if (file.quantized && ggml_is_quantized(static_cast<ggml_type>(tensor.type)))
+            validate_quantized_payload(static_cast<ggml_type>(tensor.type), tensor.dimensions, bytes.data(), bytes.size());
         if (tensor.type == GGML_TYPE_F16 && found->second->type == GGML_TYPE_F32) {
             const auto values = promote_f16(bytes);
             ggml_backend_tensor_set(found->second, values.data(), 0, values.size() * sizeof(float));
@@ -91,11 +118,14 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         weight_bytes += ggml_nbytes(found->second);
     }
     state->tokenizer = std::move(file.tokenizer);
-    state->model_info = {"sam3", !file.storage_profile.empty() ? "hybrid" : (file.ftype == 0 ? "f32" : "f16"), state->runtime->backend(), options.threads,
+    state->model_info = {"sam3", file.precision, state->runtime->backend(), options.threads,
                    definition.tensors.size(), weight_bytes, false};
     state->model_info.task = file.video ? "text_video" : "text_image";
     state->model_info.profile = file.video ? "meta-sam3-temporal-v1" : "";
     state->model_info.storage_profile = file.storage_profile;
+    state->model_info.arithmetic_profile = state->runtime->arithmetic_profile();
+    if (file.modular_quantized)
+        state->model_info.quantization_modules = std::move(file.quantization_modules);
     return state;
 }
 

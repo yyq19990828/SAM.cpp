@@ -10,18 +10,72 @@ from unittest.mock import patch
 import gguf
 import numpy as np
 
-from convert_sam3 import bytes_to_unicode, convert, rename_key, tensor_array
+from convert_sam3 import (GGML_REVISION, bytes_to_unicode, convert, pinned_gguf_version,
+                          quantizer_identity, rename_key, tensor_array)
 from export_reference import load_case_manifest, load_detector_checkpoint
 from prepare_reference_source import prepare
 from generate_video_cases import generate as generate_video_cases, recipe_frame
 from sam3_artifacts import (SAM3_REVISION, artifact_path, dump_array, read_array,
                            read_json, read_tensor_index)
-from sam3_gguf import (canonical_shape, converted_array, inspect_tensors, read_gguf,
-                       validate_metadata, write_metadata)
+from sam3_gguf import (canonical_shape, converted_array, inspect_tensors, quantization_profile,
+                       quantized_tensor_type, read_gguf, validate_metadata, write_metadata)
+from test_quantization_tools import QuantizationChecks
+from test_modular_quantization_tools import ModularQuantizationChecks
 from validate_image import GATES, check_provenance, mask_iou, read_results, tensor_error
 
 
 class ToolChecks(unittest.TestCase):
+    def test_visual_comparison_uses_actual_masks_and_rejects_altered_receipts(self):
+        from PIL import Image
+        from render_image_comparison import render, panel
+        from sam3_artifacts import sha256_file, write_json
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reference, actual = root / "reference", root / "actual"
+            for directory in (reference / "sample", actual / "sample"):
+                directory.mkdir(parents=True)
+            Image.new("RGB", (2, 2), "white").save(reference / "sample/input.ppm")
+            case = {"id": "sample", "directory": "sample", "input": "input.ppm",
+                    "prompt": "object", "score_threshold": 0.2}
+            masks = [np.asarray([[1, 1], [0, 0]], dtype=np.uint8),
+                     np.asarray([[1, 0], [0, 0]], dtype=np.uint8)]
+            for directory, mask in zip((reference / "sample", actual / "sample"), masks):
+                metadata = dump_array(directory, "mask-0", mask)
+                result = {"width": 2, "height": 2, "prompt": "object", "score_threshold": 0.2,
+                          "backend": "cpu", "precision": "q8_0", "storage_profile": "image-vision-linear-q8_0-v1",
+                          "detections": [{"query_index": 0, "score": 0.8, "box": [0, 0, 2, 2], "mask": metadata}]}
+                if directory.parent == actual:
+                    result["detections"][0]["box"][0] = 0.5
+                write_json(directory / "results.json", result)
+            case.update(input_sha256=sha256_file(reference / "sample/input.ppm"),
+                        results_sha256=sha256_file(reference / "sample/results.json"))
+            write_json(reference / "manifest.json", {"reference_kind": "supplementary-converted-weights", "cases": [case]})
+            write_json(actual / "metrics.json", {"backend": "cpu",
+                "reference_manifest_sha256": sha256_file(reference / "manifest.json"),
+                "cases": [{"id": "sample", "passed": False, "tensors": {},
+                           "output_sha256": {p.name: sha256_file(p) for p in (actual / "sample").iterdir()}}]})
+            with patch("render_image_comparison.panel", wraps=panel) as rendered_panels:
+                evidence = render(reference, [("Q8_0", actual)], root / "gallery")
+            titles = [call.args[1] for call in rendered_panels.call_args_list]
+            self.assertIn("Supplementary reference", titles)
+            self.assertNotIn("Meta FP32 reference", titles)
+            compared = evidence["cases"][0]["comparisons"][0]
+            self.assertEqual(compared["minimum_mask_iou"], 0.5)
+            self.assertEqual(compared["detections"][0]["box_dimension_fraction"], 0.25)
+            self.assertFalse(compared["output_quality_passed"])
+            self.assertTrue((root / "gallery/sample-comparison.jpg").is_file())
+            with self.assertRaises(FileExistsError):
+                render(reference, [("Q8_0", actual)], root / "gallery")
+            (actual / "sample/mask-0.bin").write_bytes(b"\0\0\0\0")
+            with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+                render(reference, [("Q8_0", actual)], root / "altered")
+            self.assertFalse((root / "altered").exists())
+            write_json(reference / "manifest.json", {"reference_kind": "test-fixture", "cases": [case, case]})
+            with self.assertRaisesRegex(ValueError, "duplicate reference case IDs"):
+                render(reference, [("Q8_0", actual)], root / "duplicate")
+            self.assertFalse((root / "duplicate").exists())
+
     def test_private_archive_integrity_and_exclusive_output(self):
         from archive_validation import create_bundle, verify_bundle
 
@@ -137,12 +191,26 @@ class ToolChecks(unittest.TestCase):
         common = ["convert_sam3.py", "--checkpoint", "source.pt", "--bpe", "bpe.gz", "--output", "output.gguf"]
         for task, explicit, expected in (("video", None, "hybrid"), ("video", "f16", "f16"),
                                          ("video", "f32", "f32"), ("video", "hybrid", "hybrid"),
-                                         ("image", "f16", "f16"), ("image", "f32", "f32")):
+                                         ("image", "f16", "f16"), ("image", "f32", "f32"),
+                                         ("image", "q8_0", "q8_0")):
             with self.subTest(task=task, explicit=explicit):
                 arguments = common + ["--task", task] + (["--precision", explicit] if explicit else [])
                 with patch("sys.argv", arguments), patch.object(convert_sam3, "convert") as convert_mock:
                     convert_sam3.main()
-                    convert_mock.assert_called_once_with(Path("source.pt"), Path("bpe.gz"), expected, Path("output.gguf"), task)
+                    convert_mock.assert_called_once_with(Path("source.pt"), Path("bpe.gz"), expected,
+                                                         Path("output.gguf"), task, None, None)
+        with patch("sys.argv", common + ["--precision", "q6_k", "--quantizer", "/tmp/sam_quantize_rows"]), \
+                patch.object(convert_sam3, "convert") as convert_mock:
+            convert_sam3.main()
+            convert_mock.assert_called_once_with(Path("source.pt"), Path("bpe.gz"), "q6_k",
+                                                 Path("output.gguf"), "image", Path("/tmp/sam_quantize_rows"), None)
+        with patch("sys.argv", common + ["--precision", "q8_0", "--storage-profile",
+                                           "image-vision-linear-q8_0-v1"]), \
+                patch.object(convert_sam3, "convert") as convert_mock:
+            convert_sam3.main()
+            convert_mock.assert_called_once_with(Path("source.pt"), Path("bpe.gz"), "q8_0",
+                                                 Path("output.gguf"), "image", None,
+                                                 "image-vision-linear-q8_0-v1")
         for task_arguments in ([], ["--task", "image"]):
             with self.subTest(image_arguments=task_arguments):
                 with patch("sys.argv", common + task_arguments), patch.object(convert_sam3, "convert") as convert_mock:
@@ -151,6 +219,41 @@ class ToolChecks(unittest.TestCase):
                     self.assertEqual(caught.exception.code, 2)
                     self.assertIn("--precision", stderr.getvalue())
                     convert_mock.assert_not_called()
+
+    def test_converter_requires_the_locked_gguf_package(self):
+        self.assertEqual(pinned_gguf_version(), "0.19.0")
+        with patch("convert_sam3.importlib.metadata.version", return_value="0.19.1"):
+            with self.assertRaisesRegex(ValueError, "requires pinned gguf==0.19.0"):
+                pinned_gguf_version()
+            with tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "must-not-publish.gguf"
+                with self.assertRaisesRegex(ValueError, "requires pinned gguf==0.19.0"):
+                    convert(Path(temporary) / "missing.pt", Path(temporary) / "missing.bpe",
+                            "q8_0", output)
+                self.assertFalse(output.exists())
+                self.assertFalse(output.with_suffix(".gguf.manifest.json").exists())
+
+    def test_quantizer_identity_hashes_linked_target_and_encoder_library(self):
+        from sam3_artifacts import sha256_file
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            linked_library, encoder_library = root / "libggml.dylib", root / "libquantize.so"
+            linked_library.write_bytes(b"linked ggml target")
+            encoder_library.write_bytes(b"actual quantize_chunk provider")
+            identity = {"ggml_revision": GGML_REVISION, "ggml_build_commit": GGML_REVISION,
+                        "ggml_version": "0.25.3", "quantization_version": 2,
+                        "ggml_library_path": str(linked_library),
+                        "ggml_quantize_library_path": str(encoder_library)}
+            helper = root / "sam_quantize_rows"
+            helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
+            helper.chmod(0o755)
+            executable, provenance = quantizer_identity(helper)
+            self.assertEqual(executable, helper.resolve())
+            self.assertEqual(provenance["ggml_revision"], GGML_REVISION)
+            self.assertEqual(provenance["ggml_version"], "0.25.3")
+            self.assertEqual(provenance["ggml_library"]["sha256"], sha256_file(linked_library))
+            self.assertEqual(provenance["ggml_quantize_library"]["sha256"], sha256_file(encoder_library))
 
     @staticmethod
     def tokenizer_fixture():
@@ -236,6 +339,206 @@ class ToolChecks(unittest.TestCase):
         np.testing.assert_array_equal(tensor_array("vit.blocks.0.attn.freqs_cis", phases), [[[1, 2], [3, 4]]])
         with self.assertRaises(ValueError):
             tensor_array("linear.weight", phases)
+
+    def test_q8_profile_conversion_keeps_logical_dimensions_and_f32_tensors(self):
+        import torch
+
+        matrix_name = "vit.blocks.0.attn.qkv.weight"
+        vector_name = "ddec.norm.bias"
+        matrix = torch.linspace(-1.3, 1.7, 64, dtype=torch.float32).reshape(2, 32)
+        vector = torch.tensor([1.0003, -2.333], dtype=torch.float32)
+        schema = {"schema_version": 1, "sam3_revision": SAM3_REVISION,
+                  "tensors": {matrix_name: [32, 2], vector_name: [2]},
+                  "unused_tracker_tensors": {}}
+        vocab, merges = self.tokenizer_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkpoint, bpe, output = root / "original.pt", root / "fixture.bpe", root / "q8.gguf"
+            torch.save({"detector.backbone.vision_backbone.trunk.blocks.0.attn.qkv.weight": matrix,
+                        "detector.transformer.decoder.norm.bias": vector}, checkpoint)
+            bpe.write_bytes(b"fixture BPE identity is mocked by this test")
+            with patch("convert_sam3.load_tokenizer", return_value=(vocab, merges)), \
+                    patch("sam3_artifacts.read_json", return_value=schema):
+                manifest = convert(checkpoint, bpe, "q8_0", output)
+                with self.assertRaises(FileExistsError):
+                    convert(checkpoint, bpe, "q8_0", output)
+
+            reader = read_gguf(output)
+            precision, actual_vocab, actual_merges = validate_metadata(
+                reader, "q8_0", manifest["checkpoint"]["sha256"])
+            self.assertEqual(precision, "q8_0")
+            self.assertEqual(actual_vocab, vocab)
+            self.assertEqual(actual_merges, [" ".join(pair) for pair in merges])
+            self.assertEqual(reader.get_field("sam.schema_version").contents(), 3)
+            self.assertEqual(reader.get_field("sam.storage_profile").contents(), "image-linear-q8_0-v1")
+            self.assertEqual(reader.get_field("general.quantization_version").contents(), 2)
+            self.assertEqual(reader.get_field("general.file_type").contents(), 7)
+            tensors = {tensor.name: tensor for tensor in reader.tensors}
+            packed = tensors[matrix_name]
+            self.assertEqual(packed.shape.tolist(), [32, 2])
+            self.assertEqual(packed.tensor_type, gguf.GGMLQuantizationType.Q8_0)
+            self.assertEqual(packed.data.shape, (2, 34))
+            decoded = gguf.quants.dequantize(packed.data, packed.tensor_type)
+            self.assertEqual(decoded.shape, (2, 32))
+            self.assertTrue(np.isfinite(decoded).all())
+            np.testing.assert_allclose(decoded, matrix.numpy(), rtol=0, atol=0.02)
+            self.assertEqual(tensors[vector_name].tensor_type, gguf.GGMLQuantizationType.F32)
+            np.testing.assert_array_equal(tensors[vector_name].data, vector.numpy())
+            inventory = {item["name"]: item for item in manifest["tensors"]}
+            self.assertEqual(inventory[matrix_name]["dtype"], "q8_0")
+            self.assertEqual(inventory[matrix_name]["output_dtype"], "q8_0")
+            self.assertEqual(inventory[matrix_name]["bytes"], 68)
+            self.assertEqual(inventory[vector_name]["dtype"], "float32")
+            self.assertEqual(manifest["sam_schema_version"], 3)
+            self.assertEqual(manifest["storage_profile"], "image-linear-q8_0-v1")
+            self.assertEqual(manifest["arithmetic_profile"], "ggml-quantized-native-v1")
+            self.assertEqual(quantized_tensor_type("vit.blocks.32.attn.qkv.weight", (2, 32), "q8_0"), None)
+            with self.assertRaisesRegex(ValueError, "not divisible"):
+                quantized_tensor_type(matrix_name, (2, 31), "q8_0")
+
+    def test_vision_profiles_quantize_only_128_vit_matrices(self):
+        schema = read_json(Path(__file__).with_name("sam3_tensor_schema.json"))
+        for precision in ("q8_0", "q6_k", "q5_k", "q4_k"):
+            with self.subTest(precision=precision):
+                legacy = quantization_profile(precision)
+                vision_profile = f"image-vision-linear-{precision}-v1"
+                vision = quantization_profile(precision, vision_profile)
+                self.assertTrue(legacy["quantize_text_linear"])
+                self.assertFalse(vision["quantize_text_linear"])
+                self.assertEqual(legacy["profile_status"], "diagnostic")
+                self.assertEqual(vision["storage_profile"], f"image-vision-linear-{precision}-v1")
+
+                legacy_types, vision_types = {}, {}
+                for name, dimensions in schema["tensors"].items():
+                    shape = list(reversed(dimensions))
+                    legacy_types[name] = quantized_tensor_type(name, shape, precision)
+                    vision_types[name] = quantized_tensor_type(name, shape, precision, vision["storage_profile"])
+                self.assertEqual(sum(qtype is not None for qtype in legacy_types.values()), 224)
+                self.assertEqual(sum(qtype is not None for qtype in vision_types.values()), 128)
+                self.assertEqual(len(vision_types), 1133)
+                self.assertEqual(sum(qtype is None for qtype in vision_types.values()), 1005)
+                text_weights = {name for name, qtype in legacy_types.items()
+                                if name.startswith("text.blocks.") and qtype is not None}
+                self.assertEqual(len(text_weights), 96)
+                self.assertTrue(all(vision_types[name] is None for name in text_weights))
+                if precision == "q8_0":
+                    self.assertEqual(sum(qtype == gguf.GGMLQuantizationType.Q8_0
+                                         for qtype in vision_types.values()), 128)
+                else:
+                    self.assertEqual(sum(qtype == getattr(gguf.GGMLQuantizationType, precision.upper())
+                                         for qtype in vision_types.values()), 96)
+                    self.assertEqual(sum(qtype == gguf.GGMLQuantizationType.Q8_0
+                                         for qtype in vision_types.values()), 32)
+
+    def test_vision_q8_keeps_text_f32_bytes_and_rejects_mismatched_profiles(self):
+        import torch
+
+        vit_name = "vit.blocks.0.attn.qkv.weight"
+        text_name = "text.blocks.0.attn.in_proj.weight"
+        bias_name = "ddec.norm.bias"
+        vit = torch.linspace(-1.2, 1.4, 64, dtype=torch.float32).reshape(2, 32)
+        text = torch.linspace(0.3, 2.1, 64, dtype=torch.float32).reshape(2, 32)
+        bias = torch.tensor([0.25, -0.5], dtype=torch.float32)
+        schema = {"schema_version": 1, "sam3_revision": SAM3_REVISION,
+                  "tensors": {vit_name: [32, 2], text_name: [32, 2], bias_name: [2]},
+                  "unused_tracker_tensors": {}}
+        vocab, merges = self.tokenizer_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            checkpoint, bpe = root / "original.pt", root / "fixture.bpe"
+            output = root / "vision-q8.gguf"
+            torch.save({"detector.backbone.vision_backbone.trunk.blocks.0.attn.qkv.weight": vit,
+                        "detector.backbone.language_backbone.encoder.transformer.resblocks.0.attn.in_proj_weight": text,
+                        "detector.transformer.decoder.norm.bias": bias}, checkpoint)
+            bpe.write_bytes(b"fixture BPE identity is mocked by this test")
+            selected_profile = "image-vision-linear-q8_0-v1"
+            with patch("convert_sam3.load_tokenizer", return_value=(vocab, merges)), \
+                    patch("sam3_artifacts.read_json", return_value=schema):
+                manifest = convert(checkpoint, bpe, "q8_0", output, "image", None, selected_profile)
+                for bad_precision, bad_task, bad_profile in (
+                        ("q8_0", "image", "image-vision-linear-q6_k-v1"),
+                        ("q8_0", "video", selected_profile),
+                        ("f16", "image", selected_profile)):
+                    bad_output = root / f"bad-{bad_precision}-{bad_task}.gguf"
+                    with self.subTest(precision=bad_precision, task=bad_task, profile=bad_profile), \
+                            self.assertRaises(ValueError):
+                        convert(checkpoint, bpe, bad_precision, bad_output, bad_task, None, bad_profile)
+                    self.assertFalse(bad_output.exists())
+
+            reader = read_gguf(output)
+            self.assertEqual(validate_metadata(reader, "q8_0", manifest["checkpoint"]["sha256"],
+                                               "image", selected_profile)[0], "q8_0")
+            tensors = {tensor.name: tensor for tensor in reader.tensors}
+            self.assertEqual(tensors[vit_name].tensor_type, gguf.GGMLQuantizationType.Q8_0)
+            self.assertEqual(tensors[text_name].tensor_type, gguf.GGMLQuantizationType.F32)
+            np.testing.assert_array_equal(tensors[text_name].data, text.numpy())
+            inventory = {item["name"]: item for item in manifest["tensors"]}
+            self.assertEqual(inventory[text_name]["dtype"], "float32")
+            self.assertEqual(inventory[text_name]["output_dtype"], "float32")
+            self.assertEqual(inventory[text_name]["bytes"], text.numel() * 4)
+            self.assertEqual(inventory[text_name]["conversion"], "preserved-f32")
+            self.assertEqual(sum(item["dtype"].startswith("q") for item in manifest["tensors"]), 1)
+            self.assertEqual(manifest["storage_profile"], selected_profile)
+            self.assertEqual(manifest["profile_status"], "candidate")
+            self.assertFalse(manifest["quantization"]["quantize_text_linear"])
+            self.assertFalse(manifest["options"]["quantize_text_linear"])
+
+    def test_k_profiles_use_exact_matrix_rules_and_decode_the_trailing_q6_scale(self):
+        for precision, expected_type in (("q6_k", gguf.GGMLQuantizationType.Q6_K),
+                                         ("q5_k", gguf.GGMLQuantizationType.Q5_K),
+                                         ("q4_k", gguf.GGMLQuantizationType.Q4_K)):
+            self.assertEqual(quantized_tensor_type("vit.blocks.0.attn.qkv.weight", (4, 256), precision),
+                             expected_type)
+            self.assertEqual(quantized_tensor_type("vit.blocks.0.mlp.lin2.weight", (1024, 4736), precision),
+                             gguf.GGMLQuantizationType.Q8_0)
+            self.assertIsNone(quantized_tensor_type("vit.blocks.0.attn.qkv.bias", (256,), precision))
+            self.assertIsNone(quantized_tensor_type("text.blocks.24.attn.in_proj.weight", (256, 256), precision))
+            with self.assertRaisesRegex(ValueError, "fallback is restricted"):
+                quantized_tensor_type("vit.blocks.0.attn.qkv.weight", (4, 240), precision)
+
+        q6 = np.zeros((1, 210), dtype=np.uint8)
+        q6[0, 0:2] = [0, 0x7c]  # ql data resembles a non-finite F16 value, not a scale.
+        from sam3_gguf import validate_quantized_payload
+        validate_quantized_payload("q6-probe", q6, gguf.GGMLQuantizationType.Q6_K)
+        q6[0, 208:210] = [0, 0x7c]  # Q6_K's actual `d` is the trailing F16 at bytes 208..209.
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            validate_quantized_payload("q6-probe", q6, gguf.GGMLQuantizationType.Q6_K)
+
+    def test_k_gguf_profiles_retain_exact_types_and_q8_row_fallback(self):
+        profile_specs = (("q6_k", gguf.GGMLQuantizationType.Q6_K, 18),
+                         ("q5_k", gguf.GGMLQuantizationType.Q5_K, 16),
+                         ("q4_k", gguf.GGMLQuantizationType.Q4_K, 14))
+        names = ("vit.blocks.0.attn.qkv.weight", "vit.blocks.0.mlp.lin2.weight")
+        original_shapes = {names[0]: [2, 256], names[1]: [2, 4736]}
+        expected = {name: list(reversed(canonical_shape(shape))) for name, shape in original_shapes.items()}
+        vocab, merges = self.tokenizer_fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            for precision, main_type, file_type in profile_specs:
+                with self.subTest(precision=precision):
+                    path = Path(temporary) / f"{precision}.gguf"
+                    writer = gguf.GGUFWriter(path, "sam3")
+                    write_metadata(writer, precision, "a" * 64, vocab, merges)
+                    for name, shape, qtype in (
+                            (names[0], original_shapes[names[0]], main_type),
+                            (names[1], original_shapes[names[1]], gguf.GGMLQuantizationType.Q8_0)):
+                        block_size, type_size = gguf.GGML_QUANT_SIZES[qtype]
+                        packed = np.zeros((shape[0], shape[1] // block_size * type_size), dtype=np.uint8)
+                        writer.add_tensor_info(name, packed.shape, packed.dtype, packed.nbytes, raw_dtype=qtype)
+                    writer.write_header_to_file()
+                    writer.write_kv_data_to_file()
+                    writer.write_ti_data_to_file()
+                    for name, qtype in ((names[0], main_type), (names[1], gguf.GGMLQuantizationType.Q8_0)):
+                        block_size, type_size = gguf.GGML_QUANT_SIZES[qtype]
+                        shape = original_shapes[name]
+                        packed = np.zeros((shape[0], shape[1] // block_size * type_size), dtype=np.uint8)
+                        writer.write_tensor_data(packed, tensor_endianess=gguf.GGUFEndian.LITTLE)
+                    writer.close()
+                    reader = read_gguf(path)
+                    self.assertEqual(validate_metadata(reader, precision, "a" * 64)[0], precision)
+                    self.assertEqual(reader.get_field("general.file_type").contents(), file_type)
+                    inventory = inspect_tensors(reader, precision, expected, original_shapes)
+                    self.assertEqual([item["dtype"] for item in inventory],
+                                     [precision, "q8_0"])
 
     def test_case_ids_rejected_before_model_access(self):
         with tempfile.TemporaryDirectory() as temporary:

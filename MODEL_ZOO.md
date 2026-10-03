@@ -1,80 +1,106 @@
-# Model Zoo
+# Models and precision
 
-[中文](MODEL_ZOO_zh.md) · [Benchmarks](BENCHMARK.md)
+[中文](MODEL_ZOO_zh.md) · [Performance](BENCHMARK.md)
 
-## Support
+SAM.cpp is designed to host multiple SAM model adapters and composed segmentation
+pipelines across platforms. This catalog separates available implementations
+from future integration work.
 
-SAM 3 text image segmentation: F32/F16 on CPU and Metal, seven reference
-cases each. Forward video: F32/hybrid on CPU and Metal, five cases/216 frames
-each, plus image/lifetime/long-session checks. Video conversion defaults to
-hybrid `visual-tracker-f32-v1`; image conversion requires explicit precision.
+## Available now
 
-F16 video is diagnostic: complete Metal comparison fails exact candidate
-selection at entry23/24; identical rounded weights reproduce it inside Meta.
-The full CPU diagnostic is deferred, not passed. CUDA, Q4/Q8, reverse/interactive
-video and SAM3.1/other model families are not validated integrations here.
+| Model / task | Weight choices | Current backends | Recommended starting point |
+| --- | --- | --- | --- |
+| SAM 3 text image segmentation | F32, mixed F16/F32 | CPU, Metal | F16 on Metal; F32 for a reference configuration |
+| SAM 3 text-prompted image segmentation (quantized weights) | Vision Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal | Q8_0 for a conservative quantized configuration |
+| SAM 3 text-prompted image segmentation (full-component mixed quantized weights) | Full-component linear Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal | Full preset for compression, followed by application-data checks |
+| SAM 3 forward video tracking | F32, hybrid | CPU, Metal | Hybrid `visual-tracker-f32-v1` |
 
-## Sources and artifacts
+Vision quantization covers only ViT attention projections and MLP linear
+weights. The text encoder, fusion, detection and mask heads, and remaining
+weights stay F32. The task remains text-prompted image segmentation.
+Full presets also cover target text, fusion, detection and mask-related decoder
+linears, totaling 348 matrices. Embeddings, convolutions, biases, normalization
+and explicit small-weight exceptions stay F32; activation precision keeps its
+existing policy.
 
-Original weights: [facebook/sam3](https://huggingface.co/facebook/sam3/tree/3c879f39826c281e95690f02c7821c4de09afae7),
-revision `3c879f39826c281e95690f02c7821c4de09afae7`.
-Meta code: [2345a4ad](https://github.com/facebookresearch/sam3/tree/2345a4ad109ac29c569da749c91d84f10dc08c40).
-`sam3.pt` SHA-256: `9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e`.
-GGUF v3 uses schema1 for image, schema2 for full video. Sidecars bind metadata,
-source and tensor hashes. Model access and license acceptance are separate;
-weights/media stay outside Git. See [licenses](THIRD_PARTY_NOTICES.md).
+Users can select local quantization with options such as
+`--quantize-modules vision,text`. Repository numerical acceptance focuses on
+the fixed vision and full presets; custom combinations need separate checks.
+See the [quantization guide](docs/quantization.md).
 
-| File | Bytes | SHA-256 |
-| --- | ---: | --- |
-| `sam3-f32.gguf` | 3371139456 | `cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486` |
-| `sam3-f16.gguf` | 1797613888 | `66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120` |
-| `sam3-video-f32.gguf` | 3449345696 | `02513232afca5ba8c174b66c7fc839c67b32590df4b53bdd6df5089a6a546844` |
-| `sam3-video-f16.gguf` | 1837925216 | `9c9bc86c81d11a041db10a46d3d1e8ecaa1cbcf6fad683b00901f641746bf32c` |
-| `sam3-video-hybrid-v1.gguf` | 2765012640 | `3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05` |
+[Visual examples](docs/visual-examples.md) compare CPU and Metal outputs for
+each image weight configuration using the same images, prompts and a detection
+threshold of 0.2. Quantized acceptance uses final output quality; tensor errors
+are reported separately for reference.
+
+The SAM 3 implementation remains experimental. Its validation uses a small
+reference corpus, so check the quality of your application's own inputs.
+F16 video, legacy `image-linear-*` and custom `image-modules-linear-*` profiles
+remain diagnostic; validate application data before integration. Quantized video,
+reverse tracking, and interactive video prompts are not available.
+
+CPU is the portable execution path. Current platform validation covers macOS
+CPU and Metal; Linux, Windows, other CPU hardware, and additional accelerators
+require their own builds and numerical checks. Metal is an Apple-specific backend,
+not a requirement for the library's model interfaces.
+
+## Model and pipeline roadmap
+
+| Family / pipeline | Intended tasks | Status |
+| --- | --- | --- |
+| Other SAM generations, including SAM 2/2.1 | Point/box image prompts and memory-based video tracking | Additional adapters |
+| SAM 3.1 | Its own model/task contract | Additional adapter |
+| GroundingSAM | Text detection composed with a SAM segmentation adapter | Composed pipeline |
+| DART-style pipelines | Reuse detection stages without mandatory mask decoding | Extension point |
+
+These entries describe the repository's direction; they do not advertise
+implemented support. New adapters own their tensor schema, tokenizer, transforms,
+and temporal rules. [Architecture](docs/architecture.md) explains the shared
+interfaces and model/backend extension boundaries.
 
 ## Precision contract
+
+Weight labels describe storage. Computation and state can use different formats.
+The following policies belong to the current SAM 3 adapter and backends.
 
 | Weight label | Disk / Metal resident weights | CPU resident weights |
 | --- | --- | --- |
 | F32 | Original F32 | F32 |
 | F16 | Mixed F16/F32 | Stored F16 promoted to F32 |
-| Hybrid | Original F32 visual/tracker; mixed detector/text | Remaining F16 promoted to F32 |
+| Hybrid | F32 visual/tracker weights, mixed detector/text | Remaining F16 promoted to F32 |
+| Vision quantized | Packed Q8/K vision linears, other weights F32 | Packed weights retained; temporary F32 matrix weights |
 
-Promotion preserves rounded values; it cannot restore original F32 values.
-Graphs use F32 activations and the [specified F32 arithmetic](cmake/patches/README.md);
-attention masks can be F16. No GGUF BF16 weights or native all-BF16 inference
-are claimed. When executing VideoSession, **all three profiles** retain:
+Promotion preserves rounded values, not the original F32 values. Quantized
+Metal execution uses native kernels; CPU keeps compressed weights resident and
+performs matrix operations with temporary F32 weights. `ModelInfo::precision`,
+`storage_profile`, and `arithmetic_profile` describe the loaded configuration.
+See the [quantization guide](docs/quantization.md) for exact profile names.
 
-| Video boundary | Precision / representation |
+SAM 3 video retains these state boundaries for F32, F16, and hybrid storage:
+
+| Boundary | Representation |
 | --- | --- |
-| Normalization | F16 rounding at each step; F32 output buffer |
+| Normalization | F16 rounding, with an F32 output buffer |
 | Tracker-neck features | BF16 rounding in F32 vectors |
-| Mask-memory records | BF16 storage, expanded to F32 before attention |
-| Object pointers / host mask logits | F32; final binary masks are uint8 |
+| Mask-memory records | BF16 storage, expanded to F32 for attention |
+| Object pointers / host mask logits | F32; final binary masks use uint8 |
 
-Thus F32 video describes weights, not an end-to-end F32 pipeline. Image
-inference has no tracker BF16 state. Hybrid restores 236 payloads and retains
-1228 baseline payloads, adding about 884 MiB over the F16 video artifact.
+An F32 video file does not imply an entirely F32 pipeline. Image inference has
+no tracker BF16 state. These policies should not be assumed for future model
+adapters.
 
-## Use
+## Download and use
 
-Follow [download/conversion](docs/models/sam3-details.md#download) with Python3.12
-and the locked reference environment. Runtime inference needs no Python.
+The current adapter uses the original [facebook/sam3](https://huggingface.co/facebook/sam3)
+checkpoint and its tokenizer assets. Model access and license acceptance are
+separate from dependency licensing. See [licenses](THIRD_PARTY_NOTICES.md).
 
-```sh
-.venv-reference/bin/python tools/convert_sam3.py --task video \
-  --checkpoint "$sam3_weights_dir/sam3.pt" \
-  --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
-  --output models/sam3-video-hybrid-v1.gguf
-```
+Follow the [SAM 3 download and conversion guide](docs/models/sam3-details.md).
+It covers the pinned source revision, authentication, image/video conversion,
+and the Python tooling environment. C++ inference does not require Python.
+Use new output paths; the converter refuses to overwrite existing files.
 
-Use new output paths; the converter refuses existing files. Explicit F32/F16
-remain available. [README](README.md#forward-video-tracking) shows public APIs;
-[validation](docs/validation.md) covers baseline reuse and diagnostics. The
-[detail record](docs/models/sam3-details.md) retains mapping, tokenizer, container
-migration and original conversion evidence.
-
-The current ViT projection/optional CPU BLAS implementation passes the same full
-video matrix, 70 image cases, six short sessions and two 128-push interleaved checks.
-Fresh four-cell video and four-cell image measurements also pass; see
-[benchmarks](BENCHMARK.md) and the [optimization record](docs/plans/20261003-134534-visual-encoding-profile-and-optimization.md).
+[README](README.md) shows image/video integration and CLI examples.
+[Model verification](docs/validation.md) explains how to compare your converted
+model with a reference. [Performance](BENCHMARK.md) lists measurements by model,
+hardware, and backend.

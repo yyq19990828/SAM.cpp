@@ -580,7 +580,7 @@ policies are unchanged.
 | Original video corpus | All five behavior-verified cases, 216 frames per cell, pass F32/CPU, F32/Metal, hybrid/CPU and hybrid/Metal. Maximum stage L2 respectively 0.000203, 0.000346, 0.002650 and 0.002594 under the original 0.001 / 0.02 gates. Candidates, IDs, lifecycle, outputs, retained-state bounds and backend placement pass. |
 | Image compatibility | 56 fresh schema-1/full-schema-2 F32/F16 image cases plus 14 matching sealed hybrid cases pass. |
 | Real session behavior | Six short configuration checks and two hybrid backend checks, each interleaving 64 positive and 64 negative frames after caller Model destruction. Positive public outputs match standalone exactly; negatives are empty; caches, owned-result lifetime and bounds pass. |
-| Performance | Four hybrid backend/object-count cells complete 64 frames with 16 warmup and 48 measured samples. All frame/stage samples, final drain, first output, current/peak RSS, state/backend allocations and AC/no-sleep conditions are retained in [BENCHMARK.md](../../BENCHMARK.md#video-64-frame-protocol). |
+| Performance | Four hybrid backend/object-count cells complete 64 frames with 16 warmup and 48 measured samples. All frame/stage samples, final drain, first output, current/peak RSS, state/backend allocations and AC/no-sleep conditions are retained in [BENCHMARK.md](../../BENCHMARK.md#sam-3-video-tracking). |
 | Tooling/integration | 20 isolated Python tests pass. Existing immutable CPU/Metal builds retain their 11/11 CTest results; the new long test independently compiles and runs on both. Separate CMake configuration verifies its optional registration without rebuilding those artifacts. |
 
 Explicit F16/Metal completes the corpus but fails candidate selection at entry

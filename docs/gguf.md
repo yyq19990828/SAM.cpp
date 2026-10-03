@@ -1,11 +1,15 @@
 # SAM GGUF format
 
-Schema 1 uses a single little-endian [GGUF v3](https://github.com/ggml-org/ggml/blob/353b63b439f27ab2cc19dac97ab1681ba6d2d084/docs/gguf.md)
-file with 32-byte alignment. GGUF identifies the container; the fields below
-identify the SAM implementation contract. This schema covers SAM 3 text image
-segmentation. Experimental schema 2 adds the full SAM 3 tracker inventory and
-the video metadata below. Full video session integration and original-model
-acceptance remain pending. Other model families require their own adapter/schema.
+SAM 3 model files use little-endian [GGUF v3](https://github.com/ggml-org/ggml/blob/353b63b439f27ab2cc19dac97ab1681ba6d2d084/docs/gguf.md)
+with 32-byte alignment. GGUF defines the container; the fields below define
+this project's SAM 3 model contract. Schema 1 covers image F32 and mixed-F16
+weights, schema 2 covers video weights and explicit state/transport metadata,
+schema 3 identifies the legacy versioned quantized image profiles, and schema
+4 adds explicit component selection for image weight quantization. Container support
+does not itself imply that a model, task or backend is supported. See the
+[Model Zoo](../MODEL_ZOO.md) and [quantization guide](quantization.md) for
+current usage scope. Other model families need their own metadata and tensor
+contracts.
 
 ## Identity and provenance
 
@@ -17,17 +21,16 @@ reader limits, but does not change model behavior.
 | --- | --- | --- |
 | `general.architecture` | STRING | `sam3` |
 | `general.name` | STRING | Optional human-readable name |
-| `general.file_type` | UINT32 | `0` for F32 or `1` for mixed F16 |
+| `general.file_type` | UINT32 | Schema 1/2: `0` for F32 or `1` for mixed F16. Schema 3/4: profile-specific values below. |
 | `general.alignment` | UINT32 | `32` when present |
-| `sam.schema_version` | UINT32 | `1` |
-| `sam.task` | STRING | `text_image` |
+| `sam.schema_version` | UINT32 | `1` for image F32/F16, `2` for video, `3` for legacy quantized image, `4` for modular quantized image |
+| `sam.task` | STRING | `text_image` for schema 1/3/4; `text_video` for schema 2 |
 | `sam.source.checkpoint_sha256` | STRING | 64 lowercase hexadecimal characters identifying the actual input checkpoint |
 | `sam.source.code_revision` | STRING | `2345a4ad109ac29c569da749c91d84f10dc08c40` |
 | `sam.tokenizer.sha256` | STRING | `924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a` |
 
-The checkpoint hash records provenance; it is not an embedded signature or a
-checksum of the GGUF payload. Conversion sidecars and numerical acceptance
-also record and verify the complete output-file SHA-256.
+The checkpoint hash records source provenance; it is not a signature or a
+checksum of the GGUF payload.
 
 ## SAM 3 image parameters
 
@@ -98,21 +101,20 @@ or more dimensions, except names containing `embed`, `tpos`, `pe_gaussian`,
 tensors remain F32. Choose dtype before removing singleton dimensions, preserving
 the source conversion policy. Reject source shapes whose resulting dtype conflicts
 with the canonical SAM tensor's storage policy before publishing the file.
-Preserve the existing name mapping, positional-embedding
-layout and complex-RoPE real-pair layout. No quantized tensor types are accepted.
+Preserve the existing name mapping, positional-embedding layout and
+complex-RoPE real-pair layout. Schemas 1 and 2 accept no quantized tensor types.
 
 Schema 2 also supports an explicit hybrid profile, selected by
 `--task video --precision hybrid`. It uses `general.file_type=1` and requires
 the STRING metadata `sam.storage_profile=visual-tracker-f32-v1`. Restore original
 checkpoint FP32 values for `vit.`, `neck.trk.`, `mem_attn.`, `mem_enc.`, `sam_pe.`,
 `sam_dec.`, `obj_ptr_proj.`, `obj_ptr_tpos_proj.` and `trk_mask_ds.` tensors;
-remaining tensors follow the existing mixed-F16 policy. This restores 236
-previously F16 payloads. Promoting rounded F16 values does not satisfy this
-profile. Unknown profiles, hybrid declarations on schema 1/F32 containers and
-tensor types inconsistent with the declared closure are rejected before weight
-allocation. `ModelInfo::precision` reports `hybrid`, and `storage_profile`
-reports the versioned policy separately from the temporal `profile`. Acceptance
-uses the unchanged mixed-F16 numerical gates; this is not a full-FP32 artifact.
+remaining tensors follow the mixed-F16 policy. Promoting rounded F16 values does
+not satisfy this profile. Unknown profiles, hybrid declarations on schema
+1/F32 containers and tensor types inconsistent with the declared closure are
+rejected before weight allocation. `ModelInfo::precision` reports `hybrid`, and
+`storage_profile` reports the versioned policy separately from the temporal
+`profile`. This is not a full-FP32 artifact.
 
 The common reader limits metadata reads to 16 MiB, at most 256 metadata keys and
 4,096 tensor entries. Individual tokenizer symbols are limited to 2,048 bytes;
@@ -123,21 +125,98 @@ The metadata prefix must match canonical reserialization through upstream GGUF
 APIs. This rejects embedded-NUL truncation in C-string accessors, noncanonical
 dimension counts and ambiguous encodings without a second binary parser.
 
-CPU exact F16 promotion and Metal precision/storage policies remain unchanged.
-Using a GGUF container does not enable a new backend, quantization or mmap
-loading. Original `.pt` inputs remain the supported reconversion source; old
-SAM-specific `.ggml` containers are rejected with a reconversion diagnostic.
+For schemas 1 and 2, CPU F16 promotion and Metal precision/storage policies are
+defined by the runtime. Using a GGUF container by itself does not enable a new
+backend or mmap loading. Schemas 3 and 4 share the quantized arithmetic contract
+described below. Original `.pt` inputs remain the supported reconversion source;
+old SAM-specific `.ggml` containers are rejected with a reconversion diagnostic.
 
-## Experimental full video profile (schema 2)
+## Quantized image profiles (schema 3)
+
+Schema 3 requires `sam.schema_version=3` and `sam.task=text_image`. It accepts
+only the exact storage profiles in the table. `general.file_type` and
+`general.quantization_version` are UINT32. The per-tensor GGML type policy is
+part of each profile; `general.file_type` alone does not select a tensor
+allocation policy.
+
+| Precision | `sam.storage_profile` | `general.file_type` | Main tensor type | K-profile row fallback |
+| --- | --- | ---: | --- | --- |
+| Q8_0 | `image-linear-q8_0-v1` or `image-vision-linear-q8_0-v1` | 7 | Q8_0 | None |
+| Q6_K | `image-linear-q6_k-v1` or `image-vision-linear-q6_k-v1` | 18 | Q6_K | Q8_0 on the 32 ViT `mlp.lin2.weight` matrices with `ne[0]=4736` |
+| Q5_K | `image-linear-q5_k-v1` or `image-vision-linear-q5_k-v1` | 16 | Q5_K | Q8_0 on the 32 ViT `mlp.lin2.weight` matrices with `ne[0]=4736` |
+| Q4_K | `image-linear-q4_k-v1` or `image-vision-linear-q4_k-v1` | 14 | Q4_K | Q8_0 on the 32 ViT `mlp.lin2.weight` matrices with `ne[0]=4736` |
+
+All profiles require `general.quantization_version=2`, the complete 1,133-tensor
+image inventory, and exact per-tensor types and dimensions. The `image-linear-*`
+family quantizes 224 ViT and text linears. The `image-vision-linear-*` family
+quantizes only 128 ViT linears and preserves text and every other tensor in F32.
+These profile names identify distinct versioned allocation policies; see the
+[quantization guide](quantization.md) for profile selection and current usage
+scope.
+
+The loader validates `ne[0]` against the block size before creating packed
+tensors, validates scales and decoded values before upload, and rejects unknown
+profiles, file types, versions, tasks and tensor allocations. Schema 3 is not a
+video format. `ModelInfo::precision` names the quantized storage type and
+`storage_profile` identifies the allocation policy. CPU reports
+`arithmetic_profile=ggml-quantized-weights-f32-v1`: packed weights remain
+resident while shared graph nodes cast operands to F32 for `MUL_MAT`. Metal
+reports `ggml-quantized-native-v1` and uses native quantized kernels with half
+staging. These paths differ from the strict F32 profile. Quantized `Auto`
+selects CPU; explicit Metal retains the CPU scheduler tail required by GGML,
+checks every operation on Metal and rejects CPU/BLAS compute-node fallback.
+
+## Modular quantized image profiles (schema 4)
+
+Schema 4 remains image-only and retains the same 1,133-entry tensor inventory,
+GGUF v3 container, file-type values and `general.quantization_version=2` as the
+quantized formats above. It requires STRING `sam.storage_profile` and STRING
+`sam.quantization.modules`. The latter is a nonempty canonical CSV, ordered
+`vision,text,fusion,decoder`, without duplicates or extra whitespace.
+
+`image-full-linear-{precision}-v1` requires all four components.
+`image-modules-linear-{precision}-v1` accepts any nonempty component selection,
+including all four, and remains a custom diagnostic allocation. The module
+CSV does not convert a custom profile into the full preset. `{precision}` is
+one of `q8_0`, `q6_k`, `q5_k`, `q4_k`; names, file types and tensor types must
+agree. Schema 3 cannot declare these profiles or component metadata.
+
+| Module | Tensor scope | Eligible linear matrices |
+| --- | --- | ---: |
+| `vision` | ViT linears; neck convolutions remain F32 | 128 |
+| `text` | Text Transformer linears and resizer | 97 |
+| `fusion` | `fenc` linears | 36 |
+| `decoder` | `ddec`, `geom`, `scoring`, `seg` linears | 87 |
+
+The fixed policy covers 348 canonical matrices, including fused `_in_proj_weight`
+projections. Unselected components, embeddings, positional tensors, normalization,
+bias, convolutions and canonical one-dimensional parameters remain F32. This
+includes `ddec.presence_token_head.layers.2.weight`, whose original `[1,256]`
+shape is a canonical `[256]` vector. The geometry direct/box-position projections
+with row widths 2, 4 and 258, and both box-RPB input projections with row width
+2, also remain F32. When `vision` is selected, K profiles retain the sole
+32-matrix ViT `lin2` Q8_0 fallback at row width 4736. Selections without
+`vision` contain none of those fallback matrices. Other eligible canonical
+rows are 256-aligned.
+The converter, tensor inventory and loader enforce this closure; the actual
+dtype cannot declare or override the selected module policy.
+
+Sidecars record canonical `quantization_modules` arrays and each tensor's
+module, storage type and quantization/retention reason. Schema-4 runtime
+`ModelInfo::quantization_modules` and image JSON report the validated array;
+legacy schemas leave the new runtime field empty. Activation precision and
+CPU/Metal arithmetic policies remain those described above. Loading this
+schema does not implement point/box prompting or quantized video tracking.
+
+## Full video profile (schema 2)
 
 The converter selects this profile with `--task video`; the default remains
 `--task image`. Schema 2 requires `sam.schema_version=2` and
 `sam.task=text_video`. It retains every identity, tokenizer and image parameter
 above, and includes the 1,133 image tensors plus 331 tracker/neck tensors:
 exactly 1,464 canonical entries from `tools/sam3_tensor_schema.json`. The
-previously excluded pooled-text/training entry remains excluded and recorded.
-Image-subset tensor bytes and precision policy remain identical. Old schema-1
-runtimes reject schema 2; the new loader accepts both profiles.
+pooled-text/training tensor is excluded. A schema-1-only reader does not
+implement the schema-2 task contract.
 
 All additional scalar fields are UINT32:
 
@@ -160,14 +239,10 @@ specify explicit transport/state rounding, independently of checkpoint storage
 and FP32 arithmetic. Unsupported values/types, incomplete inventories, shape or
 dtype mismatches fail before backend weight allocation.
 
-Use new output filenames and sidecars, such as `sam3-video-f32.gguf`; conversion
-refuses existing output files. `ModelInfo::task`/`profile` describe the file
-contract. The image API may load the image subset of these full files. The video
-session and oracle exporter remain unimplemented, so schema-2 files are not
-accepted video-inference artifacts yet. Original-weight conversion and image-subset
-checks passed locally on 2026-10-02; tracker-stage comparisons and the full
-temporal pipeline remain required. See the
-[local validation record](plans/20261002-032709-local-model-meta-validation.md).
+`ModelInfo::task`/`profile` describe the file contract. The image API may load
+the image subset of a full schema-2 file. The matching video adapter interprets
+the tracker tensors and state/transport metadata; schema 2 is not an image-
+quantization format.
 
 The FP16 policy explicitly retains
 `sam_dec.pred_obj_score_head.layers.2.weight` in F32: its original `[1,256]`

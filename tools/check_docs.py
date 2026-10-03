@@ -15,7 +15,7 @@ def table_facts(text):
 
 def check(root):
     root = Path(root)
-    for name in ("BENCHMARK", "MODEL_ZOO"):
+    for name in ("BENCHMARK", "MODEL_ZOO", "docs/quantization", "docs/visual-examples"):
         english, chinese = root / (name + ".md"), root / (name + "_zh.md")
         if table_facts(english.read_text()) != table_facts(chinese.read_text()):
             raise ValueError(f"bilingual measurement/artifact table differs: {name}")

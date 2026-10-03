@@ -51,9 +51,9 @@ int main(int argc, char** argv) {
              << ",\"score_threshold\":" << options.score_threshold
              << ",\"model\":" << sam_example::json_string(options.model.string())
              << ",\"image\":" << sam_example::json_string(options.image.string())
-             << ",\"architecture\":" << sam_example::json_string(info.architecture)
-             << ",\"precision\":" << sam_example::json_string(info.precision)
-             << ",\"tokenizer_compatibility_repaired\":" << (info.tokenizer_compatibility_repaired ? "true" : "false")
+             << ",\"architecture\":" << sam_example::json_string(info.architecture);
+        sam_example::write_model_profile(json, info);
+        json << ",\"tokenizer_compatibility_repaired\":" << (info.tokenizer_compatibility_repaired ? "true" : "false")
              << ",\"backend\":" << sam_example::json_string(sam_example::backend_name(model.backend()))
              << ",\"threads\":" << info.threads << ",\"repeat\":" << options.repeat
              << ",\"tensor_count\":" << info.tensor_count << ",\"weight_bytes\":" << info.weight_bytes

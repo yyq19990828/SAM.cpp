@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "gate_set": "sam3-image-output-quality-v1",
+  "status": "frozen-before-output-quality-regrading",
+  "frozen_at": "2026-10-03T21:14:18+08:00",
+  "source_plan": "docs/plans/20261003-205004-quantization-sensitivity-and-repair.md",
+  "parent_tensor_gate_sha256": {
+    "sam3-image-quantization-v1": "819d9de1ebe638d223db9d57c8ac652b36707fae3d36124735bdc65d681ba2cc",
+    "sam3-vision-image-quantization-v1": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93"
+  },
+  "scope": "text-prompted SAM 3 image output quality for schema-3 quantized profiles; raw tensor fidelity remains a separate report axis",
+  "oracle": {
+    "reference_kind": "official-checkpoint",
+    "eligible_for_milestone": true,
+    "precision": "float32",
+    "compile": false,
+    "autocast": false,
+    "tf32": false
+  },
+  "hard_requirements": {
+    "frozen_original_input_bytes": true,
+    "official_token_ids_equal": true,
+    "canonical_tensor_inventory_and_shapes": true,
+    "all_required_tensor_outputs_finite": true,
+    "preprocessed_image_max_abs": 0.00784313725490196,
+    "score_threshold": 0.5,
+    "high_confidence_reference_score_min": 0.6,
+    "low_confidence_reference_score_max": 0.4,
+    "threshold_adjacent_interval": [0.4, 0.6],
+    "selected_query_sets_match_outside_threshold_adjacent_interval": true,
+    "every_high_confidence_reference_query_remains_selected": true,
+    "no_low_confidence_reference_query_becomes_selected": true
+  },
+  "selected_detection_quality": {
+    "mask_iou_scope": "each high-confidence reference detection",
+    "score_units": "absolute error on 0-1 probability",
+    "box_error_units": "per-coordinate fraction of corresponding image width or height",
+    "tensor_fidelity_is_primary_pass_gate": false
+  },
+  "profiles": {
+    "image-linear-q8_0-v1": {
+      "precision": "q8_0",
+      "mask_iou_min": 0.96,
+      "score_absolute_error_max": 0.02,
+      "box_dimension_fraction_max": 0.01
+    },
+    "image-linear-q6_k-v1": {
+      "precision": "q6_k",
+      "mask_iou_min": 0.94,
+      "score_absolute_error_max": 0.03,
+      "box_dimension_fraction_max": 0.015
+    },
+    "image-linear-q5_k-v1": {
+      "precision": "q5_k",
+      "mask_iou_min": 0.92,
+      "score_absolute_error_max": 0.04,
+      "box_dimension_fraction_max": 0.02
+    },
+    "image-linear-q4_k-v1": {
+      "precision": "q4_k",
+      "mask_iou_min": 0.9,
+      "score_absolute_error_max": 0.05,
+      "box_dimension_fraction_max": 0.03
+    },
+    "image-vision-linear-q8_0-v1": {
+      "precision": "q8_0",
+      "mask_iou_min": 0.96,
+      "score_absolute_error_max": 0.02,
+      "box_dimension_fraction_max": 0.01
+    },
+    "image-vision-linear-q6_k-v1": {
+      "precision": "q6_k",
+      "mask_iou_min": 0.94,
+      "score_absolute_error_max": 0.03,
+      "box_dimension_fraction_max": 0.015
+    },
+    "image-vision-linear-q5_k-v1": {
+      "precision": "q5_k",
+      "mask_iou_min": 0.92,
+      "score_absolute_error_max": 0.04,
+      "box_dimension_fraction_max": 0.02
+    },
+    "image-vision-linear-q4_k-v1": {
+      "precision": "q4_k",
+      "mask_iou_min": 0.9,
+      "score_absolute_error_max": 0.05,
+      "box_dimension_fraction_max": 0.03
+    }
+  }
+}

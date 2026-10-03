@@ -1,0 +1,516 @@
+{
+  "schema_version": 1,
+  "kind": "quantized-image-output-quality-and-tensor-fidelity-index",
+  "date": "2026-10-03",
+  "base_commit": "37206da13f70f2122a788e2ce05a7c63909c394e",
+  "implementation_git_state": "uncommitted",
+  "status": "completed-fixed-corpus-output-quality-accepted-tensor-fidelity-separate",
+  "acceptance_goal": "user-selected-output-quality-primary-tensor-fidelity-reported-separately",
+  "hardware": "Apple M4 Pro, macOS 27.0, 48 GiB",
+  "ggml_revision": "353b63b439f27ab2cc19dac97ab1681ba6d2d084",
+  "output_quality_gates_sha256": "c69dd6fee4abc789e421c407c7f954e3fdfd7f04a2a79288d3192816385f11e8",
+  "tensor_fidelity_gate_sha256": {
+    "broad": "819d9de1ebe638d223db9d57c8ac652b36707fae3d36124735bdc65d681ba2cc",
+    "vision": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93"
+  },
+  "parent_raw_tensor_index": "docs/validation-baselines/quantized-image-m4pro-20261003.json",
+  "historical_results_are_unchanged": true,
+  "fresh_matrix": "build/quantization-repair/20261003/fresh-matrix/report.json",
+  "fresh_no_blas_matrix": "build/quantization-repair/20261003/fresh-no-blas.json",
+  "regraded_metal_matrix": "build/quantization-repair/20261003/regraded-metal.json",
+  "formal_performance": "deferred-at-user-request",
+  "fresh_quantized_cases": 84,
+  "fresh_output_quality_passed_cases": 84,
+  "fresh_tensor_fidelity_passed_cases": 0,
+  "legacy_regression_cases": 42,
+  "legacy_passed_cases": 42,
+  "profiles": [
+    {
+      "backend": "cpu",
+      "precision": "q8_0",
+      "profile": "image-vision-linear-q8_0-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/fresh-q8-cpu-blas/metrics.json",
+      "metrics_sha256": "2711b5bc87d284f1e43f2608f11c70c639c2d57f571dbcc6b5e7601a042644b5",
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "minimum_mask_iou": 0.998379970544919,
+      "maximum_score_error": 0.0007060175165710669,
+      "maximum_box_fraction_error": 5.630461263024244e-05,
+      "weight_buffer_bytes": [
+        2063373600
+      ],
+      "maximum_compute_buffer_bytes": 961062048,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-weights-f32-v1",
+      "worst_tensor": [
+        0.10062636549041476,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": true
+    },
+    {
+      "backend": "cpu",
+      "precision": "q8_0",
+      "profile": "image-vision-linear-q8_0-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/fresh-q8_0-cpu-no-blas/metrics.json",
+      "metrics_sha256": "86d04af59bc485e7b0d93823988976326ea4eb467195f25e46c37bc6ba5dd79b",
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "minimum_mask_iou": 0.998379970544919,
+      "maximum_score_error": 0.0007063155165710766,
+      "maximum_box_fraction_error": 5.6355445963542176e-05,
+      "weight_buffer_bytes": [
+        2063373600
+      ],
+      "maximum_compute_buffer_bytes": 961062048,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-weights-f32-v1",
+      "worst_tensor": [
+        0.1006230234971324,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": false
+    },
+    {
+      "backend": "metal",
+      "precision": "q8_0",
+      "profile": "image-vision-linear-q8_0-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/quantized-q8_0-metal/metrics.json",
+      "metrics_sha256": "5abf7dd0104a222f388416bb2c77ba362ee76aa0761fb92a79fe50e17df34ec1",
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "minimum_mask_iou": 0.9982326951399116,
+      "maximum_score_error": 0.0008676645165710539,
+      "maximum_box_fraction_error": 5.9254612630184056e-05,
+      "weight_buffer_bytes": [
+        2063373600
+      ],
+      "maximum_compute_buffer_bytes": 1242646848,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-native-v1",
+      "worst_tensor": [
+        0.10681004279436321,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": false
+    },
+    {
+      "backend": "cpu",
+      "precision": "q6_k",
+      "profile": "image-vision-linear-q6_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/quantized-q6_k-cpu-blas/metrics.json",
+      "metrics_sha256": "db0c7532b393c8765d6065237c0121357a3ed17d88d85d6d1b05def467a815ab",
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "minimum_mask_iou": 0.9977220956719818,
+      "maximum_score_error": 0.00685656051657102,
+      "maximum_box_fraction_error": 0.00015872717187499983,
+      "weight_buffer_bytes": [
+        1993282848
+      ],
+      "maximum_compute_buffer_bytes": 961062048,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-weights-f32-v1",
+      "worst_tensor": [
+        0.2696542184365413,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": true
+    },
+    {
+      "backend": "cpu",
+      "precision": "q6_k",
+      "profile": "image-vision-linear-q6_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/fresh-q6_k-cpu-no-blas/metrics.json",
+      "metrics_sha256": "0bf745aca33ae96a56e0f1d32de947b82b12849120860d5451b4e836d8f42c37",
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "minimum_mask_iou": 0.9977220956719818,
+      "maximum_score_error": 0.006855666516570991,
+      "maximum_box_fraction_error": 0.0001586675624999999,
+      "weight_buffer_bytes": [
+        1993282848
+      ],
+      "maximum_compute_buffer_bytes": 961062048,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-weights-f32-v1",
+      "worst_tensor": [
+        0.2696620770481724,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": false
+    },
+    {
+      "backend": "metal",
+      "precision": "q6_k",
+      "profile": "image-vision-linear-q6_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/quantized-q6_k-metal/metrics.json",
+      "metrics_sha256": "245b03f29dac38667e1ca240e392cb803bc123d3e0b7766e8f6d7a1a63125a2d",
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "minimum_mask_iou": 0.9977220956719818,
+      "maximum_score_error": 0.006805539516571035,
+      "maximum_box_fraction_error": 0.000158369546875,
+      "weight_buffer_bytes": [
+        1993282848
+      ],
+      "maximum_compute_buffer_bytes": 1242646848,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-native-v1",
+      "worst_tensor": [
+        0.27000277215665214,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": false
+    },
+    {
+      "backend": "cpu",
+      "precision": "q5_k",
+      "profile": "image-vision-linear-q5_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/quantized-q5_k-cpu-blas/metrics.json",
+      "metrics_sha256": "142e1705fe8246f2bfe7a9691539cefb484a31403367c6aa3e6032fb1bf81440",
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "minimum_mask_iou": 0.9948529411764706,
+      "maximum_score_error": 0.0037615893972473557,
+      "maximum_box_fraction_error": 0.00041675606689448583,
+      "weight_buffer_bytes": [
+        1954845984
+      ],
+      "maximum_compute_buffer_bytes": 961062048,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-weights-f32-v1",
+      "worst_tensor": [
+        0.26939232022158865,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": true
+    },
+    {
+      "backend": "cpu",
+      "precision": "q5_k",
+      "profile": "image-vision-linear-q5_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/fresh-q5_k-cpu-no-blas/metrics.json",
+      "metrics_sha256": "61d89ff75351eacc2727254a5c35772044a05d92ae59eb3b5af43c68fa0113de",
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "minimum_mask_iou": 0.9948529411764706,
+      "maximum_score_error": 0.003761053397247305,
+      "maximum_box_fraction_error": 0.00041675606689448583,
+      "weight_buffer_bytes": [
+        1954845984
+      ],
+      "maximum_compute_buffer_bytes": 961062048,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-weights-f32-v1",
+      "worst_tensor": [
+        0.2693868034876917,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": false
+    },
+    {
+      "backend": "metal",
+      "precision": "q5_k",
+      "profile": "image-vision-linear-q5_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/quantized-q5_k-metal/metrics.json",
+      "metrics_sha256": "867092b5ae2575594abb510749576609faed241c562018785fe3d4761cf2dfe6",
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "minimum_mask_iou": 0.9949992645977349,
+      "maximum_score_error": 0.0036218763972473145,
+      "maximum_box_fraction_error": 0.00041427637939452924,
+      "weight_buffer_bytes": [
+        1954845984
+      ],
+      "maximum_compute_buffer_bytes": 1242646848,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-native-v1",
+      "worst_tensor": [
+        0.2705250923385518,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "blas": false
+    },
+    {
+      "backend": "cpu",
+      "precision": "q4_k",
+      "profile": "image-vision-linear-q4_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/quantized-q4_k-cpu-blas/metrics.json",
+      "metrics_sha256": "7a882c9d67a4645ad5d2147788f4740716095752000d19588630465d90cb4feb",
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "minimum_mask_iou": 0.978614746249601,
+      "maximum_score_error": 0.01044565451657109,
+      "maximum_box_fraction_error": 0.000696766904296832,
+      "weight_buffer_bytes": [
+        1918670112
+      ],
+      "maximum_compute_buffer_bytes": 961062048,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-weights-f32-v1",
+      "worst_tensor": [
+        0.3047742074078206,
+        "groceries-fruit",
+        "mask_logits"
+      ],
+      "blas": true
+    },
+    {
+      "backend": "cpu",
+      "precision": "q4_k",
+      "profile": "image-vision-linear-q4_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/fresh-q4_k-cpu-no-blas/metrics.json",
+      "metrics_sha256": "6ba94e18aa6b2d80c2d3cda5ea035679b523a7142be7f355bc55a66c6c121080",
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "minimum_mask_iou": 0.978614746249601,
+      "maximum_score_error": 0.010444164516571042,
+      "maximum_box_fraction_error": 0.000696766904296832,
+      "weight_buffer_bytes": [
+        1918670112
+      ],
+      "maximum_compute_buffer_bytes": 961062048,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-weights-f32-v1",
+      "worst_tensor": [
+        0.3047726421444761,
+        "groceries-fruit",
+        "mask_logits"
+      ],
+      "blas": false
+    },
+    {
+      "backend": "metal",
+      "precision": "q4_k",
+      "profile": "image-vision-linear-q4_k-v1",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/quantized-q4_k-metal/metrics.json",
+      "metrics_sha256": "a3ae01f20b5dd2694cb2c00d46399b6b43318279f82b8f930c7fdb89f4f1e1c5",
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "minimum_mask_iou": 0.978614746249601,
+      "maximum_score_error": 0.010253667516571086,
+      "maximum_box_fraction_error": 0.0006880185709635119,
+      "weight_buffer_bytes": [
+        1918670112
+      ],
+      "maximum_compute_buffer_bytes": 1242646848,
+      "output_quality_passed": true,
+      "tensor_fidelity_passed": false,
+      "tensor_fidelity_passed_cases": 0,
+      "runtime_arithmetic_profile": "ggml-quantized-native-v1",
+      "worst_tensor": [
+        0.3057776610464035,
+        "groceries-fruit",
+        "mask_logits"
+      ],
+      "blas": false
+    }
+  ],
+  "legacy": [
+    {
+      "backend": "cpu",
+      "precision": "f32",
+      "profile": "f32",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/legacy-f32-cpu-blas/metrics.json",
+      "metrics_sha256": "5d7f46a33448f9edff98a1c6de97fc5407dee3dd7c8e76e4610a51a6a7eae2fc",
+      "model_sha256": "cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486",
+      "minimum_mask_iou": 1.0,
+      "maximum_score_error": 5.963972473654877e-07,
+      "maximum_box_fraction_error": 2.3969014491716695e-07,
+      "weight_buffer_bytes": [
+        3369375008
+      ],
+      "maximum_compute_buffer_bytes": 961062048
+    },
+    {
+      "backend": "cpu",
+      "precision": "f16",
+      "profile": "f16",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/legacy-f16-cpu-blas/metrics.json",
+      "metrics_sha256": "5f179ec8e56686c4152cc8b12936477e1a68bc8e9c0f0477ce782d6a653b26ad",
+      "model_sha256": "66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120",
+      "minimum_mask_iou": 1.0,
+      "maximum_score_error": 0.00011670560275267583,
+      "maximum_box_fraction_error": 2.781356811532021e-06,
+      "weight_buffer_bytes": [
+        3369375008
+      ],
+      "maximum_compute_buffer_bytes": 961062048
+    },
+    {
+      "backend": "cpu",
+      "precision": "hybrid",
+      "profile": "hybrid",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/legacy-hybrid-cpu-blas/metrics.json",
+      "metrics_sha256": "1e4ea2ce098e9646a4c070907466b8001e9815c561600f67d511f5e688410c50",
+      "model_sha256": "3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05",
+      "minimum_mask_iou": 0.9999984283129983,
+      "maximum_score_error": 7.331360275264487e-05,
+      "maximum_box_fraction_error": 2.463648478260675e-06,
+      "weight_buffer_bytes": [
+        3447558112
+      ],
+      "maximum_compute_buffer_bytes": 961062048
+    },
+    {
+      "backend": "metal",
+      "precision": "f32",
+      "profile": "f32",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/legacy-f32-metal/metrics.json",
+      "metrics_sha256": "c4a6d29a4ad60e9ad67795108a9763ab0e6b580578976daaff2971f69db2120d",
+      "model_sha256": "cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486",
+      "minimum_mask_iou": 1.0,
+      "maximum_score_error": 1.1324834289228036e-06,
+      "maximum_box_fraction_error": 1.3355034727485165e-07,
+      "weight_buffer_bytes": [
+        3369375008
+      ],
+      "maximum_compute_buffer_bytes": 1242646848
+    },
+    {
+      "backend": "metal",
+      "precision": "f16",
+      "profile": "f16",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/legacy-f16-metal/metrics.json",
+      "metrics_sha256": "2e6233ad298aa28475c9a51a34e79cd573525c96b34d894550dd9fba3831822a",
+      "model_sha256": "66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120",
+      "minimum_mask_iou": 1.0,
+      "maximum_score_error": 0.00011700360275268551,
+      "maximum_box_fraction_error": 2.695618489572856e-06,
+      "weight_buffer_bytes": [
+        1795849440
+      ],
+      "maximum_compute_buffer_bytes": 1245268288
+    },
+    {
+      "backend": "metal",
+      "precision": "hybrid",
+      "profile": "hybrid",
+      "cases": 7,
+      "passed_cases": 7,
+      "metrics": "build/quantization-repair/20261003/legacy-hybrid-metal/metrics.json",
+      "metrics_sha256": "1423f64470fc8c09dbc351149f5f9a89386be966f58708b17b928ac61c2fa5bb",
+      "model_sha256": "3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05",
+      "minimum_mask_iou": 0.9999984283129983,
+      "maximum_score_error": 7.355260275265785e-05,
+      "maximum_box_fraction_error": 2.463648478260675e-06,
+      "weight_buffer_bytes": [
+        2763224992
+      ],
+      "maximum_compute_buffer_bytes": 1245268288
+    }
+  ],
+  "session_behavior_cases": 6,
+  "session_behavior_passed_cases": 6,
+  "session_record": "build/quantization-repair/20261003/session-probe/report.json",
+  "session_record_sha256": "ab950eb13658dd126735a51f5b50fe42e7d97775ad9d24ce4be3600b156e5f19",
+  "source_snapshot": "build/quantization-repair/20261003/code-snapshot/snapshot.json",
+  "source_snapshot_sha256": "172b250daebe75784a883e4d832d8b9013df991ba804832f00098ca7dbb3809d",
+  "implementation_sources_unchanged": true,
+  "supported_storage_profiles": [
+    "image-vision-linear-q4_k-v1",
+    "image-vision-linear-q5_k-v1",
+    "image-vision-linear-q6_k-v1",
+    "image-vision-linear-q8_0-v1"
+  ],
+  "software_checks": {
+    "ctest_cpu_blas": "12/12",
+    "ctest_cpu_no_blas": "12/12",
+    "ctest_metal": "12/12",
+    "isolated_tools": "46/46"
+  },
+  "limits": [
+    "Output-quality acceptance covers the frozen seven-case corpus: two images plus a crop, six high-confidence detections and no threshold-adjacent query.",
+    "Raw tensor-fidelity gates and prior failure receipts remain unchanged and independent.",
+    "Broad ViT-plus-text profiles and video quantization are not accepted by this record.",
+    "Formal performance measurement was deferred; diagnostic timings/RSS are not benchmark rows.",
+    "Local uncommitted implementation; no push or remote CI in this task."
+  ],
+  "session_record_schema": 1,
+  "controller_sha256": {
+    "build/quantization-repair/20261003/fresh-matrix/report.json": "54da8311f0386182fffd8a0885e199c5c82d6e0ff908339ee9830910a5f1d04f",
+    "build/quantization-repair/20261003/fresh-no-blas.json": "421cf075394671491bab5f017210088b4f48ba89321c3bc5989e50d49eb67c71",
+    "build/quantization-repair/20261003/regraded-metal.json": "4b19f925545718d6ebfb45d7fb7489796775fa8222e464af116f55032193ffcf"
+  },
+  "parent_raw_tensor_index_sha256": "c49aee27730f6daeac9fe1c41332db73fd377e5e3e6a832d6bcf769c731643fe",
+  "matrix_comparison": "build/quantization-repair/20261003/matrix-comparison.json",
+  "matrix_comparison_sha256": "7a0c554c488418b3e4cb4b3b9c938bc49f14f39b6e070ea6f0b340bda9723460",
+  "raw_tensor_pairs": {
+    "passed": 500,
+    "total": 840,
+    "failed": 340
+  },
+  "archive": {
+    "path": "models/validation-baselines/quantized-image-output-m4pro-20261003/bundle/archive.json",
+    "sha256": "ce7bd55a70f8018c05ec2e899ff4405f71e7697113c82a4ef6bb160ffd254f31",
+    "files": 13437,
+    "bytes": 36731521412,
+    "complete": true,
+    "verification": "independent full inventory and file SHA256 verification passed"
+  },
+  "final_source_documentation_snapshot": {
+    "path": "build/quantization-repair/20261003/source-snapshot/snapshot.json",
+    "sha256": "4607247744d46a44233e5b5b1233cbad6712ad3a1bf87ad334039b3bb8b86ab3",
+    "files": 160,
+    "unchanged": true,
+    "scope": "excludes unrelated tracker plan and archive-bearing output index to avoid circular hashing"
+  },
+  "documentation_checks": {
+    "bilingual_local_links": "43 documents passed",
+    "git_diff_check": "passed"
+  }
+}

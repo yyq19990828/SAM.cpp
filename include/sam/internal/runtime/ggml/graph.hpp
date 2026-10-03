@@ -9,8 +9,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace sam::internal {
@@ -18,27 +20,32 @@ namespace sam::internal {
 class GraphExecution {
 public:
     GraphExecution(GgmlRuntime& runtime, std::size_t graph_size, RuntimeStats& stats)
-        : context_(make_context(graph_size * 2, graph_size)), runtime_(runtime), stats_(stats) {
-        graph_ = ggml_new_graph_custom(context_.get(), graph_size, false);
+        : graph_capacity_(expanded_graph_capacity(graph_size, runtime)),
+          context_(make_context(graph_capacity_ * 2, graph_capacity_)), runtime_(runtime), stats_(stats) {
+        graph_ = ggml_new_graph_custom(context_.get(), graph_capacity_, false);
         auto backends = runtime_.backends();
         scheduler_.reset(ggml_backend_sched_new(backends.data(), nullptr, static_cast<int>(backends.size()),
-                                              graph_size, false, true));
+                                              static_cast<int>(graph_capacity_), false, true));
         if (!scheduler_) throw std::runtime_error("failed to create GGML scheduler");
     }
     ggml_context* context() const { return context_.get(); }
     void output(ggml_tensor* tensor) {
         ggml_set_output(tensor);
+        roots_.push_back(tensor);
         ggml_build_forward_expand(graph_, tensor);
     }
     void allocate() {
+        prepare_quantized_cpu_matmuls();
         // The scheduler asserts when no backend accepts a node. Check first so
         // incompatible operators remain a runtime error at the library boundary.
         for (int i = 0; i < ggml_graph_n_nodes(graph_); ++i) {
             auto* node = ggml_graph_node(graph_, i);
             if (node->op == GGML_OP_MUL_MAT) ggml_prec_set_acc(node, GGML_PREC_F32);
             if (node->op == GGML_OP_FLASH_ATTN_EXT) ggml_prec_set_acc(node, GGML_PREC_F32);
-            bool supported = false;
-            for (auto* backend : runtime_.backends()) supported = supported || ggml_backend_supports_op(backend, node);
+            bool supported = runtime_.quantized_native_metal_only()
+                ? ggml_backend_supports_op(runtime_.weights_backend(), node) : false;
+            if (!runtime_.quantized_native_metal_only())
+                for (auto* backend : runtime_.backends()) supported = supported || ggml_backend_supports_op(backend, node);
             if (!supported) {
                 std::string message = std::string("no backend supports SAM operation ") +
                     ggml_op_name(node->op) + " tensor " + ggml_get_name(node);
@@ -60,6 +67,8 @@ public:
                 tensor->op == GGML_OP_PERMUTE || tensor->op == GGML_OP_TRANSPOSE) continue;
             auto* backend = ggml_backend_sched_get_tensor_backend(scheduler_.get(), tensor);
             runtime_.record_node(backend, stats_);
+            if (runtime_.quantized_native_metal_only() && backend != runtime_.weights_backend())
+                throw std::runtime_error("quantized Metal graph attempted CPU fallback");
         }
         stats_.graph_partitions += ggml_backend_sched_get_n_splits(scheduler_.get());
         std::size_t bytes = 0;
@@ -67,11 +76,53 @@ public:
         stats_.compute_buffer_bytes = std::max(stats_.compute_buffer_bytes, bytes);
     }
 private:
+    static std::size_t expanded_graph_capacity(std::size_t graph_size, const GgmlRuntime& runtime) {
+        if (graph_size == 0 || graph_size > std::numeric_limits<std::size_t>::max() / 4)
+            throw std::invalid_argument("invalid SAM graph capacity");
+        const auto capacity = graph_size * (runtime.quantized_cpu_f32_weights() ? 2 : 1);
+        if (capacity > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+            throw std::invalid_argument("SAM graph capacity exceeds GGML scheduler limits");
+        return capacity;
+    }
+
+    void prepare_quantized_cpu_matmuls() {
+        if (!runtime_.quantized_cpu_f32_weights() || graph_prepared_) {
+            graph_prepared_ = true;
+            return;
+        }
+        std::vector<ggml_tensor*> original_nodes;
+        const auto node_count = ggml_graph_n_nodes(graph_);
+        original_nodes.reserve(static_cast<std::size_t>(node_count));
+        for (int i = 0; i < node_count; ++i) original_nodes.push_back(ggml_graph_node(graph_, i));
+
+        std::unordered_map<ggml_tensor*, ggml_tensor*> f32_weights;
+        for (auto* node : original_nodes) {
+            if (node->op != GGML_OP_MUL_MAT || !node->src[0] || !ggml_is_quantized(node->src[0]->type)) continue;
+            auto* source = node->src[0];
+            auto found = f32_weights.find(source);
+            if (found == f32_weights.end())
+                found = f32_weights.emplace(source, ggml_cast(context_.get(), source, GGML_TYPE_F32)).first;
+            node->src[0] = found->second;
+        }
+
+        if (!f32_weights.empty()) {
+            ggml_graph_clear(graph_);
+            for (auto* root : roots_) {
+                ggml_set_output(root);
+                ggml_build_forward_expand(graph_, root);
+            }
+        }
+        graph_prepared_ = true;
+    }
+
+    std::size_t graph_capacity_ = 0;
     ContextPtr context_;
     SchedulerPtr scheduler_;
     GgmlRuntime& runtime_;
     RuntimeStats& stats_;
     ggml_cgraph* graph_ = nullptr;
+    std::vector<ggml_tensor*> roots_;
+    bool graph_prepared_ = false;
 };
 
 inline ggml_tensor* input_tensor(ggml_context* ctx, const char* name,

@@ -1,0 +1,350 @@
+{
+  "schema_version": 1,
+  "kind": "completed-quantized-image-numerical-diagnostic-index",
+  "date": "2026-10-03",
+  "base_commit": "37206da13f70f2122a788e2ce05a7c63909c394e",
+  "implementation_git_state": "uncommitted",
+  "status": "experimental-runtime-implemented-quality-gates-not-passed",
+  "hardware": "Apple M4 Pro, macOS 27.0, 48 GiB",
+  "ggml_revision": "353b63b439f27ab2cc19dac97ab1681ba6d2d084",
+  "quality_summary": "build/quantization/20261003/quality-summary.json",
+  "quality_summary_sha256": "413c49bef8f153331343e403007dc5f97df8be232cec9dd0632ee65f70dfe88a",
+  "quantized_cases": 84,
+  "legacy_regression_cases": 42,
+  "quantized_support": false,
+  "software_checks": {
+    "ctest_cpu": "12/12",
+    "ctest_no_blas": "12/12",
+    "ctest_metal": "12/12",
+    "tools": "39/39"
+  },
+  "gate_sha256": {
+    "broad": "819d9de1ebe638d223db9d57c8ac652b36707fae3d36124735bdc65d681ba2cc",
+    "vision": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93"
+  },
+  "profiles": [
+    {
+      "precision": "q4_k",
+      "profile": "image-vision-linear-q4_k-v1",
+      "backend": "cpu",
+      "blas": true,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.3047742074078206,
+        "groceries-fruit",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.978614746249601,
+      "maximum_score_error": 0.01044565451657109,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q4_k-v1-cpu-blas-20261003T202947.743703/run.json",
+      "receipt_sha256": "fa4ea36d1ed0c94ba602d5b9605f042301dea17175f31a7aeccbc07c9af77aee",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q4_k-v1-cpu-blas-20261003T202947.743703/validation/metrics.json",
+      "metrics_sha256": "b22d80c97e6d1ce92984f45a0a270f752ded12d6be39d3ff9736e1da3a13af4f"
+    },
+    {
+      "precision": "q4_k",
+      "profile": "image-vision-linear-q4_k-v1",
+      "backend": "cpu",
+      "blas": false,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.32220502163018516,
+        "groceries-fruit",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.9767367750159337,
+      "maximum_score_error": 0.01375257951657105,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q4_k-v1-cpu-no-blas-20261003T203324.777000/run.json",
+      "receipt_sha256": "7e26777be194d0578b1eb0e60388968a6402a0d9c1f3f761b9d0ef855deb2260",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q4_k-v1-cpu-no-blas-20261003T203324.777000/validation/metrics.json",
+      "metrics_sha256": "313a47a8b6f7653561d969992b23ddc19492f00b7827a372ddad9a45c2caba2d"
+    },
+    {
+      "precision": "q4_k",
+      "profile": "image-vision-linear-q4_k-v1",
+      "backend": "metal",
+      "blas": false,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.3057776610464035,
+        "groceries-fruit",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.978614746249601,
+      "maximum_score_error": 0.010253667516571086,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "e191011d8ff6029807e24c8232afc44f9b41e1c408ffd0b35fc4530d29d8996a",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q4_k-v1-metal-20261003T201549.613469/run.json",
+      "receipt_sha256": "e83c516bc1bdf0b1d02ab2f550c38c356d02f78a1bea7fbe1e5c0e8863f96356",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q4_k-v1-metal-20261003T201549.613469/validation/metrics.json",
+      "metrics_sha256": "ec6c313a94dadc9dcae752ec6cf1c23441f99f8542df28929b213c7f052dd147"
+    },
+    {
+      "precision": "q5_k",
+      "profile": "image-vision-linear-q5_k-v1",
+      "backend": "cpu",
+      "blas": true,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.26939232022158865,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.9948529411764706,
+      "maximum_score_error": 0.0037615893972473557,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q5_k-v1-cpu-blas-20261003T202057.427220/run.json",
+      "receipt_sha256": "fad9099c9b3bae9d7948fac4b227be94afad5f39934f3be3def784a01f7e3db6",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q5_k-v1-cpu-blas-20261003T202057.427220/validation/metrics.json",
+      "metrics_sha256": "22446cd03a25e3b151cf38aec393dd214e9bbd6f4991ef9cc58edf5618a5d4ff"
+    },
+    {
+      "precision": "q5_k",
+      "profile": "image-vision-linear-q5_k-v1",
+      "backend": "cpu",
+      "blas": false,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.2798098814027678,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.9964250893727656,
+      "maximum_score_error": 0.009151041397247317,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q5_k-v1-cpu-no-blas-20261003T202334.706989/run.json",
+      "receipt_sha256": "db243b95101ae5bafaf991cafee20a04fcec47923d70298ff3184f0ac02768fa",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q5_k-v1-cpu-no-blas-20261003T202334.706989/validation/metrics.json",
+      "metrics_sha256": "f3cc9035b5a76742758cd601978b0736feb7d79de5b74cd0c1a2131eba020387"
+    },
+    {
+      "precision": "q5_k",
+      "profile": "image-vision-linear-q5_k-v1",
+      "backend": "metal",
+      "blas": false,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.2705250923385518,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.9949992645977349,
+      "maximum_score_error": 0.0036218763972473145,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "f969034b572867d574b371edd58739c6a0e76125ee770a710a46acba507233f3",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q5_k-v1-metal-20261003T201336.503354/run.json",
+      "receipt_sha256": "912c47978da36a5f22166f7f96eba5b698a82b187450d3ba5f1233eafddc4332",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q5_k-v1-metal-20261003T201336.503354/validation/metrics.json",
+      "metrics_sha256": "ae5aee9f39555638370570b61538c2c76255b2a87842cf685665795a74b72944"
+    },
+    {
+      "precision": "q6_k",
+      "profile": "image-vision-linear-q6_k-v1",
+      "backend": "cpu",
+      "blas": true,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.2696542184365413,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.9977220956719818,
+      "maximum_score_error": 0.00685656051657102,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q6_k-v1-cpu-blas-20261003T201201.427868/run.json",
+      "receipt_sha256": "8bb348dc8bafaa84c3836498a5c36ab74ae4df1c9f41fe9072e5edce90c2e93b",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q6_k-v1-cpu-blas-20261003T201201.427868/validation/metrics.json",
+      "metrics_sha256": "d144970d1cb2c00fe953232e340c20831ec7521481fe00e0e501d7cefd9f3467"
+    },
+    {
+      "precision": "q6_k",
+      "profile": "image-vision-linear-q6_k-v1",
+      "backend": "cpu",
+      "blas": false,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.32672506704541243,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.9977469583938317,
+      "maximum_score_error": 0.006415605516571055,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q6_k-v1-cpu-no-blas-20261003T201506.507770/run.json",
+      "receipt_sha256": "8dca05475d9c8a0e7012fe054c3c3d70ac757917f39a9269ee27ec7d0cd6f789",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q6_k-v1-cpu-no-blas-20261003T201506.507770/validation/metrics.json",
+      "metrics_sha256": "830ddc87d4f244d96ed4497a997913cea4b2a2723b0bb3d1f6e68d53e2124bd2"
+    },
+    {
+      "precision": "q6_k",
+      "profile": "image-vision-linear-q6_k-v1",
+      "backend": "metal",
+      "blas": false,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.27000277215665214,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.9977220956719818,
+      "maximum_score_error": 0.006805539516571035,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "2b2226dab53f9da5ba6337be71d07f57e5ebe3eff73384f0b1a058dcb66fb3a6",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q6_k-v1-metal-20261003T201120.454836/run.json",
+      "receipt_sha256": "9a8e26d6d0d41db209277cbaa84f3a493ee8cc833447bbbe0b219f2699eb4bc4",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q6_k-v1-metal-20261003T201120.454836/validation/metrics.json",
+      "metrics_sha256": "8234895cbbf541540f1f3cbef71809afeb81bdfd4d4e676c6bd1e206642d816a"
+    },
+    {
+      "precision": "q8_0",
+      "profile": "image-vision-linear-q8_0-v1",
+      "backend": "cpu",
+      "blas": true,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.10062636549041476,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.998379970544919,
+      "maximum_score_error": 0.0007060175165710669,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q8_0-v1-cpu-blas-20261003T200013.398972/run.json",
+      "receipt_sha256": "443be2114879f3c4bc9e48e18fb3e48bfb1982a486d41c33b980bdd154d84eb2",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q8_0-v1-cpu-blas-20261003T200013.398972/validation/metrics.json",
+      "metrics_sha256": "2bba172f0e4dfe53fc708b69faab13218b04ddbbe080b82fb0e542812ea4f87a"
+    },
+    {
+      "precision": "q8_0",
+      "profile": "image-vision-linear-q8_0-v1",
+      "backend": "cpu",
+      "blas": false,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.2565010047355172,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.996464869642068,
+      "maximum_score_error": 0.0017625685165710836,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q8_0-v1-cpu-no-blas-20261003T200709.772756/run.json",
+      "receipt_sha256": "08cf1ac2329a935002f0e74c993f3948c6964f55d03285863f49c2a00107f6c1",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q8_0-v1-cpu-no-blas-20261003T200709.772756/validation/metrics.json",
+      "metrics_sha256": "e6e837dc3da57d8b7930ad102a6012b7f3852e2451f5993378d81ffc324461a8"
+    },
+    {
+      "precision": "q8_0",
+      "profile": "image-vision-linear-q8_0-v1",
+      "backend": "metal",
+      "blas": false,
+      "cases": 7,
+      "passed_cases": 0,
+      "worst_tensor": [
+        0.10681004279436321,
+        "groceries-bottle",
+        "mask_logits"
+      ],
+      "minimum_mask_iou": 0.9982326951399116,
+      "maximum_score_error": 0.0008676645165710539,
+      "gates_sha256": "6bdb91602e8a89e8b29b208282b846b541d8fbe499ae36955e4f905e9eff7a93",
+      "model_sha256": "3acb81bbaa585bb25be7f22ef11e169189ab4a939a6fae1e27c2f329a5ea06f7",
+      "source_unchanged": true,
+      "receipt": "build/quantization/20261003/receipts/validate-image-vision-linear-q8_0-v1-metal-20261003T200354.463492/run.json",
+      "receipt_sha256": "a00e11ded3a3eb19f58cd5190cee78778effbb1553ecbd7356f32982b9ea005d",
+      "metrics": "build/quantization/20261003/receipts/validate-image-vision-linear-q8_0-v1-metal-20261003T200354.463492/validation/metrics.json",
+      "metrics_sha256": "a4424a6a80e84fece36203bbb6b8f80ff4c47a428b545719c97291639d4debd0"
+    }
+  ],
+  "legacy": [
+    {
+      "backend": "cpu",
+      "profile": "image-f32",
+      "cases": 7,
+      "metrics": "build/quantization/20261003/legacy-cpu-image-f32/metrics.json",
+      "metrics_sha256": "523ce56a5a91a278ddd350266ec2373ddbc7abad75579ad27acea27041fc28ab"
+    },
+    {
+      "backend": "cpu",
+      "profile": "image-f16",
+      "cases": 7,
+      "metrics": "build/quantization/20261003/legacy-cpu-image-f16/metrics.json",
+      "metrics_sha256": "6c49f02b75fefdc2689813b654fe1fc4b64162874a1d0f3ba35fd5f9e4aac81a"
+    },
+    {
+      "backend": "cpu",
+      "profile": "video-hybrid",
+      "cases": 7,
+      "metrics": "build/quantization/20261003/legacy-cpu-video-hybrid/metrics.json",
+      "metrics_sha256": "078cc0146b16d366f753cbbc9ee4eba142977a91703011f4b73833445f022715"
+    },
+    {
+      "backend": "metal",
+      "profile": "image-f32",
+      "cases": 7,
+      "metrics": "build/quantization/20261003/legacy-metal-image-f32/metrics.json",
+      "metrics_sha256": "f2d093f2d98954ea5bfd911ea9e06c12692c2d7231d58129f0ee1265571d0bdf"
+    },
+    {
+      "backend": "metal",
+      "profile": "image-f16",
+      "cases": 7,
+      "metrics": "build/quantization/20261003/legacy-metal-image-f16/metrics.json",
+      "metrics_sha256": "5e72d45e3906c38d27342e2e107f972802e5bbeb21da85a46240a14be640aa94"
+    },
+    {
+      "backend": "metal",
+      "profile": "video-hybrid",
+      "cases": 7,
+      "metrics": "build/quantization/20261003/legacy-metal-video-hybrid/metrics.json",
+      "metrics_sha256": "5915061fc82dcb63bb1247260c27af51e9ef6d8ea4e401511ff20b01be71b32d"
+    }
+  ],
+  "parent_resources": "docs/validation-baselines/blas-vit-m4pro-20261003.json",
+  "limits": [
+    "All quantized cells fail original-Meta per-tensor gates; masks alone do not establish acceptance.",
+    "Formal timing deferred; no performance claim.",
+    "Video quantization remains a follow-up requiring separate quality work.",
+    "No commit/push or remote CI in this task."
+  ],
+  "archive": {
+    "path": "models/validation-baselines/quantized-image-m4pro-20261003/bundle/archive.json",
+    "sha256": "6fe532f5e7921c9cd7250e1952012966e270150ee7302a55c25bd13394f4edc8",
+    "files": 10904,
+    "bytes": 38127241226,
+    "complete": true,
+    "verification": "independent full inventory/hash verification passed"
+  }
+}

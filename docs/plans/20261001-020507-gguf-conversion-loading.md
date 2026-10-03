@@ -218,6 +218,52 @@ samples and power/thermal state, is `build/gguf-migration/benchmarks/receipt.jso
 (SHA-256 `e282f7e4bdc88315e13c4212f0d46c4cac469f8bfd7d0a4971016bf3e243619f`).
 Results are under `build/gguf-migration/benchmarks/{00-metal_after,01-cpu_after}/`.
 
+## User-document cleanup archive: conversion identities and local results (2026-10-04)
+
+This appendix retains the pinned artifacts, payload-size table, and local
+validation statements removed from the concise model download/conversion guide
+and GGUF contract page. It is historical project evidence, not a requirement
+for ordinary conversion use.
+
+### Pinned source artifacts
+
+| Input | Revision / identity |
+| --- | --- |
+| HF weights | `facebook/sam3`, revision `3c879f39826c281e95690f02c7821c4de09afae7` |
+| Original checkpoint | `sam3.pt`, 3,450,062,241 bytes; SHA-256 `9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e` |
+| Meta source and reference graph | revision `2345a4ad109ac29c569da749c91d84f10dc08c40` |
+| Tokenizer asset | `bpe_simple_vocab_16e6.txt.gz`; SHA-256 `924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a` |
+| C++ port and tensor mapping basis | `PABannier/sam3.cpp`, revision `416186c501d060df7ca02989d49b38080f5f81f3` |
+| Earlier supplementary C++ checkpoint | `PABannier/sam3.cpp` HF revision `a3892b63b918e872671322e116982a8910f0ffb7` |
+
+### Converted GGUF artifact identities
+
+| Output | Size (bytes) | SHA-256 | Local validation scope at the time |
+| --- | ---: | --- | --- |
+| `sam3-f32.gguf` | 3,371,139,456 | `cb13ecd5012a2fe19b06d840049be6daa6b177b35256af8c4afeb12125352486` | Schema-1 image file; CPU or explicitly selected Metal |
+| `sam3-f16.gguf` | 1,797,613,888 | `66731fa5def347677f78d7422b81979be0f8e2f7ead941db9a466d1cfa715120` | Schema-1 image file; CPU or Metal |
+| `sam3-video-f32.gguf` | 3,449,345,696 | `02513232afca5ba8c174b66c7fc839c67b32590df4b53bdd6df5089a6a546844` | All five original video cases (216 frames) pass on CPU/Metal; max stage L2 0.000203 CPU / 0.000346 Metal |
+| `sam3-video-f16.gguf` | 1,837,925,216 | `9c9bc86c81d11a041db10a46d3d1e8ecaa1cbcf6fad683b00901f641746bf32c` | Diagnostic: Metal candidate selection fails at entry frames 23/24; the other four cases pass; full CPU diagnostic was deferred |
+| `sam3-video-hybrid-v1.gguf` | 2,765,012,640 | `3975b4b1a10b962c6fad5022e2798baa6266aad7dbcc39210b459537208e1a05` | All 1,464 payloads checked; five-case/216-frame video corpus, image and session checks pass on CPU/Metal; max full-video L2 0.002650 CPU / 0.002594 Metal |
+
+For the explicit F32/F16 files, every image-subset tensor matched the accepted
+schema-1 file byte-for-byte. The FP16 video converter retained the final
+single-output object score projection in F32 for its canonical GGML vector
+shape and runtime policy. The original-checkpoint verification is also recorded
+in `docs/plans/20261002-032709-local-model-meta-validation.md`; the completed
+video support scope is in `docs/plans/20261002-182848-m2-complete-acceptance.md`.
+
+### Quantized schema-3 status snapshot
+
+At the 2026-10-03 documentation snapshot, four vision-only schema-3 profiles
+passed output quality on the fixed seven-case corpus across CPU/BLAS, native CPU
+and Metal (84/84). Raw tensor fidelity was a separate axis: 0/84 cells passed
+the complete gate, while 500/840 tensor-by-case comparisons passed and 340
+failed. These numbers describe that fixed corpus only; they are not a
+dataset-wide accuracy statement. The broad ViT-plus-text profiles remained
+diagnostic. Current conversion commands and support status are maintained in
+the quantization guide, outside this container-migration plan.
+
 Documentation, local links and owned-file whitespace checks pass. Historical
 plans retain their original format and benchmark identities. No commit or push
 was performed.

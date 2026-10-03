@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "gate_set": "sam3-image-quantization-v1",
+  "status": "frozen-before-model-runs",
+  "frozen_at": "2026-10-03T19:08:18+08:00",
+  "source_plan": "docs/plans/20261003-184759-gguf-quantized-inference.md",
+  "scope": "text-prompted SAM 3 image inference; original Meta FP32 remains the release oracle",
+  "oracle": {
+    "reference_kind": "official-checkpoint",
+    "eligible_for_milestone": true,
+    "precision": "float32",
+    "compile": false,
+    "autocast": false,
+    "tf32": false
+  },
+  "comparison": {
+    "tensor_scope": "each required diagnostic tensor in every frozen case",
+    "normalized_l2": "||actual-reference||_2 / ||reference||_2",
+    "zero_norm_reference_threshold": 1e-12,
+    "preprocessed_image_max_abs": 0.00784313725490196,
+    "high_confidence_reference_score_min": 0.6,
+    "low_confidence_reference_score_max": 0.4,
+    "score_threshold": 0.5,
+    "mask_iou_scope": "each high-confidence reference detection",
+    "score_units": "absolute error on 0-1 probability",
+    "box_error_units": "per-coordinate fraction of corresponding image width or height",
+    "threshold_adjacent_interval": [0.4, 0.6]
+  },
+  "native_arithmetic": {
+    "required_profile": "ggml-quantized-native-v1",
+    "supplementary_comparison": "decoded-GGUF Meta FP32 outputs to native GGML runtime outputs; diagnostic only"
+  },
+  "profiles": {
+    "q8_0": {
+      "precision": "q8_0",
+      "storage_profile": "image-linear-q8_0-v1",
+      "normalized_l2_max": 0.02,
+      "high_confidence_mask_iou_min": 0.96,
+      "score_absolute_error_max": 0.02,
+      "box_dimension_fraction_max": 0.01,
+      "zero_norm_max_abs": 0.0001,
+      "native_arithmetic_normalized_l2_max": 0.005
+    },
+    "q6_k": {
+      "precision": "q6_k",
+      "storage_profile": "image-linear-q6_k-v1",
+      "normalized_l2_max": 0.04,
+      "high_confidence_mask_iou_min": 0.94,
+      "score_absolute_error_max": 0.03,
+      "box_dimension_fraction_max": 0.015,
+      "zero_norm_max_abs": 0.0002,
+      "native_arithmetic_normalized_l2_max": 0.01
+    },
+    "q5_k": {
+      "precision": "q5_k",
+      "storage_profile": "image-linear-q5_k-v1",
+      "normalized_l2_max": 0.06,
+      "high_confidence_mask_iou_min": 0.92,
+      "score_absolute_error_max": 0.04,
+      "box_dimension_fraction_max": 0.02,
+      "zero_norm_max_abs": 0.0005,
+      "native_arithmetic_normalized_l2_max": 0.015
+    },
+    "q4_k": {
+      "precision": "q4_k",
+      "storage_profile": "image-linear-q4_k-v1",
+      "normalized_l2_max": 0.1,
+      "high_confidence_mask_iou_min": 0.9,
+      "score_absolute_error_max": 0.05,
+      "box_dimension_fraction_max": 0.03,
+      "zero_norm_max_abs": 0.001,
+      "native_arithmetic_normalized_l2_max": 0.025
+    }
+  }
+}

@@ -2,6 +2,10 @@ add_executable(test_contracts test_contracts.cpp)
 target_link_libraries(test_contracts PRIVATE sam::sam)
 add_test(NAME sam_contracts COMMAND test_contracts)
 
+add_executable(test_quantization test_quantization.cpp)
+target_link_libraries(test_quantization PRIVATE sam::sam)
+add_test(NAME sam_quantization COMMAND test_quantization)
+
 add_executable(test_header_only test_header_only_main.cpp header_only_other.cpp)
 target_link_libraries(test_header_only PRIVATE sam::sam)
 add_test(NAME sam_header_only COMMAND test_header_only)
