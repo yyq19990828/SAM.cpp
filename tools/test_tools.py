@@ -992,6 +992,14 @@ class ToolChecks(unittest.TestCase):
             self.assertAlmostEqual(valid["timings"]["frame_ms"]["p95_ms"], 45.65)
             self.assertEqual(valid["timings"]["frame_ms"]["maximum_ms"], 1000)
             self.assertEqual(valid["first_output"]["emitted_after_frame"], 14)
+            f32_manifest = copy.deepcopy(manifest); f32_manifest["precision"] = "f32"
+            write_json(root / "manifest.json", f32_manifest)
+            f32 = benchmark_video.analyze_run(root, 1, "f32", "metal", 2, 2)
+            self.assertEqual(f32["timings"], valid["timings"])
+            self.assertEqual(f32["first_output"], valid["first_output"])
+            with self.assertRaisesRegex(ValueError, "profile"):
+                analyze()
+            write_json(root / "manifest.json", manifest)
             # Counts remain one, but retiring/replacing an ID must not be accepted as continuity.
             trace_path = root / "trace/000032.json"; trace = read_json(trace_path)
             changed = copy.deepcopy(trace); changed.update(births=[{"id":8}], removed=[7])

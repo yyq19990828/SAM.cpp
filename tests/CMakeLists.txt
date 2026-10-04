@@ -50,6 +50,10 @@ add_executable(test_graph test_graph.cpp)
 target_link_libraries(test_graph PRIVATE sam::sam)
 add_test(NAME sam_graph COMMAND test_graph)
 
+add_executable(test_graph_workspace test_graph_workspace.cpp)
+target_link_libraries(test_graph_workspace PRIVATE sam::sam)
+add_test(NAME sam_graph_workspace COMMAND test_graph_workspace)
+
 add_executable(test_backend test_backend.cpp)
 target_link_libraries(test_backend PRIVATE sam::sam)
 add_test(NAME sam_backend COMMAND test_backend)

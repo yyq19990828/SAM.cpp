@@ -11,6 +11,7 @@
 #include <mutex>
 #include <set>
 #include <sstream>
+#include <tuple>
 
 namespace sam::internal::sam3 {
 
@@ -49,6 +50,8 @@ public:
 
     void reset(int frame_count) override {
         if (frame_count <= 0) throw std::invalid_argument("frame_count must be positive");
+        std::lock_guard<std::mutex> lock(model_->execution_mutex);
+        execution_.reset();
         frame_count_ = frame_count; next_frame_ = 0; next_id_ = 0;
         width_ = height_ = 0; failed_ = false;
         tokens_.clear(); text_.clear(); groups_.clear(); policy_ = {}; pending_.clear();
@@ -86,7 +89,9 @@ public:
             if (text_.empty()) text_ = model_->definition.encode_text(*model_->runtime, tokens_, stats_.runtime);
             image_ = model_->definition.encode_image(*model_->runtime, std::move(pixels), width_, height_, stats_.runtime, true);
             prediction_ = model_->definition.predict(*model_->runtime, image_, tokens_, text_, stats_.runtime);
+            execution_->begin_frame(image_);
             process(frame_index, video_detections(prediction_));
+            execution_->end_frame();
             ++next_frame_; ++stats_.accepted_frames;
             std::vector<VideoFrameResult> output;
             while (!pending_.empty() && (next_frame_ == frame_count_ || pending_.size() >= 15)) {
@@ -96,6 +101,10 @@ public:
             return output;
         } catch (...) {
             failed_ = true;
+            if (execution_) {
+                execution_->end_frame();
+                execution_.reset();
+            }
             throw;
         }
     }
@@ -199,6 +208,18 @@ private:
         std::vector<std::uint64_t> old_ids;
         std::vector<std::vector<float>> masks;
         std::vector<float> tracker_scores;
+        struct PropagationWork {
+            TrackerGroup* group;
+            TrackerObject* object;
+            const MemorySelection* selection;
+            std::uint64_t id;
+        };
+        std::vector<MemorySelection> selections;
+        selections.reserve(groups_.size());
+        std::size_t object_count = 0;
+        for (const auto& group : groups_) object_count += group.objects.size();
+        std::vector<PropagationWork> work;
+        work.reserve(object_count);
         std::ostringstream trace;
         std::ostringstream propagation;
         propagation << std::setprecision(9);
@@ -206,7 +227,8 @@ private:
         trace << std::setprecision(9) << "{\"frame_index\":" << frame << ",\"groups\":[";
         bool first_group = true;
         for (auto& group : groups_) {
-            const auto selected = select_memory(group.history, frame, frame_count_, group.discarded_conditioning);
+            selections.push_back(select_memory(group.history, frame, frame_count_, group.discarded_conditioning));
+            const auto& selected = selections.back();
             if (!first_group) trace << ','; first_group = false;
             trace << "{\"birth\":" << group.birth << ",\"ids\":[";
             for (std::size_t i = 0; i < group.objects.size(); ++i) { if (i) trace << ','; trace << group.objects[i].id; }
@@ -219,27 +241,56 @@ private:
                 if (i) trace << ','; trace << '[' << selected.pointers[i].frame << ',' << selected.pointers[i].position << ']';
             }
             trace << "]}";
-            for (auto& object : group.objects) {
-                auto conditioned = execution_->condition(image_, object.records, selected, frame_count_);
-                auto prediction = execution_->decode(image_, std::move(conditioned)); ++stats_.tracker_calls;
-                if (!first_propagation) propagation << ',';
-                first_propagation = false;
-                propagation << "{\"id\":" << object.id << ",\"iou\":[";
-                for (std::size_t i = 0; i < prediction.decoder_iou.size(); ++i) {
-                    if (i) propagation << ','; propagation << prediction.decoder_iou[i];
-                }
-                propagation << "],\"mask_index\":" << prediction.mask_index
-                            << ",\"pointer_index\":" << prediction.pointer_index << '}';
-                debug_[object.id].propagated_mask = prediction.mask;
-                debug_[object.id].propagated_conditioned = prediction.conditioned;
-                object.records[frame] = {{}, prediction.pointer, prediction.object_logit, prediction.iou};
-                auto cleaned = prediction.mask; clean_mask_components(cleaned, 288, 288);
-                old_ids.push_back(object.id); masks.push_back(std::move(cleaned));
-                tracker_scores.push_back(sigmoid(prediction.object_logit));
-                debug_[object.id].prediction = std::move(prediction);
-            }
-            group.history[frame] = {frame, false, quality(group, frame)};
+            for (auto& object : group.objects)
+                work.push_back({&group, &object, &selected, object.id});
         }
+
+        // Stable shape buckets batch compatible objects; scattering follows the
+        // original group/object order and checks each saved ID before mutation.
+        std::map<std::tuple<std::size_t, std::size_t, std::vector<int>>,
+                 std::vector<std::size_t>> buckets;
+        for (std::size_t i = 0; i < work.size(); ++i) {
+            const auto& selection = *work[i].selection;
+            std::vector<int> spatial_positions;
+            spatial_positions.reserve(selection.spatial.size());
+            for (const auto& selected : selection.spatial) spatial_positions.push_back(selected.position);
+            buckets[{selection.spatial.size(), selection.pointers.size(), std::move(spatial_positions)}].push_back(i);
+        }
+        std::vector<TrackerPrediction> predictions(work.size());
+        for (const auto& bucket : buckets) {
+            std::vector<TrackerPropagationInput> inputs;
+            inputs.reserve(bucket.second.size());
+            for (const auto index : bucket.second)
+                inputs.push_back({&work[index].object->records, work[index].selection});
+            auto batch_predictions = execution_->propagate_batch(image_, inputs, frame_count_);
+            if (batch_predictions.size() != bucket.second.size())
+                throw std::runtime_error("tracker propagation batch returned an invalid result count");
+            for (std::size_t i = 0; i < bucket.second.size(); ++i)
+                predictions[bucket.second[i]] = std::move(batch_predictions[i]);
+        }
+
+        for (std::size_t i = 0; i < work.size(); ++i) {
+            auto& item = work[i];
+            auto& object = *item.object;
+            if (object.id != item.id) throw std::runtime_error("tracker batch ID mapping changed during propagation");
+            auto& prediction = predictions[i]; ++stats_.tracker_calls;
+            if (!first_propagation) propagation << ',';
+            first_propagation = false;
+            propagation << "{\"id\":" << item.id << ",\"iou\":[";
+            for (std::size_t j = 0; j < prediction.decoder_iou.size(); ++j) {
+                if (j) propagation << ','; propagation << prediction.decoder_iou[j];
+            }
+            propagation << "],\"mask_index\":" << prediction.mask_index
+                        << ",\"pointer_index\":" << prediction.pointer_index << '}';
+            debug_[item.id].propagated_mask = prediction.mask;
+            debug_[item.id].propagated_conditioned = prediction.conditioned;
+            object.records[frame] = {{}, prediction.pointer, prediction.object_logit, prediction.iou};
+            auto cleaned = prediction.mask; clean_mask_components(cleaned, 288, 288);
+            old_ids.push_back(item.id); masks.push_back(std::move(cleaned));
+            tracker_scores.push_back(sigmoid(prediction.object_logit));
+            debug_[item.id].prediction = std::move(prediction);
+        }
+        for (auto& group : groups_) group.history[frame] = {frame, false, quality(group, frame)};
         stats_.tracker_ms = elapsed_ms(tracker_start);
         const auto association = associate_video(detections, masks);
         auto births = association.births;
@@ -348,7 +399,9 @@ private:
         stats_.memory_ms = elapsed_ms(memory_start) - (stats_.tracker_ms - tracker_before_memory);
         trace << "],\"removed\":";
         json_ids(trace, {removed.begin(), removed.end()});
-        trace << ",\"propagation\":[" << propagation.str() << "]}"; trace_ = trace.str();
+        trace << ",\"propagation\":[" << propagation.str() << ']'
+              << ",\"execution_diagnostics\":" << execution_->diagnostics_json() << '}';
+        trace_ = trace.str();
         for (auto& previous : pending_) previous.objects.erase(std::remove_if(previous.objects.begin(), previous.objects.end(),
             [&](const auto& object) { return removed.count(object.id); }), previous.objects.end());
         policy_.retire(removed);

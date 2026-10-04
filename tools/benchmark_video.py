@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure one original-F16 or hybrid M2 cell: 64 frames, 16 warmup, 48 measured.
+"""Measure an original F32/F16/hybrid cell: 64 frames, 16 warmup, 48 measured.
 
 Requires a passing full original-reference validation for the exact model,
 backend and executable, plus an original-module qualification of the independent
@@ -69,8 +69,8 @@ def analyze_run(directory, expected_objects, precision, backend, width, height):
             or manifest.get("width") != width or manifest.get("height") != height
             or manifest.get("prompt") != "truck"):
         raise ValueError("benchmark manifest is incomplete or has a different workload/profile/backend")
-    if expected_objects not in (1, 4) or precision not in ("f16", "hybrid"):
-        raise ValueError("M2 performance cells require 1/4 objects and f16/hybrid storage")
+    if expected_objects not in (1, 4) or precision not in ("f32", "f16", "hybrid"):
+        raise ValueError("video performance cells require 1/4 objects and f32/f16/hybrid storage")
     if type(manifest.get("model_load_ms")) not in (int, float) or not math.isfinite(manifest["model_load_ms"]) or manifest["model_load_ms"] < 0:
         raise ValueError("invalid model-load timing")
     if list((directory / "tensors").rglob("*.bin")):
@@ -188,8 +188,8 @@ def run(args):
     if sys.platform != "darwin":
         raise ValueError("this measured M2 protocol requires macOS /usr/bin/time -l; no cross-platform RSS conversion is assumed")
     precision, reference, _ = check_provenance(args.model, args.reference)
-    if precision not in ("f16", "hybrid") or args.threads != 4:
-        raise ValueError("standard M2 benchmark cells use original F16/hybrid and four threads")
+    if precision not in ("f32", "f16", "hybrid") or args.threads != 4:
+        raise ValueError("standard video benchmark cells use original F32/F16/hybrid and four threads")
     accepted = read_json(args.validation)
     expected_model = read_json(args.model.with_suffix(args.model.suffix + ".manifest.json"))["output"]["sha256"]
     executable = args.build_dir / "examples/sam_video"

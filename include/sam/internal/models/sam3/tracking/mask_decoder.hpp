@@ -7,9 +7,18 @@
 #include "../architecture.hpp"
 #include "../vision.hpp"
 #include "../ops.hpp"
+#include "attention.hpp"
+#include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace sam::internal::sam3 {
+
+inline ggml_tensor* sam3_add_spatial_batch(ggml_context* ctx, ggml_tensor* a, ggml_tensor* b) {
+    if (a->ne[3] != b->ne[3] && a->ne[3] != 1 && b->ne[3] != 1)
+        throw std::invalid_argument("SAM spatial tensors have incompatible object batches");
+    return a->ne[3] >= b->ne[3] ? ggml_add(ctx, a, b) : ggml_add(ctx, b, a);
+}
 
 inline struct ggml_tensor* sam3_sam_attention(
     struct ggml_context* ctx,
@@ -18,6 +27,15 @@ inline struct ggml_tensor* sam3_sam_attention(
     struct ggml_tensor* v_in,  // [D, N_kv, B]
     const sam3_sam_attn& attn,
     int n_heads) {
+    if (!q_in || !k_in || !v_in || n_heads <= 0 || q_in->ne[2] <= 0 ||
+        k_in->ne[2] <= 0 || v_in->ne[2] <= 0 ||
+        q_in->ne[3] != 1 || k_in->ne[3] != 1 || v_in->ne[3] != 1 ||
+        k_in->ne[1] != v_in->ne[1])
+        throw std::invalid_argument("SAM attention requires matching token batches");
+    const auto batch = std::max(q_in->ne[2], std::max(k_in->ne[2], v_in->ne[2]));
+    q_in = sam3_repeat_batch_3d(ctx, q_in, batch);
+    k_in = sam3_repeat_batch_3d(ctx, k_in, batch);
+    v_in = sam3_repeat_batch_3d(ctx, v_in, batch);
     const int64_t N_q = q_in->ne[1];
     const int64_t B = q_in->ne[2];
     const int64_t N_kv = k_in->ne[1];
@@ -91,10 +109,10 @@ inline void sam3_twoway_block_forward(
 
     // 2. Cross-attention: tokens attending to image
     {
-        auto* q = ggml_add(ctx, queries, query_pe);
-        auto* k = ggml_add(ctx, keys, key_pe);
+        auto* q = sam3_add_token_batch(ctx, queries, query_pe);
+        auto* k = sam3_add_token_batch(ctx, keys, key_pe);
         auto* attn_out = sam3_sam_attention(ctx, q, k, keys, blk.ca_tok2img, n_heads);
-        queries = ggml_add(ctx, queries, attn_out);
+        queries = sam3_add_token_batch(ctx, queries, attn_out);
         queries = sam3_layer_norm(ctx, queries, blk.norm2_w, blk.norm2_b);
     }
 
@@ -111,11 +129,11 @@ inline void sam3_twoway_block_forward(
 
     // 4. Cross-attention: image attending to tokens
     {
-        auto* q = ggml_add(ctx, queries, query_pe);
-        auto* k = ggml_add(ctx, keys, key_pe);
+        auto* q = sam3_add_token_batch(ctx, queries, query_pe);
+        auto* k = sam3_add_token_batch(ctx, keys, key_pe);
         // Note: q and k are swapped — image (k) attends to tokens (q)
         auto* attn_out = sam3_sam_attention(ctx, k, q, queries, blk.ca_img2tok, n_heads);
-        keys = ggml_add(ctx, keys, attn_out);
+        keys = sam3_add_token_batch(ctx, keys, attn_out);
         keys = sam3_layer_norm(ctx, keys, blk.norm4_w, blk.norm4_b);
     }
 }
@@ -143,39 +161,57 @@ inline struct ggml_tensor* sam3_mlp_forward(
 
 // Full SAM mask decoder graph
 // Inputs:
-//   image_feats:  [D, H, H, 1] — tracker neck features (scale 2 = 72×72)
-//   image_pe:     [D, H, H, 1] — dense positional encoding
-//   sparse_emb:   [D, N_pts, 1] — sparse prompt embeddings
-//   dense_emb:    [D, H, H, 1] — dense prompt embeddings (no_mask default)
-//   feat_s0:      [D, H0, H0, 1] — high-res features (scale 0 = 288×288)
-//   feat_s1:      [D, H1, H1, 1] — mid-res features (scale 1 = 144×144)
+//   image_feats:  [D, H, H, B] — tracker neck features (scale 2 = 72×72)
+//   image_pe:     [D, H, H, B] — dense positional encoding
+//   sparse_emb:   [D, N_pts, B] — sparse prompt embeddings
+//   dense_emb:    [D, H, H, B] — dense prompt embeddings (no_mask default)
+//   feat_s0:      [256, H0, H0, B] — high-res features (scale 0 = 288×288)
+//   feat_s1:      [256, H1, H1, B] — mid-res features (scale 1 = 144×144)
 // Outputs: sam3_dec_result with masks, iou_pred, obj_score, sam_token_out
 struct sam3_dec_result {
-    struct ggml_tensor* masks;        // [288*288, N_masks, 1]
-    struct ggml_tensor* iou_pred;     // [N_masks, 1]
-    struct ggml_tensor* obj_score;    // [1, 1]
-    struct ggml_tensor* sam_token;    // [D, 1] — for object pointer
-    struct ggml_tensor* mask_tokens;  // [D, N_masks, 1] — raw SAM mask tokens
+    struct ggml_tensor* masks;        // [H4*H4, N_masks, B], object-major when downloaded
+    struct ggml_tensor* iou_pred;     // [N_masks, 1, B]
+    struct ggml_tensor* obj_score;    // [1, 1, B]
+    struct ggml_tensor* sam_token;    // [D, 1, B] — for object pointer
+    struct ggml_tensor* mask_tokens;  // [D, N_masks, B] — raw SAM mask tokens
 };
 
 inline sam3_dec_result sam3_build_sam_dec_graph(
     struct ggml_context* ctx,
     const sam3_model& model,
-    struct ggml_tensor* image_feats,  // [D, H, H, 1]
-    struct ggml_tensor* image_pe,     // [D, H, H, 1]
-    struct ggml_tensor* sparse_emb,   // [D, N_pts, 1]
-    struct ggml_tensor* dense_emb,    // [D, H, H, 1]
-    struct ggml_tensor* feat_s0,      // [D, H*4, H*4, 1] high-res
-    struct ggml_tensor* feat_s1,     // [D, H*2, H*2, 1] mid-res
+    struct ggml_tensor* image_feats,  // [D, H, H, 1|B]
+    struct ggml_tensor* image_pe,     // [D, H, H, 1|B]
+    struct ggml_tensor* sparse_emb,   // [D, N_pts, B]
+    struct ggml_tensor* dense_emb,    // [D, H, H, 1|B]
+    struct ggml_tensor* feat_s0,      // [256, H*4, H*4, 1|B] high-res
+    struct ggml_tensor* feat_s1,     // [256, H*2, H*2, 1|B] mid-res
     int eff_feat_size = 0)
 {
+    if (!image_feats || !image_pe || !sparse_emb || !dense_emb || !feat_s0 || !feat_s1)
+        throw std::invalid_argument("SAM decoder inputs are incomplete");
     const auto& dec = model.sam_dec;
     const auto& hp = model.hparams;
     const int D = hp.sam_embed_dim;  // 256
     const int H = (eff_feat_size > 0) ? eff_feat_size : hp.n_img_embd();
     const int N_pts = (int)sparse_emb->ne[1];
+    const int64_t B = sparse_emb->ne[2];
     const int n_heads = 8;                               // SAM uses 8 heads
     const int num_mask_tokens = hp.sam_n_multimask + 1;  // 4
+    if (!image_feats || !image_pe || !sparse_emb || !dense_emb || !feat_s0 || !feat_s1 ||
+        B <= 0 || image_feats->type != GGML_TYPE_F32 || image_feats->ne[0] != D ||
+        image_feats->ne[1] != H || image_feats->ne[2] != H ||
+        (image_feats->ne[3] != 1 && image_feats->ne[3] != B) ||
+        image_pe->type != GGML_TYPE_F32 || image_pe->ne[0] != D || image_pe->ne[1] != H ||
+        image_pe->ne[2] != H || (image_pe->ne[3] != 1 && image_pe->ne[3] != B) ||
+        sparse_emb->type != GGML_TYPE_F32 || sparse_emb->ne[0] != D || sparse_emb->ne[1] <= 0 ||
+        sparse_emb->ne[2] != B || sparse_emb->ne[3] != 1 ||
+        dense_emb->type != GGML_TYPE_F32 || dense_emb->ne[0] != D || dense_emb->ne[1] != H ||
+        dense_emb->ne[2] != H || (dense_emb->ne[3] != 1 && dense_emb->ne[3] != B) ||
+        feat_s0->type != GGML_TYPE_F32 || feat_s0->ne[0] != 256 || feat_s0->ne[1] != H * 4 ||
+        feat_s0->ne[2] != H * 4 || (feat_s0->ne[3] != 1 && feat_s0->ne[3] != B) ||
+        feat_s1->type != GGML_TYPE_F32 || feat_s1->ne[0] != 256 || feat_s1->ne[1] != H * 2 ||
+        feat_s1->ne[2] != H * 2 || (feat_s1->ne[3] != 1 && feat_s1->ne[3] != B))
+        throw std::invalid_argument("SAM decoder inputs must use matching F32 spatial batches");
 
     // ── Concatenate output tokens ────────────────────────────────────────
     // When pred_obj_scores=True:  [obj_score(1,D), iou(1,D), masks(4,D)] = 6 tokens
@@ -191,14 +227,17 @@ inline sam3_dec_result sam3_build_sam_dec_graph(
     }
     output_tokens = ggml_concat(ctx, output_tokens, dec.mask_tokens, 1);
     output_tokens = ggml_reshape_3d(ctx, output_tokens, D, n_special, 1);
+    output_tokens = sam3_repeat_batch_3d(ctx, output_tokens, B);
     auto* tokens = ggml_concat(ctx, output_tokens, sparse_emb, 1);
     ggml_set_name(tokens, "sam_dec_tokens_initial");
 
     const int N_tok = 6 + N_pts;
 
-    auto* src = ggml_add(ctx, image_feats, dense_emb);
-    src = ggml_reshape_3d(ctx, src, D, H * H, 1);
-    auto* pos_src = ggml_reshape_3d(ctx, image_pe, D, H * H, 1);
+    auto* src = sam3_add_spatial_batch(ctx, image_feats, dense_emb);
+    if (src->ne[3] != B) src = ggml_repeat_4d(ctx, src, D, H, H, B);
+    src = ggml_reshape_3d(ctx, src, D, H * H, B);
+    auto* pos_src = ggml_reshape_3d(ctx, image_pe, D, H * H, image_pe->ne[3]);
+    if (pos_src->ne[2] != B) pos_src = sam3_repeat_batch_3d(ctx, pos_src, B);
 
     auto* queries = tokens;
     auto* keys = src;
@@ -215,10 +254,10 @@ inline sam3_dec_result sam3_build_sam_dec_graph(
 
     // Final attention: tokens → image
     {
-        auto* q = ggml_add(ctx, queries, query_pe);
-        auto* k = ggml_add(ctx, keys, key_pe);
+        auto* q = sam3_add_token_batch(ctx, queries, query_pe);
+        auto* k = sam3_add_token_batch(ctx, keys, key_pe);
         auto* attn_out = sam3_sam_attention(ctx, q, k, keys, dec.final_attn, n_heads);
-        queries = ggml_add(ctx, queries, attn_out);
+        queries = sam3_add_token_batch(ctx, queries, attn_out);
         queries = sam3_layer_norm(ctx, queries, dec.final_norm_w, dec.final_norm_b);
         ggml_set_name(queries, "sam_dec_final_queries");
     }
@@ -227,32 +266,32 @@ inline sam3_dec_result sam3_build_sam_dec_graph(
     // With pred_obj_scores=True (6 tokens):  obj(0), iou(1), masks(2..5)
     // With pred_obj_scores=False (5 tokens): iou(0), masks(1..4)
     const int s = has_obj_score ? 1 : 0;
-    auto* iou_token_out = ggml_view_3d(ctx, queries, D, 1, 1,
+    auto* iou_token_out = ggml_view_3d(ctx, queries, D, 1, B,
                                        queries->nb[1], queries->nb[2],
                                        s * queries->nb[1]);
-    iou_token_out = ggml_cont(ctx, iou_token_out);  // [D, 1, 1]
+    iou_token_out = ggml_cont(ctx, iou_token_out);  // [D, 1, B]
 
-    auto* mask_tokens_out = ggml_view_3d(ctx, queries, D, num_mask_tokens, 1,
+    auto* mask_tokens_out = ggml_view_3d(ctx, queries, D, num_mask_tokens, B,
                                          queries->nb[1], queries->nb[2],
                                          (s + 1) * queries->nb[1]);
-    mask_tokens_out = ggml_cont(ctx, mask_tokens_out);  // [D, 4, 1]
+    mask_tokens_out = ggml_cont(ctx, mask_tokens_out);  // [D, 4, B]
     ggml_set_name(mask_tokens_out, "sam_dec_mask_tokens");
 
     struct ggml_tensor* obj_in = nullptr;
     if (has_obj_score) {
-        obj_in = ggml_view_3d(ctx, queries, D, 1, 1,
+        obj_in = ggml_view_3d(ctx, queries, D, 1, B,
                               queries->nb[1], queries->nb[2], 0);
-        obj_in = ggml_cont(ctx, obj_in);  // [D, 1, 1]
+        obj_in = ggml_cont(ctx, obj_in);  // [D, 1, B]
     }
 
     // SAM output token = first mask token, used for object pointer
-    auto* sam_token = ggml_view_2d(ctx, queries, D, 1,
-                                   queries->nb[1], (s + 1) * queries->nb[1]);
-    sam_token = ggml_cont(ctx, sam_token);  // [D, 1]
+    auto* sam_token = ggml_view_3d(ctx, queries, D, 1, B,
+                                   queries->nb[1], queries->nb[2], (s + 1) * queries->nb[1]);
+    sam_token = ggml_cont(ctx, sam_token);  // [D, 1, B]
     ggml_set_name(sam_token, "sam_dec_sam_token");
 
     // Upscale: [D, H*H, 1] → ConvTranspose → high-res masks
-    auto* src_img = ggml_reshape_4d(ctx, keys, D, H, H, 1);
+    auto* src_img = ggml_reshape_4d(ctx, keys, D, H, H, B);
     src_img = ggml_cont(ctx, ggml_permute(ctx, src_img, 2, 0, 1, 3));
 
     auto* up1 = sam3_deconv_2x2(ctx, dec.up1_w, src_img);
@@ -299,30 +338,30 @@ inline sam3_dec_result sam3_build_sam_dec_graph(
     // For each mask token i, pass through 3-layer MLP to get [32] vector
     // Then dot product with upscaled_embedding [32, (H*4)^2] to get mask
     const int H4 = H * 4;
-    auto* up_flat = ggml_reshape_3d(ctx, up2, 32, H4 * H4, 1);
+    auto* up_flat = ggml_reshape_3d(ctx, up2, 32, H4 * H4, B);
 
     // Process each mask token through its hypernetwork MLP
     // mask_tokens_out: [D, 4, 1]
     struct ggml_tensor* mask_list[4];
     for (int m = 0; m < num_mask_tokens; ++m) {
         // Extract token m: [D, 1, 1]
-        auto* tok = ggml_view_3d(ctx, mask_tokens_out, D, 1, 1,
+        auto* tok = ggml_view_3d(ctx, mask_tokens_out, D, 1, B,
                                  mask_tokens_out->nb[1], mask_tokens_out->nb[2],
                                  m * mask_tokens_out->nb[1]);
-        tok = ggml_cont(ctx, tok);  // [D, 1, 1]
+        tok = ggml_cont(ctx, tok);  // [D, 1, B]
 
         // MLP: 3 layers, 256→256→256→32, ReLU on first two
         auto* hyper = sam3_mlp_forward(ctx, tok,
                                        dec.hyper_w[m], dec.hyper_b[m], 3);
-        // hyper: [32, 1, 1]
+        // hyper: [32, 1, B]
 
         // Dot product: hyper^T @ up_flat → [1, 288*288, 1]
         // Use mul_mat: up_flat^T [288*288, 32] @ hyper [32, 1] → [288*288, 1, 1]
-        auto* mask = ggml_mul_mat(ctx, up_flat, hyper);  // [288*288, 1, 1]
+        auto* mask = ggml_mul_mat(ctx, up_flat, hyper);  // [H4*H4, 1, B]
         mask_list[m] = mask;
     }
 
-    // Stack masks: [288*288, 4, 1]
+    // Stack masks: [H4*H4, 4, B]
     auto* masks = mask_list[0];
     for (int m = 1; m < num_mask_tokens; ++m) {
         masks = ggml_concat(ctx, masks, mask_list[m], 1);
@@ -330,24 +369,24 @@ inline sam3_dec_result sam3_build_sam_dec_graph(
     ggml_set_name(masks, "sam_dec_masks");
 
     // ── IoU prediction ───────────────────────────────────────────────────
-    // iou_token_out: [D, 1, 1]
+    // iou_token_out: [D, 1, B]
     auto* iou_pred = sam3_mlp_forward(ctx, iou_token_out,
                                       dec.iou_head_w, dec.iou_head_b, 3,
                                       /*sigmoid_output=*/true);
-    // iou_pred: [4, 1, 1] → reshape to [4, 1]
-    iou_pred = ggml_reshape_2d(ctx, iou_pred, num_mask_tokens, 1);
+    // iou_pred: [4, 1, B]
+    iou_pred = ggml_reshape_3d(ctx, iou_pred, num_mask_tokens, 1, B);
     ggml_set_name(iou_pred, "sam_dec_iou");
 
     // ── Object score ─────────────────────────────────────────────────────
     struct ggml_tensor* obj_score;
     if (has_obj_score) {
-        // obj_in: [D, 1, 1] → MLP → [1, 1, 1]
+        // obj_in: [D, 1, B] → MLP → [1, 1, B]
         obj_score = sam3_mlp_forward(ctx, obj_in,
                                      dec.obj_head_w, dec.obj_head_b, 3);
-        obj_score = ggml_reshape_2d(ctx, obj_score, 1, 1);
+        obj_score = ggml_reshape_3d(ctx, obj_score, 1, 1, B);
     } else {
-        // No obj_score prediction — return raw logit 10.0 (sigmoid ≈ 1.0, object always present)
-        obj_score = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, 1);
+        // No obj_score prediction — return raw logit 10.0 (sigmoid ≈ 1.0, object always present).
+        obj_score = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 1, 1, B);
         ggml_set_name(obj_score, "sam_dec_obj_score");
         ggml_set_input(obj_score);
         // Mark that callers must set this to 10.0f before compute

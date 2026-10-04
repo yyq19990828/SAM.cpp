@@ -94,6 +94,7 @@ The current GGML modules are split by responsibility:
 | `backends/metal.hpp` | Metal discovery and initialization |
 | `runtime.hpp` | Driver selection, execution order and resource ownership |
 | `graph.hpp` | Shared scheduling, operation checks, transfers and execution statistics |
+| `workspace.hpp` | Reusable graph allocations, safe rebinding and internal diagnostics |
 
 Backend drivers use GGML's device registry. CPU and Metal use the shared SAM 3
 graphs; backend-specific precision and fallback rules remain in the runtime.
@@ -135,6 +136,16 @@ contracts, not backend storage policy. Other video-capable models may need
 different temporal state and should not inherit SAM 3's implementation by
 default. The [video session plan](plans/20261001-115321-sam3-text-video-tracking.md)
 records the SAM 3 state and task boundaries.
+
+SAM 3 tracking retains a bounded set of graph metadata and uses one shared
+workspace. Current-frame features have separate ownership so several objects
+can read them during propagation. Compatible objects use a batch dimension;
+workspace limits select smaller batches or serial conditioning and decoding.
+The backend arena and resident frame inputs are released at each frame boundary;
+cached graph metadata survives. Results remain owned host values. Model adapters
+define shape keys and temporal rules, while the common runtime manages allocation
+and synchronization. New adapters can reuse that runtime without inheriting
+SAM 3's shapes or state.
 
 ## Extension contracts
 

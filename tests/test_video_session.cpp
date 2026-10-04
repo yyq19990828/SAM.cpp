@@ -66,8 +66,12 @@ int main(int argc, char** argv) {
         rejects<std::runtime_error>([&] { first.set_text("wheel"); });
         require(first.stats().accepted_frames == 1 && first.stats().runtime.vision_encodes == 1,
                 "rejected video input changed counters or executed a graph");
+        const auto first_before_interleave = first.stats();
         const auto unrelated = second.push_frame(0, sam_example::image_view(negative));
         require(unrelated.size() == 1 && unrelated[0].objects.empty(), "independent negative video retained objects");
+        require(first.stats().accepted_frames == first_before_interleave.accepted_frames &&
+                first.stats().runtime.inferences == first_before_interleave.runtime.inferences,
+                "another session changed this session's progress");
         const auto expected = first.push_frame(1, sam_example::image_view(positive));
         require(expected.size() == 2 && !expected[0].objects.empty() &&
                 expected[0].objects[0].id == expected[1].objects[0].id, "video propagation lost its original object");
@@ -84,8 +88,13 @@ int main(int argc, char** argv) {
         require(first.push_frame(0, sam_example::image_view(positive)).empty(), "reset changed output delay");
         same_frames(first.push_frame(1, sam_example::image_view(positive)), expected);
         same_frames(expected, saved);
+        const auto first_after_replay = first.stats();
         second.reset(1); second.set_text("purple elephant");
         same_frames(second.push_frame(0, sam_example::image_view(negative)), unrelated);
+        require(first.stats().accepted_frames == first_after_replay.accepted_frames &&
+                first.stats().runtime.inferences == first_after_replay.runtime.inferences,
+                "resetting another session changed this session's progress");
+        same_frames(expected, saved);
         for (const auto* session : {&first, &second}) {
             const auto& stats = session->stats();
             require(stats.retained_records <= 27 * stats.active_objects && stats.pending_frames == 0,
@@ -97,7 +106,8 @@ int main(int argc, char** argv) {
         auto json = sam_example::output_file(options.output / "results.json");
         json << "{\"passed\":true,\"backend\":" << sam_example::json_string(sam_example::backend_name(info.backend))
              << ",\"precision\":" << sam_example::json_string(info.precision) << ",\"threads\":" << info.threads
-             << ",\"owned_results\":true,\"model_lifetime\":true,\"independent_sessions\":true,\"reset\":true}\n";
+             << ",\"owned_results\":true,\"model_lifetime\":true,\"independent_sessions\":true"
+             << ",\"session_progress_isolated\":true,\"post_reset_snapshot_stable\":true,\"reset\":true}\n";
         json.close(); output.complete();
         std::cout << "Video session behavior checks passed\n";
         return 0;

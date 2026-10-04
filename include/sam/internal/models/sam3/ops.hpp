@@ -85,6 +85,16 @@ inline ggml_tensor* sam3_conv_2d_s1_ph(ggml_context* ctx, ggml_tensor* kernel, g
 }
 
 inline ggml_tensor* sam3_deconv_2x2(ggml_context* ctx, ggml_tensor* w, ggml_tensor* x) {
+    if (x->ne[3] > 1) {
+        ggml_tensor* output = nullptr;
+        for (int64_t batch = 0; batch < x->ne[3]; ++batch) {
+            auto* slice = ggml_view_4d(ctx, x, x->ne[0], x->ne[1], x->ne[2], 1,
+                                       x->nb[1], x->nb[2], x->nb[3], batch * x->nb[3]);
+            auto* item = sam3_deconv_2x2(ctx, w, slice);
+            output = output ? ggml_concat(ctx, output, item, 3) : item;
+        }
+        return output;
+    }
     // Native F16 deconvolution also narrows activations. Non-overlapping 2x2
     // kernels are an exact matrix multiplication with F32 activations.
     const int64_t width = x->ne[0], height = x->ne[1], channels = w->ne[2];

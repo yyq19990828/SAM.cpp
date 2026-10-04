@@ -3,6 +3,7 @@
 
 #include "resources.hpp"
 #include "runtime.hpp"
+#include "workspace.hpp"
 #include "sam/types.hpp"
 #include "ggml.h"
 #include "ggml-backend.h"
@@ -19,22 +20,36 @@ namespace sam::internal {
 
 class GraphExecution {
 public:
-    GraphExecution(GgmlRuntime& runtime, std::size_t graph_size, RuntimeStats& stats)
+    GraphExecution(GgmlRuntime& runtime, std::size_t graph_size, RuntimeStats& stats,
+                   std::shared_ptr<GraphWorkspace> workspace = {})
         : graph_capacity_(expanded_graph_capacity(graph_size, runtime)),
-          context_(make_context(graph_capacity_ * 2, graph_capacity_)), runtime_(runtime), stats_(stats) {
+          context_(make_context(graph_capacity_ * 2, graph_capacity_)), runtime_(runtime), stats_(stats),
+          workspace_(workspace ? std::move(workspace) : std::make_shared<GraphWorkspace>(runtime, graph_capacity_)) {
+        if (&workspace_->runtime() != &runtime_)
+            throw std::invalid_argument("SAM graph workspace belongs to another runtime");
         graph_ = ggml_new_graph_custom(context_.get(), graph_capacity_, false);
-        auto backends = runtime_.backends();
-        scheduler_.reset(ggml_backend_sched_new(backends.data(), nullptr, static_cast<int>(backends.size()),
-                                              static_cast<int>(graph_capacity_), false, true));
-        if (!scheduler_) throw std::runtime_error("failed to create GGML scheduler");
+        workspace_->record_build();
     }
+    ~GraphExecution() { workspace_->discard(context_.get()); }
     ggml_context* context() const { return context_.get(); }
     void output(ggml_tensor* tensor) {
+        if (graph_validated_) throw std::runtime_error("cannot extend an allocated SAM graph");
         ggml_set_output(tensor);
         roots_.push_back(tensor);
         ggml_build_forward_expand(graph_, tensor);
     }
     void allocate() {
+        prepare();
+        workspace_->bind(context_.get(), graph_);
+    }
+    std::size_t required_workspace_bytes() {
+        prepare();
+        return workspace_->required_bytes(context_.get(), graph_);
+    }
+    const GraphDiagnostics& diagnostics() const { return workspace_->diagnostics(); }
+private:
+    void prepare() {
+        if (graph_validated_) return;
         prepare_quantized_cpu_matmuls();
         // The scheduler asserts when no backend accepts a node. Check first so
         // incompatible operators remain a runtime error at the library boundary.
@@ -55,25 +70,22 @@ public:
                 throw std::runtime_error(message);
             }
         }
-        if (!ggml_backend_sched_alloc_graph(scheduler_.get(), graph_))
-            throw std::runtime_error("failed to allocate SAM graph");
+        graph_validated_ = true;
     }
+public:
     void compute() {
-        if (ggml_backend_sched_graph_compute(scheduler_.get(), graph_) != GGML_STATUS_SUCCESS)
-            throw std::runtime_error("SAM graph execution failed");
+        workspace_->compute(context_.get(), graph_);
         for (int i = 0; i < ggml_graph_n_nodes(graph_); ++i) {
             auto* tensor = ggml_graph_node(graph_, i);
             if (tensor->op == GGML_OP_NONE || tensor->op == GGML_OP_VIEW || tensor->op == GGML_OP_RESHAPE ||
                 tensor->op == GGML_OP_PERMUTE || tensor->op == GGML_OP_TRANSPOSE) continue;
-            auto* backend = ggml_backend_sched_get_tensor_backend(scheduler_.get(), tensor);
+            auto* backend = ggml_backend_sched_get_tensor_backend(workspace_->scheduler(), tensor);
             runtime_.record_node(backend, stats_);
             if (runtime_.quantized_native_metal_only() && backend != runtime_.weights_backend())
                 throw std::runtime_error("quantized Metal graph attempted CPU fallback");
         }
-        stats_.graph_partitions += ggml_backend_sched_get_n_splits(scheduler_.get());
-        std::size_t bytes = 0;
-        for (auto* backend : runtime_.backends()) bytes += ggml_backend_sched_get_buffer_size(scheduler_.get(), backend);
-        stats_.compute_buffer_bytes = std::max(stats_.compute_buffer_bytes, bytes);
+        stats_.graph_partitions += ggml_backend_sched_get_n_splits(workspace_->scheduler());
+        stats_.compute_buffer_bytes = std::max(stats_.compute_buffer_bytes, workspace_->buffer_bytes());
     }
 private:
     static std::size_t expanded_graph_capacity(std::size_t graph_size, const GgmlRuntime& runtime) {
@@ -117,12 +129,13 @@ private:
 
     std::size_t graph_capacity_ = 0;
     ContextPtr context_;
-    SchedulerPtr scheduler_;
     GgmlRuntime& runtime_;
     RuntimeStats& stats_;
+    std::shared_ptr<GraphWorkspace> workspace_;
     ggml_cgraph* graph_ = nullptr;
     std::vector<ggml_tensor*> roots_;
     bool graph_prepared_ = false;
+    bool graph_validated_ = false;
 };
 
 inline ggml_tensor* input_tensor(ggml_context* ctx, const char* name,

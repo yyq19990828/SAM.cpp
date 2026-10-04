@@ -15,6 +15,7 @@ No releases have been published.
 - Model/backend extension boundaries for additional SAM variants and composed segmentation pipelines.
 - Bilingual visual image examples comparing F32, mixed F16/F32 and all four vision quantization profiles on CPU and Metal, with a 0.2 detection threshold and mask difference views.
 - SAM 3 image weight quantization by vision, text, fusion and decoder components, with schema-4 full/custom profiles, per-tensor storage explanations and runtime component reporting. Biases, normalization, embeddings, convolutions and explicit small-weight exceptions retain F32.
+- SAM 3 tracker graph caches and shared workspaces, current-frame feature residency, and compatible-object propagation batches with bounded memory and serial fallback.
 
 ### Changed
 
