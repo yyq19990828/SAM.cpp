@@ -117,34 +117,34 @@ inline struct ggml_tensor* sam3_apply_rope(struct ggml_context* ctx,
     const int64_t nheads_B = x->ne[2];  // num_heads * batch
     const int64_t half = head_dim / 2;  // 32
 
-    // Reshape x to [2, half, N, nheads_B] to expose (real, imag) pairs
+    // Pack real/imag channel vectors before arithmetic. Keeping the pair axis
+    // first creates width-one binary ops (millions of single-thread Metal
+    // workgroups); the planar layout also gives CPU kernels contiguous channels.
     auto* x_pairs = ggml_reshape_4d(ctx, x, 2, half, N, nheads_B);
+    auto* planar = ggml_cont(ctx, ggml_permute(ctx, x_pairs, 1, 0, 2, 3));
 
-    // freqs_cis: [2, 32, N] → [2, half, N, 1] for broadcast
     auto* fc = ggml_reshape_4d(ctx, freqs_cis, 2, half, N, 1);
+    fc = ggml_cont(ctx, ggml_permute(ctx, fc, 1, 0, 2, 3));
 
-    // Extract cos (offset 0) and sin (offset 1) from dim0.
-    // fc is [2, half, N, 1] — to slice dim0 we keep strides of dims 1,2,3
-    // as nb1,nb2,nb3 of the view, so the view walks over (half, N, 1) correctly.
-    auto* cos_f = ggml_view_4d(ctx, fc, 1, half, N, 1,
+    // Frequencies are [half, 1, N, 1], broadcasting over the input's head/batch axis.
+    auto* cos_f = ggml_view_4d(ctx, fc, half, 1, N, 1,
                                fc->nb[1], fc->nb[2], fc->nb[3], 0);
-    auto* sin_f = ggml_view_4d(ctx, fc, 1, half, N, 1,
-                               fc->nb[1], fc->nb[2], fc->nb[3], fc->nb[0]);
+    auto* sin_f = ggml_view_4d(ctx, fc, half, 1, N, 1,
+                               fc->nb[1], fc->nb[2], fc->nb[3], fc->nb[1]);
 
-    // Extract x_re (offset 0) and x_im (offset 1) from dim0.
-    // x_pairs is [2, half, N, nheads_B] — same slicing logic.
-    auto* x_re = ggml_view_4d(ctx, x_pairs, 1, half, N, nheads_B,
-                              x_pairs->nb[1], x_pairs->nb[2], x_pairs->nb[3], 0);
-    auto* x_im = ggml_view_4d(ctx, x_pairs, 1, half, N, nheads_B,
-                              x_pairs->nb[1], x_pairs->nb[2], x_pairs->nb[3], x_pairs->nb[0]);
+    auto* x_re = ggml_view_4d(ctx, planar, half, 1, N, nheads_B,
+                              planar->nb[1], planar->nb[2], planar->nb[3], 0);
+    auto* x_im = ggml_view_4d(ctx, planar, half, 1, N, nheads_B,
+                              planar->nb[1], planar->nb[2], planar->nb[3], planar->nb[1]);
 
     // Complex multiply: (x_re + j*x_im) * (cos + j*sin)
     auto* out_re = ggml_sub(ctx, ggml_mul(ctx, x_re, cos_f), ggml_mul(ctx, x_im, sin_f));
     auto* out_im = ggml_add(ctx, ggml_mul(ctx, x_re, sin_f), ggml_mul(ctx, x_im, cos_f));
 
-    // Interleave back: [2, half, N, nheads_B]
-    auto* out = ggml_concat(ctx, out_re, out_im, 0);
-    return ggml_reshape_3d(ctx, ggml_cont(ctx, out), head_dim, N, nheads_B);
+    // Restore adjacent real/imag pairs and the original token/head layout.
+    auto* out = ggml_concat(ctx, out_re, out_im, 1);
+    out = ggml_cont(ctx, ggml_permute(ctx, out, 1, 0, 2, 3));
+    return ggml_reshape_3d(ctx, out, head_dim, N, nheads_B);
 }
 
 // Single ViT block forward: pre-norm → attn (window or global, with RoPE) → residual → pre-norm → MLP → residual

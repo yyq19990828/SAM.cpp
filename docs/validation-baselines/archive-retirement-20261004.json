@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "kind": "historical-byte-archive-retirement",
+  "status": "retired-to-metadata-only",
+  "date": "2026-10-04",
+  "reason": "Explicit user-requested deep cleanup of obsolete project artifacts",
+  "current_evidence": "build/pipeline-optimization/20261004/v8",
+  "current_production_commit": "434cdb52b8bfcee1a8c483366234e1cef461c7c7",
+  "original_acceptance_indexes_unchanged": true,
+  "full_historical_bundle_verification_available": false,
+  "retired_archives": [
+    {
+      "original_manifest": "models/validation-baselines/blas-vit-m4pro-20261003/bundle/archive.json",
+      "original_manifest_sha256": "1878684d18433cbf0d6a9a78579accc5fb1e77699633c8b772bd03b4660810b9",
+      "metadata_destination": "models/validation-baselines/retired/blas-vit-m4pro-20261003",
+      "full_bundle_available": false,
+      "retained_logical_bytes": 50692176,
+      "removed_payload_logical_bytes": 43282971525
+    },
+    {
+      "original_manifest": "models/validation-baselines/m2-m4pro-20261003/bundle/archive.json",
+      "original_manifest_sha256": "a77d8710137c0653e7405be1bb44f514c11ea26341e024155660890e85c26239",
+      "metadata_destination": "models/validation-baselines/retired/m2-m4pro-20261003",
+      "full_bundle_available": false,
+      "retained_logical_bytes": 80884552,
+      "removed_payload_logical_bytes": 85913757202
+    },
+    {
+      "original_manifest": "models/validation-baselines/quantized-image-m4pro-20261003/bundle/archive.json",
+      "original_manifest_sha256": "6fe532f5e7921c9cd7250e1952012966e270150ee7302a55c25bd13394f4edc8",
+      "metadata_destination": "models/validation-baselines/retired/quantized-image-m4pro-20261003",
+      "full_bundle_available": false,
+      "retained_logical_bytes": 71797896,
+      "removed_payload_logical_bytes": 38055443330
+    },
+    {
+      "original_manifest": "models/validation-baselines/quantized-image-output-m4pro-20261003/bundle/archive.json",
+      "original_manifest_sha256": "ce7bd55a70f8018c05ec2e899ff4405f71e7697113c82a4ef6bb160ffd254f31",
+      "metadata_destination": "models/validation-baselines/retired/quantized-image-output-m4pro-20261003",
+      "full_bundle_available": false,
+      "retained_logical_bytes": 93385029,
+      "removed_payload_logical_bytes": 36638136383
+    },
+    {
+      "original_manifest": "models/validation-baselines/quantized-image-performance-m4pro-20261003/bundle/archive.json",
+      "original_manifest_sha256": "ceebaa60464db07f1d4f5ed13a599bd2f5347beded8eb4acfdf896f2f2342970",
+      "metadata_destination": "models/validation-baselines/retired/quantized-image-performance-m4pro-20261003",
+      "full_bundle_available": false,
+      "retained_logical_bytes": 87680297,
+      "removed_payload_logical_bytes": 17394509779
+    }
+  ],
+  "official_video_reference": {
+    "source": "models/validation-baselines/m2-m4pro-20261003/bundle/data/00-sam-video-20261002-133548/reference-full",
+    "destination": "models/reference/official-sam3-video-20261004-174839",
+    "files": 1267,
+    "bytes": 6877944165
+  },
+  "cleanup_ledger": "build/deep-cleanup-20261004-174839.json",
+  "source_plan": "docs/plans/20261004-174839-deep-local-artifact-cleanup.md",
+  "project_temp_cleanup": {
+    "scope": [
+      "/private/tmp/sam-video-20261002-133548",
+      "/private/tmp/sam-video-20261002-182848"
+    ],
+    "protected_reference": "/private/tmp/sam-video-20261002-133548/reference-full",
+    "reference_manifest_sha256": "00e51649947020c3cab441f35b70ff69df6ff4c88fff9041f40cfee9ce2e4d46",
+    "removed_files": 9568,
+    "removed_logical_bytes": 60925712739,
+    "retained_metadata_source_files": 9793,
+    "complete": true
+  }
+}

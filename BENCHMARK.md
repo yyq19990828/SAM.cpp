@@ -2,97 +2,95 @@
 
 [中文](BENCHMARK_zh.md) · [Models and precision](MODEL_ZOO.md)
 
-Measurements dated 2026-10-04 describe the currently implemented SAM 3 adapter
-on the configuration below. Other models and platforms will have separate
-result tables as they are added. Weight precision names storage; computation
-and state formats follow the model/backend precision policy.
+This page contains the latest complete measurements for the validated model
+configurations. SAM 3 is the current adapter; additional models and platforms
+will have their own tables when validated. Results apply to the stated workload
+and hardware. Weight labels describe storage; computation and state follow the
+model/backend precision policy.
+
+## Measurement environment
+
+Apple M4 Pro, 14 CPU cores, 20 GPU cores, 48 GiB memory; macOS 27.0;
+Release AppleClang 21.0.0; patched GGML 0.25.3. All cells ran sequentially on
+AC power. CPU requests four threads with `VECLIB_MAXIMUM_THREADS=4`;
+Accelerate manages its own SGEMM threading. CPU/BLAS enables Accelerate,
+native CPU disables BLAS/Accelerate, and Metal uses default execution settings.
+All weights are GGUF exports of the official SAM 3 `sam3.pt` checkpoint.
 
 ## SAM 3 text-prompted image segmentation
 
-Environment: Apple M4 Pro, 14 CPU cores, 20 GPU cores, 48 GiB memory; macOS 27.0;
-Release AppleClang 21.0.0; patched GGML 0.25.3. CPU requests four threads and
-`VECLIB_MAXIMUM_THREADS=4`; Accelerate manages its own SGEMM threading. Native
-CPU disables BLAS and Accelerate. Measurements ran sequentially on AC power.
+Measured: 2026-10-04, Asia/Shanghai. Ten weight configurations across three
+backends; each passed original-reference output-quality checks.
 
-Weights are image GGUF exports of the official SAM 3 `sam3.pt` checkpoint.
+Input: 1800 × 1200 RGB PPM, prompt `truck`, score threshold 0.5, model input
+1008 × 1008. Each process runs one cold call and five uncached full-image calls
+with image replacement. The table reports their warm median; cache replays are
+excluded. Latency includes image/text encoding and segmentation, and excludes
+model loading, decoding and file output. Peak RSS covers the whole process,
+including startup and the cold call. GB is decimal (`10^9` bytes).
 
-Input: 1800 × 1200 RGB PPM, prompt `truck`, threshold 0.5, model input
-1008 × 1008. One warmup, then five full-image calls with image replacement.
-The table reports median latency and whole-process peak RSS, in seconds and
-decimal GB. Latency excludes model loading, decoding and file output; RSS
-includes loading and final mask output. Result-cache hits are timed separately
-and excluded from these medians.
+Each backend cell shows **inference seconds / peak RSS GB**.
 
-| SAM 3 weights | CPU/BLAS time / peak RSS | Native CPU time / peak RSS | Metal time / peak RSS |
-| --- | ---: | ---: | ---: |
-| F32 | 7.321 / 5.049 | 39.598 / 5.025 | 5.401 / 4.363 |
-| Mixed F16/F32 | 7.352 / 5.060 | 39.500 / 5.028 | 5.408 / 2.787 |
-| Vision Q8_0 | 7.410 / 3.964 | 39.597 / 3.953 | 5.363 / 3.054 |
-| Vision Q6_K | 7.379 / 3.899 | 39.625 / 3.855 | 5.388 / 2.984 |
-| Vision Q5_K | 7.402 / 3.873 | 39.600 / 3.820 | 5.417 / 2.944 |
-| Vision Q4_K | 7.435 / 3.825 | 39.695 / 3.785 | 5.381 / 2.910 |
-| Full-component Q8_0 | 7.383 / 3.015 | 39.610 / 2.981 | 5.360 / 2.081 |
-| Full-component Q6_K | 7.407 / 2.853 | 39.660 / 2.835 | 5.392 / 1.929 |
-| Full-component Q5_K | 7.427 / 2.770 | 39.668 / 2.773 | 5.420 / 1.850 |
-| Full-component Q4_K | 7.431 / 2.698 | 39.754 / 2.672 | 5.386 / 1.770 |
+| SAM 3 image weights | GGUF, GB | CPU/BLAS, s / GB | Native CPU, s / GB | Metal, s / GB |
+| --- | ---: | ---: | ---: | ---: |
+| F32 | 3.371 | 7.060 / 5.023 | 39.128 / 5.045 | 2.707 / 4.364 |
+| Mixed F16/F32 | 1.798 | 6.911 / 5.070 | 39.121 / 5.027 | 2.669 / 2.787 |
+| Vision Q8_0 | 2.065 | 6.980 / 3.967 | 39.349 / 3.927 | 2.615 / 3.054 |
+| Full-component Q8_0 | 1.097 | 6.991 / 3.003 | 39.357 / 2.985 | 2.611 / 2.079 |
+| Vision Q6_K | 1.995 | 6.956 / 3.895 | 39.444 / 3.857 | 2.640 / 2.985 |
+| Full-component Q6_K | 0.947 | 6.995 / 2.873 | 39.434 / 2.830 | 2.626 / 1.929 |
+| Vision Q5_K | 1.957 | 6.954 / 3.875 | 39.378 / 3.815 | 2.640 / 2.946 |
+| Full-component Q5_K | 0.864 | 7.028 / 2.772 | 39.358 / 2.751 | 2.644 / 1.851 |
+| Vision Q4_K | 1.920 | 6.966 / 3.864 | 39.322 / 3.785 | 2.613 / 2.909 |
+| Full-component Q4_K | 0.787 | 7.086 / 2.715 | 39.356 / 2.674 | 2.671 / 1.775 |
 
-Vision presets quantize eligible ViT linear weights. Full-component presets
-also cover eligible text, fusion and decoder linears; embeddings, convolutions,
-biases, normalization and designated small weights retain F32. See
-[quantized model use](docs/quantization.md) for exact profile scope.
+Vision presets quantize eligible vision encoder linear weights. Full-component
+presets also cover text, fusion and decoder linears. Embeddings, convolutions,
+biases, normalization and designated small weights retain F32. CPU keeps
+quantized weights compressed and uses temporary F32 matrices for operations.
+See [quantized model use](docs/quantization.md) for precision and scope.
 
-Quantization lowers peak RSS relative to F32 in this workload, while warmed
-latency remains similar. CPU promotes F16 weights to F32 and uses temporary
-F32 matrix weights for quantized operations; its memory use therefore does not
-track GGUF size directly. Metal F16 uses less memory than the vision-quantized
-models here. These five-call samples do not establish a general speedup or
-accuracy on other inputs.
+## SAM 3 forward text-prompted video tracking
 
-## SAM 3 tracker propagation
+Measured: 2026-10-05, Asia/Shanghai. F32 and hybrid
+`visual-tracker-f32-v1` video weights on CPU/BLAS and Metal, following
+original-reference qualification for each model/backend pair.
 
-F32 and hybrid video exports of the same checkpoint use the same configuration
-to compare the previous execution pipeline with graph
-reuse, shared frame features and compatible-object batching. This real-weight
-synthetic fixture has six spatial memories and sixteen pointers per object.
-It measures memory conditioning and mask decoding, excluding frame encoding,
-detection, external fixture generation, model loading and file output. Memory
-and pointer preparation inside each tracker call remains included. These are
-tracker-stage timings; complete video-frame latency must be measured separately.
+Each cell processes a fixed 64-frame sequence of 1800 × 1200 RGB PNGs,
+with prompt `truck`, one or four persistent objects, and an eight-object limit.
+Model input is 1008 × 1008. The first 16 frames are warmup; statistics use the
+remaining 48 frames. P95 uses linear interpolation at `(n-1)*0.95`.
 
-Each cell uses one baseline/updated/baseline process sequence (A1/B/A2), with
-a cold call followed by five matched warm calls in each process. Baseline time
-is the median of the five matched A1/A2 averages; updated time is the B median.
-RSS is the whole-process peak, including setup and the cold call. Units are
-seconds and decimal GB. The four-object RSS column shows A1/A2 → B.
+Per-frame latency covers preprocessing, frame encoding, detection, tracking,
+mask/result preparation and internal transfers/allocations inside
+`VideoSession::push_frame`. Model loading, external PNG decoding and file output
+are excluded. The existing 14-frame output delay is separate from processing
+latency; the final output drain is included in the measured samples. Peak RSS
+covers the whole process, including loading and file output. Units are seconds
+per frame and decimal GB.
 
-| Backend | Weights | 1 object, before → after | 4 objects, before → after | 4-object peak RSS, before → after |
-| --- | --- | ---: | ---: | ---: |
-| CPU/BLAS | F32 | 1.079 → 1.067 | 4.318 → 4.239 | 4.241/4.255 → 4.242 |
-| CPU/BLAS | Hybrid | 1.078 → 1.059 | 4.337 → 4.243 | 4.240/4.242 → 4.258 |
-| Native CPU | F32 | 7.203 → 7.199 | 28.736 → 29.079 | 4.255/4.248 → 4.187 |
-| Native CPU | Hybrid | 7.215 → 7.160 | 28.880 → 28.587 | 4.245/4.255 → 4.194 |
-| Metal | F32 | 0.960 → 0.946 | 3.849 → 3.119 | 4.571/4.576 → 4.233 |
-| Metal | Hybrid | 0.959 → 0.945 | 3.850 → 3.116 | 3.881/3.876 → 3.541 |
-
-Metal four-object propagation latency fell by about 19% for both F32 and hybrid,
-with lower process peak RSS and identical outputs in this comparison. CPU
-results changed by only a few percent and do not establish an acceleration
-benefit. The small sample count and this fixture's memory shape limit the claim
-to the measured workload. The existing F32/hybrid precision and temporal
-output policy are preserved.
+| Video weights | GGUF, GB | Backend | Objects | Median, s/frame | P95, s/frame | Peak RSS, GB |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| F32 | 3.449 | CPU/BLAS | 1 | 8.852 | 9.023 | 5.397 |
+| F32 | 3.449 | CPU/BLAS | 4 | 13.503 | 14.573 | 5.480 |
+| F32 | 3.449 | Metal | 1 | 4.224 | 4.298 | 4.682 |
+| F32 | 3.449 | Metal | 4 | 7.914 | 8.160 | 4.795 |
+| Hybrid | 2.765 | CPU/BLAS | 1 | 8.838 | 9.063 | 5.415 |
+| Hybrid | 2.765 | CPU/BLAS | 4 | 13.463 | 14.249 | 5.390 |
+| Hybrid | 2.765 | Metal | 1 | 4.246 | 4.368 | 3.989 |
+| Hybrid | 2.765 | Metal | 4 | 7.967 | 8.179 | 4.087 |
 
 ## Measure your workload
 
 Use a Release build and fix decoded pixels, model, backend, thread request and
 power conditions. The image CLI's `--repeat` reports full-image calls and cache
-hits separately. For video generation, original-reference comparison and
-complete-video timing commands, see [model verification](docs/validation.md).
+hits separately. Video fixture generation, original-reference comparison and
+complete-video timing commands are in [model verification](docs/validation.md).
 
 Runtime weight/compute buffers describe allocations; process RSS describes
-resident process memory. Do not add the two measurements together. Stage
-medians also cannot be added to reconstruct the total median.
+resident memory. Do not add them together. Stage medians cannot be added to
+reconstruct the total median. Application inputs need their own quality and
+performance checks.
 
-The [implementation and measurement plan](docs/plans/20261004-040240-sam3-pipeline-execution-and-unified-benchmarks.md) retains experimental
-procedures, complete stage/boundary results and machine-readable evidence.
-Earlier full-video measurements remain in the
-[previous profiling plan](docs/plans/20261003-134534-visual-encoding-profile-and-optimization.md#english-profiling-record).
+Measurement receipts, qualification details and historical records are retained
+in the [complete performance measurement plan](docs/plans/20261004-214547-latest-complete-model-performance-records.md).

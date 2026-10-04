@@ -25,7 +25,10 @@ No releases have been published.
 - Public facades delegate to model adapters; backend modules own device initialization, storage policy, and accounting. Private implementation headers use `sam::internal` and unique include guards.
 - Dependency preparation pins GGML 0.25.3, checks supplied source/patch identity, and leaves caller checkouts untouched.
 - User documentation focuses on integration, supported configurations, and concise performance tables. Experiment history lives in the corresponding plans.
+- Bilingual performance pages list complete current model measurements; historical results and optimization comparisons remain in implementation plans.
+- Validation provenance records identify retired historical payloads and retained original references.
 - Quantized model acceptance uses final segmentation quality, with intermediate tensor errors reported separately for reference.
+- SAM 3 vision rotary embeddings use contiguous channel vectors to reduce CPU/BLAS and Metal image inference latency while preserving weight and arithmetic precision.
 
 ### Fixed
 

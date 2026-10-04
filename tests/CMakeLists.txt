@@ -50,6 +50,13 @@ add_executable(test_graph test_graph.cpp)
 target_link_libraries(test_graph PRIVATE sam::sam)
 add_test(NAME sam_graph COMMAND test_graph)
 
+add_executable(test_rope test_rope.cpp)
+target_link_libraries(test_rope PRIVATE sam::sam)
+add_test(NAME sam_rope COMMAND test_rope cpu)
+if(GGML_METAL)
+    add_test(NAME sam_rope_metal COMMAND test_rope metal)
+endif()
+
 add_executable(test_graph_workspace test_graph_workspace.cpp)
 target_link_libraries(test_graph_workspace PRIVATE sam::sam)
 add_test(NAME sam_graph_workspace COMMAND test_graph_workspace)

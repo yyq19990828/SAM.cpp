@@ -704,6 +704,43 @@ The source snapshot is
 `7822d01ad3750f245830a70377ecec53ee5ef483ff32785ac496e9e353c321ab`;
 candidate inventory SHA-256 is
 `ccbe9813ddb09cb5d272c08c396e054233c4dc9c0869aea0529328a6df9dfbf4`.
+
+The following complete v8 image snapshot was published in the bilingual
+benchmark guides before the later
+[vision RoPE layout change](20261004-182716-sam3-rope-vector-layout-optimization.md).
+It belongs to the executable identified above; later measurements must not
+replace individual cells in this historical snapshot. Values are warm median
+seconds / whole-process peak RSS in decimal GB.
+
+| SAM 3 weights | CPU/BLAS | Native CPU | Metal |
+| --- | ---: | ---: | ---: |
+| F32 | 7.321 / 5.049 | 39.598 / 5.025 | 5.401 / 4.363 |
+| Mixed F16/F32 | 7.352 / 5.060 | 39.500 / 5.028 | 5.408 / 2.787 |
+| Vision Q8_0 | 7.410 / 3.964 | 39.597 / 3.953 | 5.363 / 3.054 |
+| Vision Q6_K | 7.379 / 3.899 | 39.625 / 3.855 | 5.388 / 2.984 |
+| Vision Q5_K | 7.402 / 3.873 | 39.600 / 3.820 | 5.417 / 2.944 |
+| Vision Q4_K | 7.435 / 3.825 | 39.695 / 3.785 | 5.381 / 2.910 |
+| Full-component Q8_0 | 7.383 / 3.015 | 39.610 / 2.981 | 5.360 / 2.081 |
+| Full-component Q6_K | 7.407 / 2.853 | 39.660 / 2.835 | 5.392 / 1.929 |
+| Full-component Q5_K | 7.427 / 2.770 | 39.668 / 2.773 | 5.420 / 1.850 |
+| Full-component Q4_K | 7.431 / 2.698 | 39.754 / 2.672 | 5.386 / 1.770 |
+
+The following v8 tracker-stage table was also published in the bilingual user
+guides. It is retained here when those pages are changed to complete current
+model results. This is the S6/P16 real-weight synthetic propagation fixture,
+excluding vision/frame encoding and detection. Times are warm median seconds;
+four-object peak RSS is decimal GB. Before/after and A1/A2 identities belong
+to the v8 receipts described above, not a later whole-video measurement.
+
+| Backend | Weights | 1 object, before / after | 4 objects, before / after | 4-object peak RSS, A1 / A2 / B |
+| --- | --- | ---: | ---: | ---: |
+| CPU/BLAS | F32 | 1.079 / 1.067 | 4.318 / 4.239 | 4.241 / 4.255 / 4.242 |
+| CPU/BLAS | Hybrid | 1.078 / 1.059 | 4.337 / 4.243 | 4.240 / 4.242 / 4.258 |
+| Native CPU | F32 | 7.203 / 7.199 | 28.736 / 29.079 | 4.255 / 4.248 / 4.187 |
+| Native CPU | Hybrid | 7.215 / 7.160 | 28.880 / 28.587 | 4.245 / 4.255 / 4.194 |
+| Metal | F32 | 0.960 / 0.946 | 3.849 / 3.119 | 4.571 / 4.576 / 4.233 |
+| Metal | Hybrid | 0.959 / 0.945 | 3.850 / 3.116 | 3.881 / 3.876 / 3.541 |
+
 All paths in the table below are relative to
 `build/pipeline-optimization/20261004/`.
 
