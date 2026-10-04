@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mac Metal Profiling"
+  short_description: "Profile Mac CPU and Metal workloads with Apple tools"
+  default_prompt: "Use $mac-metal-profiling to locate CPU and Metal bottlenecks and verify an optimization on this Mac."
