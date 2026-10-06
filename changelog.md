@@ -36,6 +36,7 @@ No releases have been published.
 
 ### Fixed
 
+- Replace broken links to unavailable historical performance receipts with archive path records, preserving their original hashes.
 - Keep shared video workspaces within their serial memory budget when graph stages grow device and host arenas in opposite directions.
 - Preserve CUDA position-cache placement when preparing original-model reference sources.
 - Make image antialias preprocessing match the original float resize path across compilers, including byte-rounding boundaries.

@@ -59,6 +59,16 @@ Keep immutable raw evidence unchanged; disclose any reused current cells and
 their exact source/protocol identity here. Dates/times use Asia/Shanghai and
 must reflect actual captures if the run crosses midnight.
 
+## Local evidence availability (2026-10-07)
+
+The ten historical report files recorded as archive paths below were generated
+under the Git-ignored `build/rope-optimization/20261004/` directory and are not
+available in this working copy. Their original paths, SHA-256 records and
+measurement results are retained; full byte/hash verification of those reports
+is unavailable here. No replacement evidence has been generated. The broken
+links were changed to archive path records; see the
+[link repair plan](20261007-012831-historical-document-links.md).
+
 ## Results
 
 The preceding RoPE source has
@@ -74,12 +84,12 @@ Together with the retained current CPU/BLAS and Metal qualification, the image
 matrix has 210 passing original-reference cases. Source, arithmetic profiles,
 models, references, executable and library identities remained unchanged.
 
-- [Native qualification summary](../../build/rope-optimization/20261004/native-image-qualification-summary-v1.json), SHA256 `0526653cccf836a7e1eba657bda175075d7c146cee11fab08a50f7046c070b0e`.
-- [Merged image qualification index](../../build/rope-optimization/20261004/candidate-image-qualification-index-v1.json), SHA256 `ee234f2df95be7f9f60fc916395f7814706e679ccced6f24997c7f60010159d9`.
-- [Measurement preflight](../../build/rope-optimization/20261004/candidate-image-performance-preflight-v1.json), SHA256 `7bb1db3251950e0384e42f364b2d1a5f54f13ba26060c71206ed5024b213170f`.
+- Native qualification summary: archive path `../../build/rope-optimization/20261004/native-image-qualification-summary-v1.json`, SHA256 `0526653cccf836a7e1eba657bda175075d7c146cee11fab08a50f7046c070b0e`.
+- Merged image qualification index: archive path `../../build/rope-optimization/20261004/candidate-image-qualification-index-v1.json`, SHA256 `ee234f2df95be7f9f60fc916395f7814706e679ccced6f24997c7f60010159d9`.
+- Measurement preflight: archive path `../../build/rope-optimization/20261004/candidate-image-performance-preflight-v1.json`, SHA256 `7bb1db3251950e0384e42f364b2d1a5f54f13ba26060c71206ed5024b213170f`.
 - Frozen ignored runner `build/rope-optimization/20261004/run_latest_image_matrix_candidate_v1.py`, SHA256 `35a65a2607c8419a8facad2ebf7a5e818ba7116a375d946fb6f3e2ef56d48671`.
-- [Complete image summary](../../build/rope-optimization/20261004/candidate-image-performance-summary-v1.json), SHA256 `807db07c23b8c2cef714fb8d4b262e2a5d04e795148f246777806b23672ea42b`.
-- [Immutable raw image report](../../build/rope-optimization/20261004/current-image-performance-v2/report.json), SHA256 `0f03148a7465d870a224e50a347c13f6e8cca2fbf22db9885fe1c1349875e1f0`.
+- Complete image summary: archive path `../../build/rope-optimization/20261004/candidate-image-performance-summary-v1.json`, SHA256 `807db07c23b8c2cef714fb8d4b262e2a5d04e795148f246777806b23672ea42b`.
+- Immutable raw image report: archive path `../../build/rope-optimization/20261004/current-image-performance-v2/report.json`, SHA256 `0f03148a7465d870a224e50a347c13f6e8cca2fbf22db9885fe1c1349875e1f0`.
 
 The complete matrix passed 30/30 cells: 26 fresh cells and four verified current
 candidate B arms. Reuse covers F32 and full Q4_K on CPU/BLAS and Metal, captured
@@ -130,7 +140,7 @@ Original inference was not rerun and `eligible_for_milestone` remains false.
 The helper changes concern performance profile acceptance/documentation, not
 the original oracle or fixture qualification logic. No production gate changed.
 
-[Rebinding report](../../build/rope-optimization/20261004/video-fixture-rebinding-v1/qualification-rebinding-report-v1.json),
+Rebinding report: archive path `../../build/rope-optimization/20261004/video-fixture-rebinding-v1/qualification-rebinding-report-v1.json`,
 SHA256 `d894489d8cce47134f92f0a9c2c3a356f8badb502575f9343aa0c20ad7b6bf99`,
 records both parent/derived hashes and the verified scope. An initial ignored
 derivation preflight incorrectly required milestone eligibility for the fixture
@@ -167,8 +177,8 @@ and no production source, precision policy or acceptance gate was changed.
 The v2 no-model preflight passed on 2026-10-05 at 00:05 Asia/Shanghai.
 
 - Frozen ignored runner `build/rope-optimization/20261004/run_video_latest_performance_v2.py`, SHA256 `9a67e4be12db07805965088b2d4c3b3344c23289d85b4d7aeec5429ba8011d36`.
-- [Video qualification index v2](../../build/rope-optimization/20261004/candidate-video-qualification-index-v2.json), SHA256 `a48810dd2f20b3e18c8b14fdd6229ca0f77b16772fa4d947e82554df0c8e3466`.
-- [Video performance preflight v2](../../build/rope-optimization/20261004/candidate-video-performance-preflight-v2.json), SHA256 `2c9c55b7da0d35df05bbabdb5d121f25b73b821cc5bda29643717a753e729ab2`.
+- Video qualification index v2: archive path `../../build/rope-optimization/20261004/candidate-video-qualification-index-v2.json`, SHA256 `a48810dd2f20b3e18c8b14fdd6229ca0f77b16772fa4d947e82554df0c8e3466`.
+- Video performance preflight v2: archive path `../../build/rope-optimization/20261004/candidate-video-performance-preflight-v2.json`, SHA256 `2c9c55b7da0d35df05bbabdb5d121f25b73b821cc5bda29643717a753e729ab2`.
 
 The frozen index contains 131 source/qualification/build paths; execution adds
 the driver, preflight and merged index, for 134 fresh paths per before/after
@@ -196,8 +206,8 @@ nonempty masks, placement, encode counts, output delay/drain and allocation
 plateau. These performance workload checks are separate from the full original
 864-frame numerical acceptance and do not replace its oracle.
 
-- [Complete video summary](../../build/rope-optimization/20261004/candidate-video-performance-summary-v2.json), SHA256 `321611afba18291b4bb03d84bb15d80a1496e692225f3b15c7996995654afa3b`.
-- [Immutable raw video report](../../build/rope-optimization/20261004/current-video-performance-v2/report.json), SHA256 `0f2ad8b7bc2a73ace67a2ea04f5a4781cf94ce13512d6d8fc2c24685542a8796`.
+- Complete video summary: archive path `../../build/rope-optimization/20261004/candidate-video-performance-summary-v2.json`, SHA256 `321611afba18291b4bb03d84bb15d80a1496e692225f3b15c7996995654afa3b`.
+- Immutable raw video report: archive path `../../build/rope-optimization/20261004/current-video-performance-v2/report.json`, SHA256 `0f2ad8b7bc2a73ace67a2ea04f5a4781cf94ce13512d6d8fc2c24685542a8796`.
 
 | Video weights | GGUF GB | Backend | Objects | Median seconds/frame | P95 seconds/frame | Peak RSS GB |
 | --- | ---: | --- | ---: | ---: | ---: | ---: |
