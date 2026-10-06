@@ -261,6 +261,7 @@ class ToolChecks(unittest.TestCase):
     def test_quantizer_identity_hashes_linked_target_and_encoder_library(self):
         from sam3_artifacts import sha256_file
         from validate_image import SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT
+        from sam3_gguf import LEGACY_GGML_QUANTIZER_BUILD_COMMITS
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -272,7 +273,8 @@ class ToolChecks(unittest.TestCase):
                         "ggml_library_path": str(linked_library),
                         "ggml_quantize_library_path": str(encoder_library)}
             helper = root / "sam_quantize_rows"
-            for commit in (GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT):
+            for commit in (GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT,
+                           *LEGACY_GGML_QUANTIZER_BUILD_COMMITS):
                 with self.subTest(commit=commit):
                     identity["ggml_build_commit"] = commit
                     helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")

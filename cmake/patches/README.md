@@ -141,8 +141,8 @@ performance are recorded separately in the SAM milestone reports.
 
 `ggml-precise-cuda.patch` targets the same pinned GGML revision and retains its
 MIT license. CMake applies both patches to a verified build-local source copy.
-CUDA patch SHA-256: `9417f66f5488503c97ec284d949de096d075e6e1344dc692aaabb59f890649a6`.
-Combined source-tree SHA-256: `2c6aa3654bd83a67943d789df12ad266e557d082854b1745221658716da069e5`.
+CUDA patch SHA-256: `e62f040cf9893f1eebdd8745f4d9a513d91befcbbe7330271bb61b41eb40c8b7`.
+Combined source-tree SHA-256: `25e659a3dfac0b16b5d7b455ee7e469b015573e22946aaa57f8a295c875e85c2`.
 Unmodified archives, verified Metal-only archives and verified combined archives
 are accepted; caller-owned GGML targets are used directly.
 
@@ -154,7 +154,9 @@ the upstream dispatch rules.
 
 Explicit F32 attention with F32 Q/K/V and equal head dimensions 32 or 64 uses
 pedantic F32 cuBLAS products and an F32 masked softmax. Scratch storage holds
-one head and at most 128 queries at a time in GGML's CUDA pool. Q/K/V may have
+one head and at most 1024 queries at a time in GGML's CUDA pool. The larger tile
+reduces small cuBLAS calls; scratch grows with the key count and stays bounded
+independently of the total query count. Q/K/V may have
 outer strides; masks support broadcast or per-head/per-batch F16 additive values.
 The complete mask/key range remains authoritative when sparse hints are present.
 Fully masked rows produce zero. Attention sinks, ALiBi, softcap and other head
@@ -170,4 +172,5 @@ initialization, including with caller-owned targets. Explicit CUDA graphs requir
 every compute node on the selected device; CPU remains available for input copies.
 CUDA graph capture defaults to off pending separate validation. Arithmetic/layout
 checks on RTX 4090 and subsequent model results are recorded in the
-[CUDA implementation plan](../../docs/plans/20261006-215722-cuda-backend.md).
+[CUDA implementation plan](../../docs/plans/20261006-215722-cuda-backend.md)
+and [CUDA profiling plan](../../docs/plans/20261007-015552-cuda-operator-profiling.md).

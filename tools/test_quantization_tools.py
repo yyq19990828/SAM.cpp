@@ -295,6 +295,14 @@ class QuantizationChecks(unittest.TestCase):
         validate_quantization_sidecar(sidecar)
         sidecar["quantizer"]["ggml_build_commit"] = SAM_PATCHED_GGML_BUILD_COMMIT
         validate_quantization_sidecar(sidecar)
+        from sam3_gguf import LEGACY_GGML_QUANTIZER_BUILD_COMMITS
+        for commit in LEGACY_GGML_QUANTIZER_BUILD_COMMITS:
+            sidecar["quantizer"]["ggml_build_commit"] = commit
+            validate_quantization_sidecar(sidecar)
+        sidecar["quantizer"]["ggml_build_commit"] += "-unverified"
+        with self.assertRaisesRegex(ValueError, "pinned GGML encoder/provider"):
+            validate_quantization_sidecar(sidecar)
+        sidecar["quantizer"]["ggml_build_commit"] = SAM_PATCHED_GGML_BUILD_COMMIT
         del sidecar["quantizer"]["ggml_quantize_library"]
         with self.assertRaisesRegex(ValueError, "pinned GGML encoder/provider"):
             validate_quantization_sidecar(sidecar)

@@ -19,6 +19,9 @@ HYBRID_PROFILE = "visual-tracker-f32-v1"
 HYBRID_F32_PREFIXES = ("vit.", "neck.trk.", "mem_attn.", "mem_enc.", "sam_pe.", "sam_dec.",
                       "obj_ptr_proj.", "obj_ptr_tpos_proj.", "trk_mask_ds.")
 QUANTIZATION_VERSION = 2
+# Approved earlier build: the CUDA attention tile update leaves the encoder
+# and packed weight format unchanged. Keep existing conversion receipts valid.
+LEGACY_GGML_QUANTIZER_BUILD_COMMITS = ("353b63b4-sam-0a0b80dd15c2-9417f66f5488",)
 QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-native-v1"
 QUANTIZATION_MODULES = ("vision", "text", "fusion", "decoder")
 MAX_QUANTIZATION_MODULE_CSV_LENGTH = 256

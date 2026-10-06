@@ -20,7 +20,7 @@ import gguf
 
 from sam3_artifacts import BPE_SHA256, PAB_REVISION, SAM3_REVISION, sha256_file, write_json
 from sam3_gguf import (KEEP_F32, HYBRID_PROFILE, HYBRID_F32_PREFIXES, QUANTIZATION_PROFILES,
-                       QUANTIZATION_VERSION, QUANTIZED_ARITHMETIC_PROFILE, bytes_to_unicode,
+                       QUANTIZATION_VERSION, QUANTIZED_ARITHMETIC_PROFILE, LEGACY_GGML_QUANTIZER_BUILD_COMMITS, bytes_to_unicode,
                        canonical_shape, converted_array, inspect_tensors, quantized_array,
                        quantization_profile, quantization_module_for_tensor, quantized_tensor_type,
                        quantization_reason_for_tensor,
@@ -169,7 +169,8 @@ def quantizer_identity(quantizer):
     cuda_patch_hash = sha256_file(Path(__file__).resolve().parents[1] / "cmake/patches/ggml-precise-cuda.patch")
     expected_combined_commit = f"{expected_patched_commit}-{cuda_patch_hash[:12]}"
     build_commit = identity.get("ggml_build_commit")
-    if build_commit not in (GGML_REVISION, expected_patched_commit, expected_combined_commit) or identity.get("ggml_version") != "0.25.3":
+    if build_commit not in (GGML_REVISION, expected_patched_commit, expected_combined_commit,
+                            *LEGACY_GGML_QUANTIZER_BUILD_COMMITS) or identity.get("ggml_version") != "0.25.3":
         raise ValueError("quantizer is not linked to the pinned GGML 0.25.3 source")
 
     libraries = {}

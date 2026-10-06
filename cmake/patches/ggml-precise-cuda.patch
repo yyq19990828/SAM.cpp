@@ -287,7 +287,7 @@
 +    const auto * mask = dst->src[3];
 +    const int dimensions = int(q->ne[0]);
 +    const int keys = int(k->ne[1]);
-+    const int tile = int(std::min<int64_t>(q->ne[1], 128));
++    const int tile = int(std::min<int64_t>(q->ne[1], 1024));
 +    // Only one head/query tile is live. The existing CUDA pool owns temporaries
 +    // and orders reuse on this stream; no per-model or global scratch allocation.
 +    ggml_cuda_pool_alloc<float> scores(ctx.pool(), size_t(keys) * tile);

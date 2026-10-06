@@ -14,7 +14,7 @@ from sam3_artifacts import (BPE_SHA256, PAB_REVISION, REQUIRED_TENSORS, SAM3_REV
                            artifact_path, load_case_manifest, read_array, read_json, read_tensor_index,
                            sha256_file, validate_case_manifest, validate_cuda_oracle_provenance, write_json)
 from sam3_gguf import (QUANTIZATION_MODULES as GGUF_QUANTIZATION_MODULES,
-                       QUANTIZATION_VERSION, canonical_quantization_modules, inspect_tensors,
+                       QUANTIZATION_VERSION, LEGACY_GGML_QUANTIZER_BUILD_COMMITS, canonical_quantization_modules, inspect_tensors,
                        quantization_module_for_tensor, quantization_reason_for_tensor,
                        quantization_profile as storage_quantization_profile, read_gguf,
                        validate_metadata, tensor_schema)
@@ -416,7 +416,8 @@ def validate_quantization_sidecar(model, allow_custom_quantization=False):
                 or quantizer.get("fallback_version") != model.get("gguf_package_version")
                 or quantizer.get("ggml_revision") != PINNED_GGML_REVISION
                 or quantizer.get("ggml_build_commit") not in (
-                    PINNED_GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT)
+                    PINNED_GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT,
+                    *LEGACY_GGML_QUANTIZER_BUILD_COMMITS)
                 or quantizer.get("ggml_version") != PINNED_GGML_VERSION
                 or quantizer.get("ggml_quantization_version") != QUANTIZATION_VERSION
                 or not isinstance(helper.get("file"), str) or not helper["file"]

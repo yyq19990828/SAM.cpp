@@ -99,23 +99,25 @@ model loading, external decoding, file output and cache replays. Every listed
 configuration passed all seven original-reference image cases before timing.
 CPU/BLAS cells show seconds / peak RSS GB; a dash means this cell was not timed.
 
-CUDA process RSS and GPU memory are separate. RSS covers the whole process;
-GPU memory is sampled with `nvidia-smi` about once per second for the inference
-process, including its context and pools. Sampling may miss transient peaks.
+CUDA process RSS and GPU memory are separate. RSS covers the timed process.
+Image GPU memory comes from separate runs of the same workload and binaries,
+sampled with `nvidia-smi` about every 50 ms, including context and pools.
+Video GPU memory is sampled about once per second during timing. Sampling may
+miss transient peaks; these figures are lower bounds for the true process peak.
 GB is decimal; P95 uses linear interpolation at `(n-1)*0.95`.
 
 | Image weights | GGUF, GB | CPU/BLAS, s / RSS GB | CUDA median, s | CUDA P95, s | CUDA peak RSS, GB | CUDA sampled GPU, GB |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| F32 | 3.371 | 16.981 / 4.674 | 0.837 | 0.839 | 0.901 | 4.758 |
-| Mixed F16/F32 | 1.798 | 17.066 / 4.675 | 0.851 | 0.854 | 0.944 | 3.152 |
-| Vision Q8_0 | 2.065 | — | 0.735 | 0.741 | 0.957 | 3.483 |
-| Full-component Q8_0 | 1.097 | — | 0.739 | 0.741 | 0.972 | 2.517 |
-| Vision Q6_K | 1.995 | — | 0.737 | 0.743 | 0.964 | 3.414 |
-| Full-component Q6_K | 0.947 | — | 0.737 | 0.739 | 0.979 | 2.366 |
-| Vision Q5_K | 1.957 | — | 0.732 | 0.739 | 0.964 | 3.376 |
-| Full-component Q5_K | 0.864 | — | 0.737 | 0.738 | 0.978 | 2.284 |
-| Vision Q4_K | 1.920 | — | 0.731 | 0.740 | 0.963 | 3.339 |
-| Full-component Q4_K | 0.787 | — | 0.736 | 0.737 | 0.978 | 2.252 |
+| F32 | 3.371 | 16.981 / 4.674 | 0.590 | 0.591 | 0.902 | 4.777 |
+| Mixed F16/F32 | 1.798 | 17.066 / 4.675 | 0.605 | 0.608 | 0.944 | 3.207 |
+| Vision Q8_0 | 2.065 | — | 0.487 | 0.494 | 0.958 | 3.530 |
+| Full-component Q8_0 | 1.097 | — | 0.493 | 0.494 | 0.972 | 2.563 |
+| Vision Q6_K | 1.995 | — | 0.492 | 0.500 | 0.965 | 3.460 |
+| Full-component Q6_K | 0.947 | — | 0.496 | 0.497 | 0.979 | 2.412 |
+| Vision Q5_K | 1.957 | — | 0.491 | 0.495 | 0.965 | 3.423 |
+| Full-component Q5_K | 0.864 | — | 0.486 | 0.492 | 0.979 | 2.330 |
+| Vision Q4_K | 1.920 | — | 0.486 | 0.494 | 0.964 | 3.385 |
+| Full-component Q4_K | 0.787 | — | 0.492 | 0.495 | 0.984 | 2.252 |
 
 Quantized CUDA uses native packed-weight kernels with RHS Q8_1 staging and its
 own arithmetic profile. Qualification measures final output quality; it does
@@ -137,10 +139,10 @@ GPU memory use the process-wide definitions above.
 
 | Video weights | GGUF, GB | Objects | Median, s/frame | P95, s/frame | Peak RSS, GB | Sampled GPU, GB |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| F32 | 3.449 | 1 | 1.177 | 1.254 | 1.163 | 4.895 |
-| F32 | 3.449 | 4 | 2.005 | 2.198 | 1.311 | 4.895 |
-| Hybrid | 2.765 | 1 | 1.176 | 1.254 | 1.161 | 4.222 |
-| Hybrid | 2.765 | 4 | 2.008 | 2.217 | 1.302 | 4.222 |
+| F32 | 3.449 | 1 | 0.932 | 1.013 | 1.159 | 4.914 |
+| F32 | 3.449 | 4 | 1.751 | 1.965 | 1.300 | 4.914 |
+| Hybrid | 2.765 | 1 | 0.934 | 1.008 | 1.159 | 4.228 |
+| Hybrid | 2.765 | 4 | 1.756 | 1.938 | 1.305 | 4.228 |
 
 ## Measure your workload
 
@@ -155,5 +157,6 @@ reconstruct the total median. Application inputs need their own quality and
 performance checks.
 
 Measurement receipts, qualification details and historical records are retained
-in the [macOS performance measurement plan](docs/plans/20261004-214547-latest-complete-model-performance-records.md)
-and the [CUDA implementation plan](docs/plans/20261006-215722-cuda-backend.md).
+in the [macOS performance measurement plan](docs/plans/20261004-214547-latest-complete-model-performance-records.md),
+the [CUDA implementation plan](docs/plans/20261006-215722-cuda-backend.md),
+and the [CUDA operator profiling plan](docs/plans/20261007-015552-cuda-operator-profiling.md).

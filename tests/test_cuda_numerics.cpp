@@ -182,6 +182,9 @@ int main() {
         // SAM reshapes [D*H,N,B] to [D,H,N,B], then permutes token/head axes.
         check_attention(backend, 64, 129, 137, 4, 2, 2, true, 4, 2, true);
         check_attention(backend, 32, 17, 131, 3, 1, 2, false, 1, 1, true);
+        // Cross the query-tile boundary, including an all-masked final row.
+        check_attention(backend, 32, 1025, 131, 4, 2, 2, true, 4, 2);
+        check_attention(backend, 64, 1025, 137, 2, 1, 1, false, 1, 1, true);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "CUDA numerics: " << error.what() << '\n';

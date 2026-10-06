@@ -22,6 +22,7 @@ No releases have been published.
 
 ### Changed
 
+- Reduce SAM 3 CUDA image and video latency with larger F32 attention query tiles, preserving original-model qualification and existing GGUF conversion receipts.
 - Runtime backend node counters count compute operations, excluding metadata-only views, reshapes, permutations and transposes.
 - Video conversion defaults to `visual-tracker-f32-v1` hybrid weights; image conversion requires an explicit precision. F16 video remains diagnostic.
 - CPU execution uses registered BLAS when available. Quantized weights remain compressed in memory while matrix operations use temporary F32 weights.
