@@ -125,7 +125,7 @@ The metadata prefix must match canonical reserialization through upstream GGUF
 APIs. This rejects embedded-NUL truncation in C-string accessors, noncanonical
 dimension counts and ambiguous encodings without a second binary parser.
 
-For schemas 1 and 2, CPU F16 promotion and Metal precision/storage policies are
+For schemas 1 and 2, CPU F16 promotion and Metal/CUDA precision/storage policies are
 defined by the runtime. Using a GGUF container by itself does not enable a new
 backend or mmap loading. Schemas 3 and 4 share the quantized arithmetic contract
 described below. Original `.pt` inputs remain the supported reconversion source;
@@ -162,9 +162,11 @@ video format. `ModelInfo::precision` names the quantized storage type and
 `arithmetic_profile=ggml-quantized-weights-f32-v1`: packed weights remain
 resident while shared graph nodes cast operands to F32 for `MUL_MAT`. Metal
 reports `ggml-quantized-native-v1` and uses native quantized kernels with half
+staging. CUDA reports `ggml-quantized-cuda-native-v1` and retains the same GGUF
+packing for native quantized kernels; the validated MMVQ/MMQ paths use RHS Q8_1
 staging. These paths differ from the strict F32 profile. Quantized `Auto`
-selects CPU; explicit Metal retains the CPU scheduler tail required by GGML,
-checks every operation on Metal and rejects CPU/BLAS compute-node fallback.
+selects CPU. Explicit Metal and CUDA retain the CPU scheduler tail required by
+GGML, check every operation on the selected device and reject compute fallback.
 
 ## Modular quantized image profiles (schema 4)
 
@@ -205,7 +207,7 @@ Sidecars record canonical `quantization_modules` arrays and each tensor's
 module, storage type and quantization/retention reason. Schema-4 runtime
 `ModelInfo::quantization_modules` and image JSON report the validated array;
 legacy schemas leave the new runtime field empty. Activation precision and
-CPU/Metal arithmetic policies remain those described above. Loading this
+CPU/Metal/CUDA arithmetic policies remain those described above. Loading this
 schema does not implement point/box prompting or quantized video tracking.
 
 ## Full video profile (schema 2)

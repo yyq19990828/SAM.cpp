@@ -1,4 +1,5 @@
 #include <sam/internal/runtime/ggml.hpp>
+#include "backend_test_support.hpp"
 
 #include <iostream>
 
@@ -32,11 +33,14 @@ void check_scheduled_attribution(sam::internal::GgmlRuntime& runtime, sam::Backe
     }
     const std::uint64_t expected_cpu = expected == sam::Backend::Cpu ? 1 : 0;
     const std::uint64_t expected_metal = expected == sam::Backend::Metal ? 1 : 0;
-    if (stats.cpu_nodes != expected_cpu || stats.metal_nodes != expected_metal || !stats.graph_partitions) {
+    const std::uint64_t expected_cuda = expected == sam::Backend::Cuda ? 1 : 0;
+    if (stats.cpu_nodes != expected_cpu || stats.metal_nodes != expected_metal ||
+        stats.cuda_nodes != expected_cuda || !stats.graph_partitions) {
         throw std::runtime_error(std::string(weight_backed ? "Weight-backed" : "Host-input") +
             " graph on " + ggml_backend_name(runtime.weights_backend()) +
             ": expected CPU=" + std::to_string(expected_cpu) + " Metal=" + std::to_string(expected_metal) +
             ", actual CPU=" + std::to_string(stats.cpu_nodes) + " Metal=" + std::to_string(stats.metal_nodes) +
+            " CUDA=" + std::to_string(stats.cuda_nodes) + " expected CUDA=" + std::to_string(expected_cuda) +
             " partitions=" + std::to_string(stats.graph_partitions));
     }
     const bool expects_blas = expected == sam::Backend::Cpu &&
@@ -45,7 +49,7 @@ void check_scheduled_attribution(sam::internal::GgmlRuntime& runtime, sam::Backe
         throw std::runtime_error("BLAS work was not attributed as a CPU subset");
     std::cout << ggml_backend_name(runtime.weights_backend()) << (weight_backed ? " weights" : " host inputs")
               << ": scheduled CPU nodes=" << stats.cpu_nodes
-              << ", Metal nodes=" << stats.metal_nodes << '\n';
+              << ", Metal nodes=" << stats.metal_nodes << ", CUDA nodes=" << stats.cuda_nodes << '\n';
 }
 
 void check_unknown_attribution(sam::internal::GgmlRuntime& runtime, ggml_backend_t foreign) {
@@ -56,16 +60,81 @@ void check_unknown_attribution(sam::internal::GgmlRuntime& runtime, ggml_backend
         catch (const std::runtime_error& error) {
             rejected = std::string(error.what()).find("unknown backend") != std::string::npos;
         }
-        if (!rejected || stats.cpu_nodes || stats.metal_nodes) {
+        if (!rejected || stats.cpu_nodes || stats.metal_nodes || stats.cuda_nodes) {
             throw std::runtime_error("Foreign or null backend was silently attributed to a known driver");
         }
     }
 }
 
+void check_cuda() {
+    sam::internal::GgmlRuntime cuda({sam::Backend::Cuda, 1}, false);
+    if (cuda.backend() != sam::Backend::Cuda || cuda.cuda_device() != 0 || cuda.device_name().empty() ||
+        cuda.promote_f16_weights())
+        throw std::runtime_error("Explicit CUDA selection did not retain device identity and packed F16 storage");
+    check_scheduled_attribution(cuda, sam::Backend::Cuda);
+    check_scheduled_attribution(cuda, sam::Backend::Cuda, true);
+    sam::internal::GgmlRuntime cpu({sam::Backend::Cpu, 1}, false);
+    check_unknown_attribution(cuda, cpu.weights_backend());
+    auto* registration = ggml_backend_reg_by_name("CUDA");
+    bool rejected = false;
+    try {
+        sam::internal::GgmlRuntime invalid({sam::Backend::Cuda, 1,
+            static_cast<int>(ggml_backend_reg_dev_count(registration))}, false);
+    } catch (const std::runtime_error& error) {
+        rejected = std::string(error.what()).find("out of range") != std::string::npos;
+    }
+    if (!rejected) throw std::runtime_error("CUDA accepted a non-visible device index");
+
+    sam::RuntimeStats stats;
+    auto workspace = std::make_shared<sam::internal::GraphWorkspace>(cuda, 32);
+    {
+        sam::internal::GraphExecution unsupported(cuda, 16, stats, workspace);
+        auto* input = sam::internal::input_tensor(unsupported.context(), "cpu_only_input", 4);
+        auto* output = ggml_map_custom1(unsupported.context(), input,
+            [](ggml_tensor*, const ggml_tensor*, int, int, void*) {}, 1, nullptr);
+        unsupported.output(output);
+        rejected = false;
+        try { unsupported.allocate(); }
+        catch (const std::runtime_error& error) {
+            rejected = std::string(error.what()).find("MAP_CUSTOM1") != std::string::npos;
+        }
+        if (!rejected || workspace->allocated_bytes() || stats.cpu_nodes || stats.cuda_nodes)
+            throw std::runtime_error("CUDA silently allocated or ran an unsupported CPU-only operator");
+    }
+    {
+        sam::internal::GraphExecution graph(cuda, 16, stats, workspace);
+        auto* input = sam::internal::input_tensor(graph.context(), "input", 4);
+        auto* output = ggml_scale(graph.context(), input, 2.0f);
+        graph.output(output);
+        graph.allocate();
+        sam::internal::upload(input, {1, 2, 3, 4}, stats);
+        // A misplaced compute node must be rejected before launching any kernel.
+        ggml_backend_sched_set_tensor_backend(workspace->scheduler(), output, cuda.backends().back());
+        rejected = false;
+        try { graph.compute(); }
+        catch (const std::runtime_error& error) {
+            rejected = std::string(error.what()).find("fallback") != std::string::npos;
+        }
+        if (!rejected || stats.cpu_nodes || stats.cuda_nodes)
+            throw std::runtime_error("CUDA placement guard executed a misplaced compute node");
+        workspace->release_storage();
+        graph.allocate();
+        sam::internal::upload(input, {2, 3, 4, 5}, stats);
+        graph.compute();
+        if (sam::internal::download(output, stats) != std::vector<float>{4, 6, 8, 10})
+            throw std::runtime_error("Placement rejection corrupted the reusable CUDA workspace");
+    }
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (sam::test::cuda_requested(argc, argv)) {
+            if (!sam::test::cuda_available()) return 77;
+            check_cuda();
+            return 0;
+        }
         sam::internal::GgmlRuntime cpu({sam::Backend::Cpu, 1}, false);
         sam::internal::GgmlRuntime auto_fp32({sam::Backend::Auto, 1}, true);
         if (cpu.backend() != sam::Backend::Cpu || auto_fp32.backend() != sam::Backend::Cpu ||
@@ -112,6 +181,14 @@ int main() {
                 }
                 if (!rejected) throw std::runtime_error("Unavailable Metal backend was not clearly rejected");
             }
+        }
+        if (!sam::test::cuda_available()) {
+            bool rejected = false;
+            try { sam::internal::GgmlRuntime missing({sam::Backend::Cuda, 1}, false); }
+            catch (const std::runtime_error& error) {
+                rejected = std::string(error.what()).find("CUDA") != std::string::npos;
+            }
+            if (!rejected) throw std::runtime_error("Unavailable CUDA was not clearly rejected");
         }
         return 0;
     } catch (const std::exception& error) {

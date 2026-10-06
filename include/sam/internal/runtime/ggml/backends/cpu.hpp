@@ -13,6 +13,7 @@ inline BackendDriver make_cpu_backend(int threads) {
     if (!cpu_device) throw std::runtime_error("GGML CPU backend is unavailable");
     driver.handle.reset(ggml_backend_dev_init(cpu_device, nullptr));
     if (!driver.handle) throw std::runtime_error("GGML CPU backend initialization failed");
+    driver.device_name = ggml_backend_dev_description(cpu_device);
     auto* registration = ggml_backend_dev_backend_reg(cpu_device);
     auto set_threads = reinterpret_cast<ggml_backend_set_n_threads_t>(
         ggml_backend_reg_get_proc_address(registration, "ggml_backend_set_n_threads"));

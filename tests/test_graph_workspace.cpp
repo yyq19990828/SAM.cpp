@@ -1,4 +1,5 @@
 #include <sam/internal/runtime/ggml/graph.hpp>
+#include "backend_test_support.hpp"
 #include <iostream>
 
 namespace {
@@ -26,6 +27,66 @@ struct Probe {
         return sam::internal::download(result, stats);
     }
 };
+
+struct ArenaProbe {
+    sam::RuntimeStats stats;
+    sam::internal::GraphExecution graph;
+    ggml_tensor* input;
+    ggml_tensor* result;
+    ArenaProbe(sam::internal::GgmlRuntime& runtime,
+               const std::shared_ptr<sam::internal::GraphWorkspace>& workspace, bool large_device)
+        : graph(runtime, 64, stats, workspace) {
+        input = sam::internal::input_tensor(graph.context(), "arena_input", 256, large_device ? 1 : 8192);
+        if (large_device) {
+            auto* shape = ggml_new_tensor_2d(graph.context(), GGML_TYPE_F32, 256, 32768);
+            result = ggml_repeat(graph.context(), input, shape);
+        } else {
+            result = ggml_scale(graph.context(), input, 2.0f);
+        }
+        graph.output(result);
+    }
+    std::vector<float> run(float value, std::size_t limit = std::numeric_limits<std::size_t>::max()) {
+        graph.allocate(limit);
+        sam::internal::upload(input, std::vector<float>(ggml_nelements(input), value), stats);
+        graph.compute();
+        return sam::internal::download(result, stats);
+    }
+};
+
+void check_cuda_arena_budget() {
+    sam::internal::GgmlRuntime runtime({sam::Backend::Cuda, 1}, true);
+    std::size_t limit = 0;
+    for (const bool large_device : {true, false}) {
+        auto workspace = std::make_shared<sam::internal::GraphWorkspace>(runtime, 64);
+        ArenaProbe probe(runtime, workspace, large_device);
+        const auto required = probe.graph.required_workspace_bytes();
+        probe.run(1.0f);
+        require(required > 0 && workspace->allocated_bytes() >= required, "fresh arena has an invalid allocation plan");
+        limit = std::max(limit, workspace->allocated_bytes());
+    }
+    {
+        auto workspace = std::make_shared<sam::internal::GraphWorkspace>(runtime, 64);
+        ArenaProbe device(runtime, workspace, true), host(runtime, workspace, false);
+        device.run(1.0f);
+        host.run(1.0f);
+        require(workspace->allocated_bytes() > limit,
+                "budget fixture did not retain opposing host and device peaks");
+    }
+    auto workspace = std::make_shared<sam::internal::GraphWorkspace>(runtime, 64);
+    ArenaProbe device(runtime, workspace, true), host(runtime, workspace, false);
+    const auto saved = device.run(3.0f, limit);
+    require(workspace->allocated_bytes() <= limit, "first graph exceeds its arena budget");
+    for (const float value : host.run(4.0f, limit))
+        require(value == 8.0f, "host-heavy graph lost inputs after arena replacement");
+    require(workspace->allocated_bytes() <= limit, "opposing arena growth exceeds the budget");
+    for (const float value : device.run(-2.0f, limit))
+        require(value == -2.0f, "device-heavy graph failed after budgeted arena rebinding");
+    require(workspace->diagnostics().workspace_peak_bytes <= limit,
+            "budgeted graph transiently allocated an oversized arena");
+    for (const float value : saved) require(value == 3.0f, "owned output changed after arena replacement");
+    require(device.stats.cuda_nodes && host.stats.cuda_nodes && !device.stats.cpu_nodes && !host.stats.cpu_nodes,
+            "budgeted CUDA graphs executed host compute");
+}
 
 void check(sam::Backend backend) {
     sam::internal::GgmlRuntime runtime({backend, 1}, true);
@@ -151,11 +212,23 @@ void check(sam::Backend backend) {
     rejected = false;
     try { oversized.allocate(); } catch (const std::runtime_error&) { rejected = true; }
     require(rejected, "workspace capacity mismatch reached a scheduler assertion");
+    if (backend == sam::Backend::Cuda) {
+        require(a.stats.cuda_nodes > 0 && !a.stats.cpu_nodes && !a.stats.metal_nodes,
+                "reused CUDA workspace executed compute on another backend");
+        require(fresh.stats.cuda_nodes > 0 && !fresh.stats.cpu_nodes && !fresh.stats.metal_nodes,
+                "fresh CUDA workspace executed compute on another backend");
+    }
 }
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (sam::test::cuda_requested(argc, argv)) {
+            if (!sam::test::cuda_available()) return 77;
+            check(sam::Backend::Cuda);
+            check_cuda_arena_budget();
+            return 0;
+        }
         check(sam::Backend::Cpu);
         for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             auto* device = ggml_backend_dev_get(i);

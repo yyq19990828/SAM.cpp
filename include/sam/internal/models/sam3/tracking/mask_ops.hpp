@@ -24,26 +24,30 @@ inline std::vector<float> resize_mask(const std::vector<float>& input, int width
         std::vector<float> temporary(checked_product(target_width, height, "mask resize scratch"));
         for (int y = 0; y < height; ++y) for (int x = 0; x < target_width; ++x)
             for (std::size_t k = 0; k < x_axis.weights[x].size(); ++k)
-                temporary[static_cast<std::size_t>(y) * target_width + x] += x_axis.weights[x][k] *
-                    input[static_cast<std::size_t>(y) * width + x_axis.first[x] + k];
+                temporary[static_cast<std::size_t>(y) * target_width + x] = std::fma(x_axis.weights[x][k],
+                    input[static_cast<std::size_t>(y) * width + x_axis.first[x] + k],
+                    temporary[static_cast<std::size_t>(y) * target_width + x]);
         for (int y = 0; y < target_height; ++y) for (int x = 0; x < target_width; ++x)
             for (std::size_t k = 0; k < y_axis.weights[y].size(); ++k)
-                output[static_cast<std::size_t>(y) * target_width + x] += y_axis.weights[y][k] *
-                    temporary[(static_cast<std::size_t>(y_axis.first[y]) + k) * target_width + x];
+                output[static_cast<std::size_t>(y) * target_width + x] = std::fma(y_axis.weights[y][k],
+                    temporary[(static_cast<std::size_t>(y_axis.first[y]) + k) * target_width + x],
+                    output[static_cast<std::size_t>(y) * target_width + x]);
     } else {
+        const float scale_y = static_cast<float>(height) / target_height;
+        const float scale_x = static_cast<float>(width) / target_width;
         for (int y = 0; y < target_height; ++y) {
-            const float fy = std::max(0.0f, (y + 0.5f) * height / target_height - 0.5f);
+            const float fy = std::max(0.0f, std::fma(scale_y, y + 0.5f, -0.5f));
             const int y0 = std::min(static_cast<int>(fy), height - 1), y1 = std::min(y0 + 1, height - 1);
             const float wy = fy - y0;
             for (int x = 0; x < target_width; ++x) {
-                const float fx = std::max(0.0f, (x + 0.5f) * width / target_width - 0.5f);
+                const float fx = std::max(0.0f, std::fma(scale_x, x + 0.5f, -0.5f));
                 const int x0 = std::min(static_cast<int>(fx), width - 1), x1 = std::min(x0 + 1, width - 1);
                 const float wx = fx - x0;
-                output[static_cast<std::size_t>(y) * target_width + x] =
-                    (1 - wy) * ((1 - wx) * input[static_cast<std::size_t>(y0) * width + x0] +
-                                wx * input[static_cast<std::size_t>(y0) * width + x1]) +
-                    wy * ((1 - wx) * input[static_cast<std::size_t>(y1) * width + x0] +
-                          wx * input[static_cast<std::size_t>(y1) * width + x1]);
+                const float top = std::fma(wx, input[static_cast<std::size_t>(y0) * width + x1],
+                    (1 - wx) * input[static_cast<std::size_t>(y0) * width + x0]);
+                const float bottom = std::fma(wx, input[static_cast<std::size_t>(y1) * width + x1],
+                    (1 - wx) * input[static_cast<std::size_t>(y1) * width + x0]);
+                output[static_cast<std::size_t>(y) * target_width + x] = std::fma(wy, bottom, (1 - wy) * top);
             }
         }
     }

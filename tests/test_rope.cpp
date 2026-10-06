@@ -1,5 +1,6 @@
 #include <sam/internal/models/sam3/vision.hpp>
 #include <sam/internal/runtime/ggml.hpp>
+#include "backend_test_support.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -145,23 +146,29 @@ void check_reused_shape(sam::internal::GgmlRuntime& runtime, int tokens, int hea
     if (runtime.backend() == sam::Backend::Metal) {
         require(stats.metal_nodes > 0, "RoPE graph did not execute compute nodes on Metal");
         require(stats.cpu_nodes == 0, "RoPE graph fell back to CPU with Metal-resident inputs");
+    } else if (runtime.backend() == sam::Backend::Cuda) {
+        require(stats.cuda_nodes > 0, "RoPE graph did not execute compute nodes on CUDA");
+        require(stats.cpu_nodes == 0 && stats.metal_nodes == 0, "CUDA RoPE graph used another backend");
     } else {
         require(stats.cpu_nodes > 0, "RoPE graph did not execute compute nodes on CPU");
     }
 }
 
 sam::Backend parse_backend(int argc, char** argv) {
-    if (argc > 2) throw std::invalid_argument("usage: test_rope [cpu|metal]");
+    if (argc > 2) throw std::invalid_argument("usage: test_rope [cpu|metal|cuda]");
     if (argc == 1 || std::string(argv[1]) == "cpu") return sam::Backend::Cpu;
     if (std::string(argv[1]) == "metal") return sam::Backend::Metal;
-    throw std::invalid_argument("usage: test_rope [cpu|metal]");
+    if (std::string(argv[1]) == "cuda") return sam::Backend::Cuda;
+    throw std::invalid_argument("usage: test_rope [cpu|metal|cuda]");
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
     try {
-        sam::internal::GgmlRuntime runtime({parse_backend(argc, argv), 1}, false);
+        const auto selected = parse_backend(argc, argv);
+        if (selected == sam::Backend::Cuda && !sam::test::cuda_available()) return 77;
+        sam::internal::GgmlRuntime runtime({selected, 1}, false);
         check_reused_shape(runtime, 1, 1, 1, {
             FrequencyPattern::identity, FrequencyPattern::quarter_turn,
         });

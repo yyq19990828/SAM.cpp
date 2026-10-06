@@ -187,3 +187,11 @@ def dump_array(directory, name, array, layout=None):
     if layout is not None:
         metadata["layout"] = layout
     return metadata
+
+
+def validate_cuda_oracle_provenance(oracle):
+    if oracle.get("device") == "cuda" and (
+            oracle.get("sdpa_backend") != "math" or not oracle.get("cuda_runtime") or
+            not oracle.get("device_name") or oracle.get("cublas_workspace_config") not in (":4096:8", ":16:8") or
+            not oracle.get("sdpa_adaptation", {}).get("replacement")):
+        raise ValueError("CUDA oracle lacks explicit F32 math/device/deterministic workspace provenance")

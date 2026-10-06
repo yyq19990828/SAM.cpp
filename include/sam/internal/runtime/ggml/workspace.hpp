@@ -61,6 +61,7 @@ public:
         const auto start = std::chrono::steady_clock::now();
         release();
         auto sources = save_sources(context);
+        assign_primary_compute(scheduler_.get(), graph);
         if (!ggml_backend_sched_alloc_graph(scheduler_.get(), graph)) {
             restore_sources(sources);
             clear_allocations(context);
@@ -75,7 +76,8 @@ public:
         diagnostics_.workspace_peak_bytes = std::max(diagnostics_.workspace_peak_bytes, allocated_bytes());
     }
 
-    std::size_t required_bytes(ggml_context* context, ggml_cgraph* graph) {
+    std::size_t required_bytes(ggml_context* context, ggml_cgraph* graph,
+                               std::vector<std::size_t>* buffer_sizes = nullptr) {
         validate(graph);
         const auto start = std::chrono::steady_clock::now();
         release();
@@ -87,12 +89,14 @@ public:
         SchedulerPtr probe(ggml_backend_sched_new(backends_.data(), nullptr,
             static_cast<int>(backends_.size()), static_cast<int>(capacity_ * 2), false, true));
         if (!probe) throw std::runtime_error("failed to create SAM workspace probe");
+        assign_primary_compute(probe.get(), graph);
         ggml_backend_sched_reserve_size(probe.get(), graph, sizes.data());
         restore_sources(sources);
         clear_allocations(context);
         if (scheduler_) ggml_backend_sched_reset(scheduler_.get());
         ++diagnostics_.reserve_probes;
         diagnostics_.reserve_ms += elapsed_ms(start);
+        if (buffer_sizes) *buffer_sizes = sizes;
         std::size_t total = 0;
         std::vector<ggml_backend_buffer_type_t> counted;
         for (std::size_t i = 0; i < sizes.size(); ++i) {
@@ -107,9 +111,42 @@ public:
         return total;
     }
 
+    void fit_allocation_plan(const std::vector<std::size_t>& sizes, std::size_t limit) {
+        if (sizes.size() != backends_.size())
+            throw std::invalid_argument("SAM workspace allocation plan has incorrect backend count");
+        struct BufferSize { ggml_backend_buffer_type_t type; std::size_t bytes; };
+        std::vector<BufferSize> buffers;
+        for (std::size_t i = 0; i < backends_.size(); ++i) {
+            const auto type = ggml_backend_get_default_buffer_type(backends_[i]);
+            const auto retained = scheduler_ ? ggml_backend_sched_get_buffer_size(scheduler_.get(), backends_[i]) : 0;
+            const auto bytes = std::max(retained, sizes[i]);
+            auto found = std::find_if(buffers.begin(), buffers.end(),
+                [type](const BufferSize& buffer) { return buffer.type == type; });
+            if (found == buffers.end()) buffers.push_back({type, bytes});
+            else found->bytes = std::max(found->bytes, bytes);
+        }
+        std::size_t projected = 0;
+        for (const auto& buffer : buffers) {
+            if (buffer.bytes > limit - std::min(projected, limit)) {
+                release_storage();
+                return;
+            }
+            projected += buffer.bytes;
+        }
+    }
+
     void compute(ggml_context* context, ggml_cgraph* graph) {
         if (!scheduler_ || active_context_ != context || active_graph_ != graph)
             throw std::runtime_error("SAM graph must be allocated before compute");
+        if (runtime_.requires_primary_compute()) {
+            for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+                auto* node = ggml_graph_node(graph, i);
+                if (is_compute_node(node) &&
+                    ggml_backend_sched_get_tensor_backend(scheduler_.get(), node) != runtime_.weights_backend())
+                    throw std::runtime_error(std::string("SAM ") + ggml_backend_name(runtime_.weights_backend()) +
+                        " graph attempted compute fallback for " + ggml_op_name(node->op));
+            }
+        }
         const auto start = std::chrono::steady_clock::now();
         const auto status = ggml_backend_sched_graph_compute(scheduler_.get(), graph);
         ++diagnostics_.compute_calls;
@@ -145,6 +182,17 @@ public:
     }
 
 private:
+    void assign_primary_compute(ggml_backend_sched_t scheduler, ggml_cgraph* graph) const {
+        if (!runtime_.requires_primary_compute()) return;
+        for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+            auto* node = ggml_graph_node(graph, i);
+            if (!is_compute_node(node)) continue;
+            if (!ggml_backend_supports_op(runtime_.weights_backend(), node))
+                throw std::runtime_error(std::string("primary backend does not support SAM operation ") +
+                    ggml_op_name(node->op));
+            ggml_backend_sched_set_tensor_backend(scheduler, node, runtime_.weights_backend());
+        }
+    }
     struct Sources {
         ggml_tensor* tensor;
         std::array<ggml_tensor*, GGML_MAX_SRC> sources;

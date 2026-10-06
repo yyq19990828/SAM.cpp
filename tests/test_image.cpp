@@ -8,7 +8,7 @@ int main(int argc, char** argv) {
         const auto options = sam_example::parse_options(argc, argv, false);
         if (options.help) {
             std::cout << "Usage: test_image --model FILE --image FILE --text PROMPT --output NEW_DIR\n"
-                         "  [--backend auto|cpu|metal] [--threads N] [--score-threshold 0.5]\n";
+                         "  [--backend auto|cpu|metal|cuda] [--threads N] [--score-threshold 0.5]\n";
             return 0;
         }
         if (std::filesystem::exists(options.output)) {

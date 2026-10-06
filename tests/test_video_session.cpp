@@ -32,7 +32,7 @@ void same_frames(const std::vector<sam::VideoFrameResult>& actual, const std::ve
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--help") {
-            std::cout << "Usage: test_video_session VIDEO_MODEL POSITIVE_IMAGE NEGATIVE_IMAGE cpu|metal THREADS NEW_DIR\n";
+            std::cout << "Usage: test_video_session VIDEO_MODEL POSITIVE_IMAGE NEGATIVE_IMAGE cpu|metal|cuda THREADS NEW_DIR\n";
             return 0;
         }
         if (argc != 7) throw std::invalid_argument("Use --help for the six positional arguments");
@@ -101,13 +101,23 @@ int main(int argc, char** argv) {
                     "video reset exceeded state bounds");
             if (info.backend == sam::Backend::Metal)
                 require(stats.runtime.metal_nodes > 0 && stats.runtime.cpu_nodes == 0, "video used CPU graph fallback");
+            if (info.backend == sam::Backend::Cuda)
+                require(stats.runtime.cuda_nodes > 0 && stats.runtime.cpu_nodes == 0 && stats.runtime.metal_nodes == 0 &&
+                        stats.runtime.blas_nodes == 0,
+                        "CUDA video used compute fallback");
         }
         sam_example::OutputDirectory output(options.output);
         auto json = sam_example::output_file(options.output / "results.json");
         json << "{\"passed\":true,\"backend\":" << sam_example::json_string(sam_example::backend_name(info.backend))
              << ",\"precision\":" << sam_example::json_string(info.precision) << ",\"threads\":" << info.threads
+             << ",\"device_name\":" << sam_example::json_string(info.device_name)
+             << ",\"cuda_device\":" << info.cuda_device
              << ",\"owned_results\":true,\"model_lifetime\":true,\"independent_sessions\":true"
-             << ",\"session_progress_isolated\":true,\"post_reset_snapshot_stable\":true,\"reset\":true}\n";
+             << ",\"session_progress_isolated\":true,\"post_reset_snapshot_stable\":true,\"reset\":true,\"first_runtime\":";
+        sam_example::write_runtime_stats(json, first.stats().runtime);
+        json << ",\"second_runtime\":";
+        sam_example::write_runtime_stats(json, second.stats().runtime);
+        json << "}\n";
         json.close(); output.complete();
         std::cout << "Video session behavior checks passed\n";
         return 0;

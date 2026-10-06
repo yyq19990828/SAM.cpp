@@ -77,6 +77,44 @@ def install_unfused_fp32():
             "reason": "Pinned fused.addmm_act unconditionally casts to BF16. Use the identical linear/activation formulas in FP32."}
 
 
+def configure_cuda_oracle(torch, device):
+    """Keep CUDA references in explicit FP32 math, with reproducible provenance."""
+    if device != "cuda":
+        return {}
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    if os.environ["CUBLAS_WORKSPACE_CONFIG"] not in (":4096:8", ":16:8"):
+        raise ValueError("CUDA deterministic oracle requires a supported CUBLAS_WORKSPACE_CONFIG")
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA reference requested but no CUDA device is available")
+    torch.backends.cuda.enable_flash_sdp(False)
+    torch.backends.cuda.enable_mem_efficient_sdp(False)
+    torch.backends.cuda.enable_cudnn_sdp(False)
+    torch.backends.cuda.enable_math_sdp(True)
+    torch.set_float32_matmul_precision("highest")
+    import torch.nn.functional as functional
+    from torch.nn.attention import sdpa_kernel, SDPBackend
+
+    original_sdpa = functional.scaled_dot_product_attention
+
+    def fp32_math_attention(query, key, value, *arguments, **keywords):
+        if query.device.type != "cuda":
+            return original_sdpa(query, key, value, *arguments, **keywords)
+        if any(tensor.dtype != torch.float32 for tensor in (query, key, value)):
+            raise ValueError("CUDA oracle attention requires F32 Q/K/V")
+        # Pinned model modules re-enable fused kernels and enter flash-only
+        # contexts. The innermost call must own the math-only context.
+        with torch.autocast(device_type="cuda", enabled=False), sdpa_kernel(SDPBackend.MATH):
+            return original_sdpa(query, key, value, *arguments, **keywords)
+
+    functional.scaled_dot_product_attention = fp32_math_attention
+    return {"sdpa_backend": "math", "cuda_runtime": torch.version.cuda,
+            "device_name": torch.cuda.get_device_name(),
+            "cublas_workspace_config": os.environ["CUBLAS_WORKSPACE_CONFIG"],
+            "sdpa_adaptation": {"target": "torch.nn.functional.scaled_dot_product_attention",
+                                "replacement": inspect.getsource(fp32_math_attention),
+                                "reason": "Use explicit F32 math inside pinned modules' fused-kernel contexts."}}
+
+
 def prepare_image(case, root):
     from PIL import Image
 
@@ -162,6 +200,8 @@ def export(args):
     source, runtime_source, adaptations = validate_source(args.sam3_source, args.sam3_runtime_source)
     sys.path.insert(0, str(runtime_source))
     os.environ["HF_HUB_OFFLINE"] = "1"
+    if args.device == "cuda":
+        os.environ["USE_PERFLIB"] = "0"
     from sam3.model_builder import build_sam3_image_model
     from sam3.model.sam3_image_processor import Sam3Processor
 
@@ -182,6 +222,7 @@ def export(args):
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cudnn.benchmark = False
     torch.set_float32_matmul_precision("highest")
+    cuda_oracle = configure_cuda_oracle(torch, args.device)
     replacement = install_unfused_fp32()
     model = build_sam3_image_model(bpe_path=str(bpe), device=args.device, eval_mode=True,
                                   checkpoint_path=None, load_from_HF=False,
@@ -275,7 +316,7 @@ def export(args):
                   "checkpoint": {"file": args.checkpoint.name, "sha256": sha256_file(args.checkpoint)},
                   "bpe": {"sha256": sha256_file(bpe)},
                   "cases_manifest": {"file": "cases.json", "sha256": sha256_file(staging / "cases.json")},
-                  "oracle": {"variant": "official-unfused-fp32" if reference_kind == "official-checkpoint" else "supplementary-converted-weights-unfused-fp32",
+                  "oracle": {**cuda_oracle, "variant": "official-unfused-fp32" if reference_kind == "official-checkpoint" else "supplementary-converted-weights-unfused-fp32",
                              "source_graph": "pinned Meta SAM 3", "device": args.device, "precision": "float32",
                              "compile": False, "autocast": False, "tf32": False,
                              "deterministic_algorithms": True, "threads": args.threads,

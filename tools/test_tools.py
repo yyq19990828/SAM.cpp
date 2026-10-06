@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Small parser/comparison regressions; no model inference or parity claim."""
 
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -25,6 +26,30 @@ from validate_image import GATES, check_provenance, mask_iou, read_results, tens
 
 
 class ToolChecks(unittest.TestCase):
+    def test_process_timing_preserves_platform_rss_units(self):
+        from benchmark_video import process_timing
+
+        linux = process_timing("output\nSAM_TIME 2048 1.25 0.50 0.10\n", "linux")
+        macos = process_timing("1.25 real 0.50 user 0.10 sys\n2097152 maximum resident set size\n", "darwin")
+        self.assertEqual(linux["peak_rss_bytes"], 2097152)
+        self.assertEqual(macos["peak_rss_bytes"], linux["peak_rss_bytes"])
+        self.assertEqual(linux["wall_seconds"], macos["wall_seconds"])
+        with self.assertRaises(ValueError):
+            process_timing("SAM_TIME missing\n", "linux")
+
+    def test_cuda_oracle_requires_math_and_device_provenance(self):
+        from sam3_artifacts import validate_cuda_oracle_provenance
+
+        validate_cuda_oracle_provenance({"device": "cpu"})
+        oracle = {"device": "cuda", "sdpa_backend": "math", "cuda_runtime": "12.8",
+                  "device_name": "NVIDIA test GPU", "cublas_workspace_config": ":4096:8",
+                  "sdpa_adaptation": {"replacement": "explicit math attention"}}
+        validate_cuda_oracle_provenance(oracle)
+        for name in ("sdpa_backend", "cuda_runtime", "device_name", "cublas_workspace_config", "sdpa_adaptation"):
+            incomplete = {key: value for key, value in oracle.items() if key != name}
+            with self.assertRaisesRegex(ValueError, "CUDA oracle"):
+                validate_cuda_oracle_provenance(incomplete)
+
     def test_visual_comparison_uses_actual_masks_and_rejects_altered_receipts(self):
         from PIL import Image
         from render_image_comparison import render, panel
@@ -235,6 +260,7 @@ class ToolChecks(unittest.TestCase):
 
     def test_quantizer_identity_hashes_linked_target_and_encoder_library(self):
         from sam3_artifacts import sha256_file
+        from validate_image import SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -246,14 +272,22 @@ class ToolChecks(unittest.TestCase):
                         "ggml_library_path": str(linked_library),
                         "ggml_quantize_library_path": str(encoder_library)}
             helper = root / "sam_quantize_rows"
+            for commit in (GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT):
+                with self.subTest(commit=commit):
+                    identity["ggml_build_commit"] = commit
+                    helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
+                    helper.chmod(0o755)
+                    executable, provenance = quantizer_identity(helper)
+                    self.assertEqual(executable, helper.resolve())
+                    self.assertEqual(provenance["ggml_revision"], GGML_REVISION)
+                    self.assertEqual(provenance["ggml_build_commit"], commit)
+                    self.assertEqual(provenance["ggml_version"], "0.25.3")
+                    self.assertEqual(provenance["ggml_library"]["sha256"], sha256_file(linked_library))
+                    self.assertEqual(provenance["ggml_quantize_library"]["sha256"], sha256_file(encoder_library))
+            identity["ggml_build_commit"] = SAM_PATCHED_GGML_BUILD_COMMIT + "-unverified"
             helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
-            helper.chmod(0o755)
-            executable, provenance = quantizer_identity(helper)
-            self.assertEqual(executable, helper.resolve())
-            self.assertEqual(provenance["ggml_revision"], GGML_REVISION)
-            self.assertEqual(provenance["ggml_version"], "0.25.3")
-            self.assertEqual(provenance["ggml_library"]["sha256"], sha256_file(linked_library))
-            self.assertEqual(provenance["ggml_quantize_library"]["sha256"], sha256_file(encoder_library))
+            with self.assertRaisesRegex(ValueError, "pinned GGML"):
+                quantizer_identity(helper)
 
     @staticmethod
     def tokenizer_fixture():
@@ -793,6 +827,31 @@ class ToolChecks(unittest.TestCase):
                 self.assertEqual((output / "sam3/example.py").read_bytes(), (source / "sam3/example.py").read_bytes())
                 self.assertEqual(sorted(path.relative_to(source).as_posix() for path in source.rglob("*")), original)
 
+    def test_cuda_reference_preserves_device_cache_precomputation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            (source / "sam3/model").mkdir(parents=True)
+            (source / "LICENSE").write_text("disposable fixture license\n")
+            original = 'cache = make_cache(device="cuda")\n'
+            adapted = original.replace('device="cuda"', 'device="cpu"')
+            patches = []
+            for name in ("position_encoding.py", "decoder.py"):
+                filename = "sam3/model/" + name
+                (source / filename).write_text(original)
+                patches.append({"file": filename, "source_sha256": hashlib.sha256(original.encode()).hexdigest(),
+                                "adapted_sha256": hashlib.sha256(adapted.encode()).hexdigest(),
+                                "replace": [original, adapted], "reason": "CPU fixture cache"})
+            with patch("prepare_reference_source.validate_source", return_value=(source.resolve(), source.resolve(), [])), \
+                    patch("prepare_reference_source.PATCHES", patches):
+                for device in ("cpu", "cuda"):
+                    output = root / device
+                    prepare(source, output, device=device)
+                    for change in patches:
+                        self.assertEqual((output / change["file"]).read_text(), adapted if device == "cpu" else original)
+                        self.assertEqual((source / change["file"]).read_text(), original)
+                    self.assertEqual(len(read_json(output / "adaptations.json")["changes"]), 2 if device == "cpu" else 0)
+
     def test_gguf_rejection_and_output_preservation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1025,6 +1084,26 @@ class ToolChecks(unittest.TestCase):
                 analyze()
             write_json(path, before)
             self.assertEqual(len(analyze()["samples"]), 64)
+            manifest.update(backend="cuda", cuda_device=0, device_name="NVIDIA test GPU")
+            write_json(root / "manifest.json", manifest)
+            for frame in range(64):
+                path = root / "trace" / f"{frame:06d}-stats.json"
+                sample = read_json(path)
+                sample["runtime"]["cuda_nodes"] = sample["runtime"].pop("metal_nodes")
+                sample["runtime"]["metal_nodes"] = 0
+                write_json(path, sample)
+            manifest["stats"] = read_json(root / "trace/000063-stats.json")
+            write_json(root / "manifest.json", manifest)
+            cuda = lambda: benchmark_video.analyze_run(root, 1, "f16", "cuda", 2, 2)
+            self.assertEqual(cuda()["timings"], valid["timings"])
+            with self.assertRaisesRegex(ValueError, "CUDA device"):
+                benchmark_video.analyze_run(root, 1, "f16", "cuda", 2, 2, cuda_device=1)
+            path = root / "trace/000040-stats.json"; sample = read_json(path)
+            for counter in ("cpu_nodes", "metal_nodes", "blas_nodes"):
+                sample["runtime"][counter] = 1; write_json(path, sample)
+                with self.assertRaisesRegex(ValueError, "placement"):
+                    cuda()
+                sample["runtime"][counter] = 0
         with patch.object(benchmark_video.subprocess, "check_output", return_value="100 1 32 /usr/bin/time\n101 100 2048 /tmp/sam_video\n102 1 99999 /elsewhere/sam_video\n"):
             self.assertEqual(benchmark_video.current_rss(100, "sam_video"), {"pid":101, "rss_bytes":2097152})
 
@@ -1105,6 +1184,22 @@ class ToolChecks(unittest.TestCase):
             (actual / "manifest.json").write_text(json.dumps(manifest))
             with self.assertRaisesRegex(ValueError, "CPU fallback"):
                 compare_case(reference, actual, case, "f32", "metal", gates, 8)
+            changed["objects"][0]["box"][0] = 0
+            path.write_text(json.dumps(changed))
+            manifest.update(backend="cuda", cuda_device=0, device_name="NVIDIA test GPU")
+            manifest["stats"]["runtime"] = {"cuda_nodes": 20, "cpu_nodes": 0, "metal_nodes": 0}
+            (actual / "manifest.json").write_text(json.dumps(manifest))
+            for frame in range(2):
+                (actual / "trace" / f"{frame:06d}-stats.json").write_text(json.dumps(manifest["stats"]))
+            self.assertTrue(compare_case(reference, actual, case, "f32", "cuda", gates, 8)["passed"])
+            with self.assertRaisesRegex(ValueError, "selected-GPU"):
+                compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_device=1)
+            sample = dict(manifest["stats"])
+            sample["runtime"] = {"cuda_nodes": 20, "cpu_nodes": 1, "metal_nodes": 0}
+            (actual / "trace/000001-stats.json").write_text(json.dumps(sample))
+            failed = compare_case(reference, actual, case, "f32", "cuda", gates, 8)
+            self.assertFalse(failed["passed"])
+            self.assertIn("frame 1: missing CUDA compute or graph fallback", failed["failures"])
 
 
 if __name__ == "__main__":

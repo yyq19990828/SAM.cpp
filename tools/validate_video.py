@@ -8,7 +8,8 @@ import subprocess
 
 from export_video_reference import CASES, OFFICIAL_SHA256
 from sam3_artifacts import (BPE_SHA256, SAM3_REVISION, artifact_path, read_array, read_json, sha256_file, write_json,
-                           freeze_run_artifacts, verify_run_artifacts, freeze_output_files, verify_output_files)
+                           freeze_run_artifacts, verify_run_artifacts, freeze_output_files, verify_output_files,
+                           validate_cuda_oracle_provenance)
 from sam3_gguf import HYBRID_PROFILE, inspect_tensors, read_gguf, tensor_schema, validate_metadata
 from validate_image import mask_iou, tensor_error
 
@@ -23,6 +24,7 @@ def check_provenance(model_path, reference_path, allow_diagnostic=False):
     reference = read_json(reference_path / "manifest.json")
     frozen = read_json(CASES)
     oracle = reference.get("oracle", {})
+    validate_cuda_oracle_provenance(oracle)
     if (reference.get("schema_version") != 1 or reference.get("task") != "text_video"
             or reference.get("complete") is not True or reference.get("sam3_revision") != SAM3_REVISION
             or reference.get("reference_kind") != "official-checkpoint"
@@ -105,7 +107,7 @@ def read_objects(directory, frame, width, height, require_hash):
     return result, objects
 
 
-def compare_case(reference, actual, case, precision, backend, gates, max_objects):
+def compare_case(reference, actual, case, precision, backend, gates, max_objects, cuda_device=0):
     import numpy as np
 
     gate_precision = "f16" if precision == "hybrid" else precision
@@ -119,6 +121,11 @@ def compare_case(reference, actual, case, precision, backend, gates, max_objects
             or manifest.get("width") != case["width"] or manifest.get("height") != case["height"]):
         raise ValueError("C++ video run is incomplete or has different inputs/backend/tokens")
     stats = manifest["stats"]
+    if backend == "cuda":
+        if (stats["runtime"].get("cuda_nodes", 0) <= 0 or
+                any(stats["runtime"].get(f"{other}_nodes", 0) for other in ("cpu", "metal", "blas")) or
+                manifest.get("cuda_device") != cuda_device or not manifest.get("device_name")):
+            raise ValueError("video CUDA graph has absent selected-GPU work or compute fallback")
     if stats["accepted_frames"] != case["frames"] or stats["emitted_frames"] != case["frames"] or stats["pending_frames"] != 0:
         raise ValueError("C++ video did not accept/emit/drain every declared frame")
     if stats["pending_high_water"] > 15 or stats["retained_records"] > 27 * stats["active_objects"]:
@@ -180,6 +187,9 @@ def compare_case(reference, actual, case, precision, backend, gates, max_objects
             failures.append(f"frame {frame}: retained state or delayed-output bound exceeded")
         if backend == "metal" and sample["runtime"]["cpu_nodes"] != 0:
             failures.append(f"frame {frame}: CPU graph fallback")
+        if backend == "cuda" and (sample["runtime"].get("cuda_nodes", 0) <= 0 or
+                any(sample["runtime"].get(f"{other}_nodes", 0) for other in ("cpu", "metal", "blas"))):
+            failures.append(f"frame {frame}: missing CUDA compute or graph fallback")
         if frame not in (0, 1, 16, case["frames"] - 1):
             continue
         a_path, r_path = actual / "tensors" / f"{frame:06d}", reference / "tensors" / f"{frame:06d}"
@@ -225,12 +235,16 @@ def validate(args):
               "model_sha256": MODEL_HASHES[precision], "checkpoint_sha256": OFFICIAL_SHA256,
               "reference_manifest_sha256": sha256_file(args.reference / "manifest.json"),
               "binary_sha256": binary_hash, "run_artifact_sha256": artifacts, "gates": gates, "cases": []}
+    if args.backend == "cuda":
+        report["cuda_device"] = getattr(args, "cuda_device", None) or 0
     for case in reference["cases"]:
         directory = artifact_path(args.reference, case["directory"])
         actual = args.output / case["id"]
         command = [str(executable.resolve()), "--model", str(args.model.resolve()), "--frames", str(directory / "inputs"),
                    "--text", case["prompt"], "--backend", args.backend, "--threads", str(args.threads),
                    "--max-objects", str(reference["max_objects"]), "--dump-tensors", "--output", str(actual)]
+        if args.backend == "cuda":
+            command.extend(["--cuda-device", str(getattr(args, "cuda_device", None) or 0)])
         try:
             verify_run_artifacts(artifacts)
             print(f"Validating {case['id']} ({args.backend}, {precision})", flush=True)
@@ -240,7 +254,8 @@ def validate(args):
                 raise RuntimeError(f"sam_video exited {result.returncode}; see {case['id']}.log")
             verify_run_artifacts(artifacts)
             output_files = freeze_output_files(actual)
-            metrics = compare_case(directory, actual, case, precision, args.backend, gates, reference["max_objects"])
+            metrics = compare_case(directory, actual, case, precision, args.backend, gates, reference["max_objects"],
+                                   getattr(args, "cuda_device", None) or 0)
             verify_output_files(actual, output_files)
             metrics["output_sha256"] = output_files
             verify_run_artifacts(artifacts)
@@ -259,12 +274,15 @@ def main():
     parser.add_argument("--build-dir", required=True, type=Path)
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--reference", required=True, type=Path)
-    parser.add_argument("--backend", choices=("cpu", "metal"), required=True)
+    parser.add_argument("--backend", choices=("cpu", "metal", "cuda"), required=True)
+    parser.add_argument("--cuda-device", type=int, help="Index among CUDA-visible devices (default: 0)")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--timeout-seconds", type=float, default=14400)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--allow-diagnostic", action="store_true", help="Compare a labeled subset without claiming full M2 acceptance")
     args = parser.parse_args()
+    if args.cuda_device is not None and (args.backend != "cuda" or args.cuda_device < 0):
+        parser.error("--cuda-device requires backend cuda and a nonnegative index")
     if args.threads <= 0 or not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
         parser.error("threads and timeout must be positive and finite")
     try:

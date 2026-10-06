@@ -166,8 +166,10 @@ def quantizer_identity(quantizer):
         raise ValueError("quantizer GGML revision or quantization version is unsupported")
     patch_hash = sha256_file(Path(__file__).resolve().parents[1] / "cmake/patches/ggml-precise-metal.patch")
     expected_patched_commit = f"{GGML_REVISION[:8]}-sam-{patch_hash[:12]}"
+    cuda_patch_hash = sha256_file(Path(__file__).resolve().parents[1] / "cmake/patches/ggml-precise-cuda.patch")
+    expected_combined_commit = f"{expected_patched_commit}-{cuda_patch_hash[:12]}"
     build_commit = identity.get("ggml_build_commit")
-    if build_commit not in (GGML_REVISION, expected_patched_commit) or identity.get("ggml_version") != "0.25.3":
+    if build_commit not in (GGML_REVISION, expected_patched_commit, expected_combined_commit) or identity.get("ggml_version") != "0.25.3":
         raise ValueError("quantizer is not linked to the pinned GGML 0.25.3 source")
 
     libraries = {}

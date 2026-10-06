@@ -7,7 +7,7 @@ int main(int argc, char** argv) {
         const auto options = sam_example::parse_options(argc, argv);
         if (options.help) {
             std::cout << "Usage: sam_image --model FILE --image FILE --text PROMPT --output NEW_DIR\n"
-                         "  [--backend auto|cpu|metal] [--threads N] [--score-threshold 0.5] [--repeat N]\n"
+                         "  [--backend auto|cpu|metal|cuda] [--cuda-device N] [--threads N] [--score-threshold 0.5] [--repeat N]\n"
                          "Repeat measures warmed full-image and repeated-result-cache calls separately.\n";
             return 0;
         }

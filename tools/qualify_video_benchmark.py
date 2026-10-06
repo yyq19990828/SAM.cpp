@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 import time
 
-from export_reference import install_unfused_fp32, validate_source
+from export_reference import configure_cuda_oracle, install_unfused_fp32, validate_source
 from prepare_reference_source import video_adaptations
 from sam3_artifacts import (BPE_SHA256, SAM3_REVISION, artifact_path, read_json,
                            sha256_file, write_json, verify_run_artifacts)
@@ -93,8 +93,9 @@ def qualify(args):
     root = fixture_path.parent
     source, runtime = args.sam3_source.resolve(), args.sam3_runtime_source.resolve()
     _, _, adaptations = validate_source(source, runtime)
-    if adaptations != [{key: value for key, value in change.items() if key != "text"} for change in video_adaptations(source)]:
-        raise ValueError("runtime adaptations differ from the pinned CPU-video preparation")
+    if adaptations != [{key: value for key, value in change.items() if key != "text"}
+                       for change in video_adaptations(source, args.device)]:
+        raise ValueError("runtime adaptations differ from the pinned device/video preparation")
     checkpoint, bpe = args.checkpoint.resolve(), args.bpe.resolve()
     checkpoint_hash = sha256_file(checkpoint)
     if checkpoint_hash != CHECKPOINT_SHA256 or sha256_file(bpe) != BPE_SHA256:
@@ -123,9 +124,12 @@ def qualify(args):
     torch.set_num_threads(4); torch.set_default_dtype(torch.float32); torch.manual_seed(0)
     torch.use_deterministic_algorithms(True)
     torch.backends.cuda.matmul.allow_tf32 = False; torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cudnn.benchmark = False
+    report["oracle"] = {"device": args.device, "precision": "float32", "autocast": False, "tf32": False,
+                        **configure_cuda_oracle(torch, args.device)}
     report["unfused_fp32_adaptation"] = install_unfused_fp32()
     report["packages"] = {name: importlib.metadata.version(name) for name in ("torch","numpy","Pillow")}
-    model = build_sam3_video_model(checkpoint_path=str(checkpoint), bpe_path=str(bpe), device="cpu", load_from_HF=False, compile=False)
+    model = build_sam3_video_model(checkpoint_path=str(checkpoint), bpe_path=str(bpe), device=args.device, load_from_HF=False, compile=False)
     model.max_num_objects = 8
     images = []
     for path in inputs:
@@ -134,7 +138,7 @@ def qualify(args):
     expected = workload["expected_objects"]
     started = time.perf_counter()
     try:
-        with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
+        with torch.inference_mode(), torch.autocast(device_type=args.device, enabled=False):
             state = model.init_state(images, offload_video_to_cpu=True)
             state["text_prompt"] = fixture["prompt"]; state["input_batch"].find_text_batch[0] = fixture["prompt"]
             previous = set(); initial = None; quadrants = {}; delayed = []; removed = set()
@@ -197,6 +201,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--reuse-from", type=Path)
     parser.add_argument("--parent-fixture", type=Path)
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     for name in ("sam3-source", "sam3-runtime-source", "checkpoint", "bpe"):
         parser.add_argument("--" + name, type=Path)
     args = parser.parse_args()

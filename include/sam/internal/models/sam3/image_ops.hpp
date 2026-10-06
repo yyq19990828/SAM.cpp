@@ -29,16 +29,20 @@ inline ResizeAxis resize_axis(int source_size, int target_size) {
     const float support = std::max(1.0f, scale);
     const float inverse_scale = scale >= 1.0f ? 1.0f / scale : 1.0f;
     for (int i = 0; i < target_size; ++i) {
-        const float center = scale * (i + 0.5f);
         const int first = static_cast<int>(std::max<std::int64_t>(0,
-            static_cast<std::int64_t>(center - support + 0.5)));
+            static_cast<std::int64_t>(std::fma(scale, i + 0.5f, -support) + 0.5f)));
         const int end = static_cast<int>(std::min<std::int64_t>(source_size,
-            static_cast<std::int64_t>(center + support + 0.5)));
+            static_cast<std::int64_t>(std::fma(scale, i + 0.5f, support) + 0.5f)));
         axis.first[i] = first;
         auto& weights = axis.weights[i];
         float sum = 0.0f;
+        // CUDA contracts this subtraction with the scale multiplication. Keep
+        // the relative coordinate precise even on hosts without contraction:
+        // rounding an absolute center first can change the final RGB8 byte.
+        const float relative_center = std::fma(-scale, i + 0.5f, static_cast<float>(first));
         for (int source = first; source < end; ++source) {
-            const float weight = std::max(0.0f, 1.0f - std::abs((source - center + 0.5f) * inverse_scale));
+            const float weight = std::max(0.0f,
+                1.0f - std::abs((source - first + relative_center + 0.5f) * inverse_scale));
             weights.push_back(weight);
             sum += weight;
         }
@@ -75,8 +79,8 @@ inline std::vector<float> preprocess_image(const ImageView& image, int image_siz
             for (int channel = 0; channel < 3; ++channel) {
                 float value = 0.0f;
                 for (std::size_t k = 0; k < horizontal.weights[x].size(); ++k) {
-                    value += horizontal.weights[x][k] *
-                             source[(static_cast<std::size_t>(horizontal.first[x]) + k) * 3 + channel];
+                    value = std::fma(horizontal.weights[x][k],
+                        static_cast<float>(source[(static_cast<std::size_t>(horizontal.first[x]) + k) * 3 + channel]), value);
                 }
                 temporary[(static_cast<std::size_t>(y) * image_size + x) * 3 + channel] = value;
             }
@@ -87,8 +91,8 @@ inline std::vector<float> preprocess_image(const ImageView& image, int image_siz
             for (int channel = 0; channel < 3; ++channel) {
                 float value = 0.0f;
                 for (std::size_t k = 0; k < vertical.weights[y].size(); ++k) {
-                    value += vertical.weights[y][k] * temporary[
-                        ((static_cast<std::size_t>(vertical.first[y]) + k) * image_size + x) * 3 + channel];
+                    value = std::fma(vertical.weights[y][k], temporary[
+                        ((static_cast<std::size_t>(vertical.first[y]) + k) * image_size + x) * 3 + channel], value);
                 }
                 const auto byte = round_nearest_even_byte(value);
                 // Keep torchvision's dtype conversion and Normalize operations

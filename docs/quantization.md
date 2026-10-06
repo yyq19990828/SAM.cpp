@@ -8,7 +8,8 @@ quantization policies for other model adapters.
 
 SAM 3 image weights support the following components individually or in
 combination. One conversion uses a single target quantization format;
-component selection does not change activation precision.
+component selection determines weight storage, while matrix staging follows
+the backend arithmetic profile.
 
 | Module name | Scope | Eligible linear matrices |
 | --- | --- | ---: |
@@ -26,8 +27,9 @@ or box prompting APIs; the current task remains text-prompted image segmentation
 Two fixed preset families are available: `image-vision-linear-{precision}-v1`
 quantizes vision linears, while `image-full-linear-{precision}-v1` covers 348
 target matrices across all four components. Full-component quantization retains
-the floating-point exceptions above and does not quantize activations or video
-tracking state.
+the floating-point exceptions above. GGUF quantizes stored weights; shared
+graphs retain F32 activation buffers, while native GPU kernels may stage matrix
+operands in lower precision. Video tracking state is outside these image profiles.
 
 Repository numerical acceptance focuses on those two preset families; see
 [model support](../MODEL_ZOO.md) for their status. Custom combinations selected
@@ -71,7 +73,9 @@ on the images, prompts and backend you plan to use.
 The four exact `image-vision-linear-*` profiles have passed output-behavior
 validation on the repository's fixed image set with CPU (with and without BLAS)
 and Metal. All four `image-full-linear-*` presets have also passed output
-quality on the same corpus with CPU (BLAS enabled) and Metal. These are bounded
+quality on the same corpus with CPU (BLAS enabled) and Metal. Both preset
+families also passed the seven-case original-model output-quality checks on
+Linux x86_64 CUDA with an RTX 4090. These are bounded
 image-set results, not dataset-wide accuracy guarantees. Output checks cover the resulting detections, masks, scores and
 boxes. Passing them does not mean every intermediate tensor is identical to the
 original checkpoint; quantization changes intermediate values. Validation
@@ -110,6 +114,10 @@ Use Python 3.12 and the pinned reference requirements. Set `sam3_weights_dir`
 to the directory containing the original `sam3.pt` checkpoint and BPE file.
 The destination must be a new file; the converter publishes its GGUF manifest
 beside it and will not overwrite an existing output.
+
+Linux x86_64 CUDA reference runs use
+[requirements-linux-cuda.lock](../tools/requirements-linux-cuda.lock) in place
+of `tools/requirements.lock`.
 
 ```sh
 python3.12 -m venv .venv-reference
@@ -174,7 +182,7 @@ See [model verification](validation.md) for the comparison workflow.
 
 ## Run inference
 
-Use the `sam_image` executable from a CPU or Metal build. The output directory
+Use the `sam_image` executable from a CPU, Metal or CUDA build. The output directory
 must be new. For example:
 
 ```sh
@@ -184,8 +192,9 @@ build/cpu/examples/sam_image \
   --output outputs/truck-q8 --backend cpu
 ```
 
-Change the executable to the Metal build and pass `--backend metal` to request
-Metal explicitly. Quantized `auto` selection currently chooses CPU.
+Use the matching build and pass `--backend metal` or `--backend cuda` to select
+a GPU backend. CUDA accepts `--cuda-device N` as an index among visible devices.
+Quantized `auto` selection currently chooses CPU.
 
 ## Backend behavior
 
@@ -194,8 +203,11 @@ packed quantized weights stay resident, while the shared graph creates
 transient F32 casts for `MUL_MAT`; this extra workspace can affect peak memory.
 `ModelInfo` reports this as `ggml-quantized-weights-f32-v1`. Metal uses native
 quantized kernels with half staging and reports `ggml-quantized-native-v1`, so
-its arithmetic path and memory use differ from CPU. Validate the backend you
-intend to deploy.
+its arithmetic path and memory use differ from CPU. CUDA also keeps packed
+weights resident, uses native MMVQ/MMQ with RHS Q8_1 staging on the qualified
+device, and reports `ggml-quantized-cuda-native-v1`. Explicit CUDA rejects
+CPU/Metal/BLAS compute fallback. Profile qualification is backend-specific;
+see the model support table before deployment.
 See the [GGUF schema reference](gguf.md), [model support](../MODEL_ZOO.md) and
 [measured image performance](../BENCHMARK.md) for the file contract, current
 support boundary and hardware-specific measurements.

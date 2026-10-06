@@ -12,7 +12,7 @@ import gguf
 
 from sam3_artifacts import (BPE_SHA256, PAB_REVISION, REQUIRED_TENSORS, SAM3_REVISION,
                            artifact_path, load_case_manifest, read_array, read_json, read_tensor_index,
-                           sha256_file, validate_case_manifest, write_json)
+                           sha256_file, validate_case_manifest, validate_cuda_oracle_provenance, write_json)
 from sam3_gguf import (QUANTIZATION_MODULES as GGUF_QUANTIZATION_MODULES,
                        QUANTIZATION_VERSION, canonical_quantization_modules, inspect_tensors,
                        quantization_module_for_tensor, quantization_reason_for_tensor,
@@ -51,9 +51,12 @@ FROZEN_FULL_OUTPUT_QUALITY_GATES_SHA256 = "f796add8c03adc078797c6c5f93bb439c2140
 PINNED_GGML_REVISION = "353b63b439f27ab2cc19dac97ab1681ba6d2d084"
 PINNED_GGML_VERSION = "0.25.3"
 GGML_PRECISION_PATCH = Path(__file__).resolve().parents[1] / "cmake/patches/ggml-precise-metal.patch"
-SAM_PATCHED_GGML_BUILD_COMMIT = f"{PINNED_GGML_REVISION[:8]}-sam-{sha256_file(GGML_PRECISION_PATCH)[:12]}"
+SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT = f"{PINNED_GGML_REVISION[:8]}-sam-{sha256_file(GGML_PRECISION_PATCH)[:12]}"
+GGML_CUDA_PRECISION_PATCH = Path(__file__).resolve().parents[1] / "cmake/patches/ggml-precise-cuda.patch"
+SAM_PATCHED_GGML_BUILD_COMMIT = f"{SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT}-{sha256_file(GGML_CUDA_PRECISION_PATCH)[:12]}"
 CPU_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-weights-f32-v1"
 METAL_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-native-v1"
+CUDA_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-cuda-native-v1"
 QUANTIZED_PRECISIONS = frozenset({"q8_0", "q6_k", "q5_k", "q4_k"})
 _EXPECTED_PRECISION_NAMES = {"q8_0", "q6_k", "q5_k", "q4_k"}
 QUANTIZATION_MODULES = tuple(GGUF_QUANTIZATION_MODULES)
@@ -252,6 +255,8 @@ def quantization_release_eligibility(selection, model, reference, passed):
 
 
 def allowed_runtime_arithmetic_profiles(backend, allow_historical_cpu_native=False):
+    if backend == "cuda":
+        return {CUDA_QUANTIZED_ARITHMETIC_PROFILE}
     if backend == "metal":
         return {METAL_QUANTIZED_ARITHMETIC_PROFILE}
     if backend == "cpu":
@@ -410,7 +415,8 @@ def validate_quantization_sidecar(model, allow_custom_quantization=False):
                 or quantizer.get("fallback_implementation") != "gguf-py"
                 or quantizer.get("fallback_version") != model.get("gguf_package_version")
                 or quantizer.get("ggml_revision") != PINNED_GGML_REVISION
-                or quantizer.get("ggml_build_commit") not in (PINNED_GGML_REVISION, SAM_PATCHED_GGML_BUILD_COMMIT)
+                or quantizer.get("ggml_build_commit") not in (
+                    PINNED_GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT)
                 or quantizer.get("ggml_version") != PINNED_GGML_VERSION
                 or quantizer.get("ggml_quantization_version") != QUANTIZATION_VERSION
                 or not isinstance(helper.get("file"), str) or not helper["file"]
@@ -504,7 +510,7 @@ def read_results(directory, scores, case, require_hash):
 
 
 def compare_case(reference_directory, actual_directory, case, precision, backend=None, model=None,
-                 allow_historical_cpu_native=False):
+                 allow_historical_cpu_native=False, cuda_device=0):
     import numpy as np
 
     quantized = precision in QUANTIZED_PRECISIONS
@@ -599,6 +605,10 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
     if not quantized and actual_result.get("arithmetic_profile", "") != runtime_arithmetic_profile:
         raise ValueError("C++ result arithmetic profile differs from the converted model")
     runtime = actual_result.get("runtime", {})
+    if backend == "cuda":
+        if (runtime.get("cuda_nodes", 0) <= 0 or any(runtime.get(f"{other}_nodes", 0) for other in ("cpu", "metal", "blas"))
+                or actual_result.get("cuda_device") != cuda_device or not actual_result.get("device_name")):
+            raise ValueError("CUDA acceptance requires work on the selected GPU with zero CPU/Metal/BLAS compute fallback")
     if backend == "metal" and runtime.get("metal_nodes", 0) <= 0:
         if quantized:
             output_failures.append("Metal selection has no evidence of actual graph execution on Metal")
@@ -606,8 +616,8 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
             raise ValueError("Metal selection has no evidence of actual graph execution on Metal")
     if quantized and backend == "metal" and (runtime.get("cpu_nodes", 0) or runtime.get("blas_nodes", 0)):
         output_failures.append("quantized Metal acceptance requires zero CPU/BLAS graph fallback")
-    if quantized and backend == "cpu" and runtime.get("metal_nodes", 0):
-        output_failures.append("CPU quantized acceptance unexpectedly executed graph nodes on Metal")
+    if quantized and backend == "cpu" and (runtime.get("metal_nodes", 0) or runtime.get("cuda_nodes", 0)):
+        output_failures.append("CPU quantized acceptance unexpectedly executed graph nodes on a GPU")
     dimensions_match = ((reference_result["width"], reference_result["height"])
                         == (actual_result.get("width"), actual_result.get("height")))
     if not dimensions_match:
@@ -891,6 +901,7 @@ def check_provenance(model_path, reference_path, case_path, allow_supplementary=
     if model["bpe"]["sha256"] != BPE_SHA256 or reference["bpe"]["sha256"] != BPE_SHA256:
         raise ValueError("model/reference tokenizer is not the pinned official BPE")
     oracle = reference.get("oracle", {})
+    validate_cuda_oracle_provenance(oracle)
     expected_variant = "official-unfused-fp32" if reference_kind == "official-checkpoint" else "supplementary-converted-weights-unfused-fp32"
     if (oracle.get("variant") != expected_variant or oracle.get("precision") != "float32"
             or oracle.get("compile") is not False or oracle.get("autocast") is not False or oracle.get("tf32") is not False
@@ -979,6 +990,7 @@ def check_dequantized_reference(path, model_path, model, original_reference_path
     if weight_compression.get("passed") is not all(item["passed"] for item in measured_weights.values()):
         raise ValueError("dequantized Meta weight compression summary disagrees with its tensor measurements")
     oracle = reference.get("oracle", {})
+    validate_cuda_oracle_provenance(oracle)
     if (oracle.get("variant") != "supplementary-converted-weights-unfused-fp32"
             or oracle.get("precision") != "float32" or oracle.get("compile") is not False
             or oracle.get("autocast") is not False or oracle.get("tf32") is not False
@@ -1089,6 +1101,8 @@ def validate(args):
               "model_sha256": model["output"]["sha256"], "checkpoint_sha256": model["checkpoint"]["sha256"],
               "reference_manifest_sha256": sha256_file(args.reference / "manifest.json"),
               "gates": GATES, "cases": []}
+    if args.backend == "cuda":
+        report["cuda_device"] = getattr(args, "cuda_device", None) or 0
     if quantized:
         from collections import Counter
 
@@ -1150,6 +1164,8 @@ def validate(args):
                            "--image", str(artifact_path(directory, case["input"])), "--text", case["prompt"],
                            "--backend", args.backend, "--threads", str(args.threads),
                            "--score-threshold", "0.5", "--output", str(actual_directory)]
+                if args.backend == "cuda":
+                    command.extend(["--cuda-device", str(getattr(args, "cuda_device", None) or 0)])
                 verify_run_artifacts(artifacts)
                 print(f"Validating {case['id']} ({args.backend}, {precision})", flush=True)
                 with (output / f"{case['id']}.log").open("w") as log:
@@ -1162,7 +1178,8 @@ def validate(args):
             if existing_root is not None and output_files != previous_cases[case["id"]]["output_sha256"]:
                 raise ValueError("retained C++ output changed during diagnostic comparison")
             metrics = compare_case(directory, actual_directory, case, precision, args.backend, model,
-                                   allow_historical_cpu_native=existing_root is not None)
+                                   allow_historical_cpu_native=existing_root is not None,
+                                   cuda_device=getattr(args, "cuda_device", None) or 0)
             if diagnostic_cases is not None:
                 diagnostic_case = diagnostic_cases[case["id"]]
                 diagnostic_directory = artifact_path(diagnostic_path, diagnostic_case["directory"])
@@ -1233,7 +1250,8 @@ def main():
     parser.add_argument("--build-dir", required=True, type=Path)
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--reference", required=True, type=Path)
-    parser.add_argument("--backend", required=True, choices=("cpu", "metal"))
+    parser.add_argument("--backend", required=True, choices=("cpu", "metal", "cuda"))
+    parser.add_argument("--cuda-device", type=int, help="Index among CUDA-visible devices (default: 0)")
     parser.add_argument("--cases", type=Path, default=Path(__file__).resolve().parents[1] / "tests/data/sam3-image-cases.json")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--timeout-seconds", type=float, default=600)
@@ -1247,6 +1265,8 @@ def main():
     parser.add_argument("--allow-custom-quantization", action="store_true",
                         help="Allow a schema-4 custom module profile for diagnostics only; it is never release eligible")
     args = parser.parse_args()
+    if args.cuda_device is not None and (args.backend != "cuda" or args.cuda_device < 0):
+        parser.error("--cuda-device requires backend cuda and a nonnegative index")
     if args.threads <= 0 or args.timeout_seconds <= 0 or not math.isfinite(args.timeout_seconds):
         parser.error("thread count and timeout must be positive")
     try:

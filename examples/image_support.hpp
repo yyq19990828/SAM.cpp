@@ -48,6 +48,15 @@ inline int positive_integer(std::string_view value, const std::string& name) {
     return result;
 }
 
+inline int nonnegative_integer(std::string_view value, const std::string& name) {
+    int result = 0;
+    const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
+    if (parsed.ec != std::errc() || parsed.ptr != value.data() + value.size() || result < 0) {
+        throw std::invalid_argument(name + " requires a nonnegative integer");
+    }
+    return result;
+}
+
 inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
     Options options;
     std::set<std::string> seen;
@@ -62,6 +71,7 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
         }
         if (name != "--model" && name != "--image" && name != "--text" &&
             name != "--output" && name != "--backend" && name != "--threads" &&
+            name != "--cuda-device" &&
             name != "--score-threshold" && (name != "--repeat" || !allow_repeat)) {
             throw std::invalid_argument("Unknown argument: " + name);
         }
@@ -80,12 +90,14 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
         else if (name == "--text") options.text = value;
         else if (name == "--output") options.output = value;
         else if (name == "--threads") options.backend.threads = positive_integer(value, name);
+        else if (name == "--cuda-device") options.backend.cuda_device = nonnegative_integer(value, name);
         else if (name == "--repeat") options.repeat = positive_integer(value, name);
         else if (name == "--backend") {
             if (value == "auto") options.backend.backend = sam::Backend::Auto;
             else if (value == "cpu") options.backend.backend = sam::Backend::Cpu;
             else if (value == "metal") options.backend.backend = sam::Backend::Metal;
-            else throw std::invalid_argument("--backend must be auto, cpu, or metal");
+            else if (value == "cuda") options.backend.backend = sam::Backend::Cuda;
+            else throw std::invalid_argument("--backend must be auto, cpu, metal, or cuda");
         } else {
             char* end = nullptr;
             errno = 0;
@@ -97,6 +109,8 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
             }
         }
     }
+    if (seen.count("--cuda-device") && options.backend.backend != sam::Backend::Cuda)
+        throw std::invalid_argument("--cuda-device requires --backend cuda");
     for (const char* name : {"--model", "--image", "--text", "--output"}) {
         if (!seen.count(name)) {
             throw std::invalid_argument(std::string("Required argument: ") + name);
@@ -110,6 +124,7 @@ inline const char* backend_name(sam::Backend backend) {
         case sam::Backend::Auto: return "auto";
         case sam::Backend::Cpu: return "cpu";
         case sam::Backend::Metal: return "metal";
+        case sam::Backend::Cuda: return "cuda";
     }
     throw std::runtime_error("Unknown resolved backend");
 }
@@ -139,7 +154,8 @@ inline void write_model_profile(std::ostream& stream, const sam::ModelInfo& info
         if (i) stream << ',';
         stream << json_string(info.quantization_modules[i]);
     }
-    stream << ']';
+    stream << ']' << ",\"device_name\":" << json_string(info.device_name)
+           << ",\"cuda_device\":" << info.cuda_device;
 }
 
 inline std::ofstream output_file(const std::filesystem::path& path, bool binary = false) {
@@ -237,6 +253,7 @@ inline void write_runtime_stats(std::ostream& stream, const sam::RuntimeStats& s
            << ",\"text_encodes\":" << stats.text_encodes << ",\"inferences\":" << stats.inferences
            << ",\"cpu_nodes\":" << stats.cpu_nodes << ",\"metal_nodes\":" << stats.metal_nodes
            << ",\"blas_nodes\":" << stats.blas_nodes
+           << ",\"cuda_nodes\":" << stats.cuda_nodes
            << ",\"graph_partitions\":" << stats.graph_partitions
            << ",\"host_upload_bytes\":" << stats.host_upload_bytes
            << ",\"host_download_bytes\":" << stats.host_download_bytes

@@ -1,3 +1,4 @@
+#include "backend_test_support.hpp"
 #include <sam/internal/models/sam3/tensors.hpp>
 #include <sam/internal/models/sam3/tracking/attention.hpp>
 #include <sam/internal/models/sam3/tracking/memory_attention.hpp>
@@ -20,6 +21,14 @@ namespace {
 
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void check_backend_placement(sam::Backend backend, const sam::RuntimeStats& stats) {
+    if (backend == sam::Backend::Cuda)
+        require(stats.cuda_nodes > 0 && stats.cpu_nodes == 0 && stats.metal_nodes == 0 && stats.blas_nodes == 0,
+                "Tracking subgraph used compute outside CUDA");
+    else require(stats.cpu_nodes > 0 && stats.cuda_nodes == 0 && stats.metal_nodes == 0,
+                 "Tracking subgraph did not execute on CPU");
 }
 
 void check_mutable_tracker_chunk_limit() {
@@ -129,6 +138,22 @@ void check_preprocessing() {
             "F16 halfway values do not round to even");
 }
 
+void check_mask_resize() {
+    // Independent torch 2.10.0 CUDA interpolation results for a synthetic
+    // signed mask. Rounding here can affect a later binary initialization.
+    constexpr int width = 129, height = 83, target = 71;
+    std::vector<float> input(width * height);
+    for (std::size_t i = 0; i < input.size(); ++i)
+        input[i] = ((i * 17 + 3) % 8) < 3 ? 1024.0f : -1024.0f;
+    const auto bilinear = sam::internal::sam3::resize_mask(input, width, height, target, target);
+    const auto antialiased = sam::internal::sam3::resize_mask(input, width, height, target, target, true);
+    require(std::abs(bilinear[69 * target + 68] - 440.2027587890625f) <= 0.0001f,
+            "mask half-pixel coordinates differ from the independent CUDA fixture");
+    require(antialiased[35 * target + 23] == -944.8809204101562f &&
+            antialiased[69 * target + 68] == 171.0402374267578f,
+            "mask antialias accumulation lost its required float contraction");
+}
+
 void check_inventory() {
     for (const bool video : {false, true}) for (const bool half : {false, true}) {
         auto context = sam::internal::make_context(4096);
@@ -181,8 +206,8 @@ void check_inventory() {
     }
 }
 
-void check_attention() {
-    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 1}, true);
+void check_attention(sam::Backend backend) {
+    sam::internal::GgmlRuntime runtime({backend, 1}, true);
     // Tails straddle both the 128-query tile and the complete-key boundary.
     for (const int query_count : {1, 128, 129, 257}) {
         const int key_count = 131, channels = 256;
@@ -217,6 +242,7 @@ void check_attention() {
             sam::internal::upload(k, keys, stats);
             sam::internal::upload(v, values, stats);
             graph.compute();
+            check_backend_placement(backend, stats);
             const auto actual = sam::internal::download(output, stats);
             for (int b = 0; b < batch; ++b) for (int query = 0; query < query_count; ++query) {
                 const int qb = query_batch == 1 ? 0 : b;
@@ -247,17 +273,16 @@ void check_attention() {
             }
             require(output->ne[0] == channels && output->ne[1] == query_count && output->ne[2] == batch,
                     "Batched tiled attention returned a transposed object layout");
-            require(stats.cpu_nodes > 0, "Attention test did not execute a backend graph");
         }
     }
 }
 
 std::vector<float> run_memory_attention(const std::vector<float>& prompt_values,
                                         const std::vector<float>& prompt_positions,
-                                        int batch) {
+                                        int batch, sam::Backend backend) {
     constexpr int channels = 256, memory_channels = 64, ffn_channels = 1024;
     constexpr int current_tokens = 3, memory_tokens = 3, spatial_memory_tokens = 2;
-    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 1}, true);
+    sam::internal::GgmlRuntime runtime({backend, 1}, true);
     sam::RuntimeStats stats;
     sam::internal::GraphExecution graph(runtime, 1024, stats);
     auto* ctx = graph.context();
@@ -333,12 +358,13 @@ std::vector<float> run_memory_attention(const std::vector<float>& prompt_values,
     sam::internal::upload(frequencies, rope, stats);
     sam::internal::upload(key_frequencies, key_rope, stats);
     graph.compute();
+    check_backend_placement(backend, stats);
     require(output->ne[0] == channels && output->ne[1] == current_tokens && output->ne[2] == batch,
             "Memory attention lost its object batch axis");
     return sam::internal::download(output, stats);
 }
 
-void check_memory_attention_batch() {
+void check_memory_attention_batch(sam::Backend backend) {
     constexpr int memory_channels = 64, memory_tokens = 3, batch = 4;
     std::vector<float> prompt(memory_channels * memory_tokens * batch);
     std::vector<float> position(prompt.size());
@@ -348,13 +374,13 @@ void check_memory_attention_batch() {
             prompt[i] = std::sin(i * 0.071 + object * 0.31f) * 0.4f + (token == 2 ? object * 0.25f : 0.0f);
             position[i] = std::cos(i * 0.037 + object * 0.23f) * 0.05f;
         }
-    const auto batched = run_memory_attention(prompt, position, batch);
+    const auto batched = run_memory_attention(prompt, position, batch, backend);
     constexpr std::size_t values_per_object = 256 * 3;
     for (int object = 0; object < batch; ++object) {
         const auto begin = static_cast<std::size_t>(object) * memory_channels * memory_tokens;
         const std::vector<float> prompt_slice(prompt.begin() + begin, prompt.begin() + begin + memory_channels * memory_tokens);
         const std::vector<float> position_slice(position.begin() + begin, position.begin() + begin + memory_channels * memory_tokens);
-        const auto serial = run_memory_attention(prompt_slice, position_slice, 1);
+        const auto serial = run_memory_attention(prompt_slice, position_slice, 1, backend);
         for (std::size_t i = 0; i < values_per_object; ++i)
             require(std::abs(batched[static_cast<std::size_t>(object) * values_per_object + i] - serial[i]) < 2e-5f,
                     "Memory attention batch differs from independent per-object execution");
@@ -423,8 +449,8 @@ void check_memory_selection() {
     require(!(goldens >> trailing), "Selector fixture contains unconsumed cases");
 }
 
-void check_sam_cross_attention() {
-    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 1}, true);
+void check_sam_cross_attention(sam::Backend backend) {
+    sam::internal::GgmlRuntime runtime({backend, 1}, true);
     sam::RuntimeStats stats;
     sam::internal::GraphExecution graph(runtime, 256, stats);
     auto* ctx = graph.context();
@@ -447,7 +473,9 @@ void check_sam_cross_attention() {
     }
     sam::internal::upload(identity, matrix, stats); sam::internal::upload(zero, std::vector<float>(channels), stats);
     sam::internal::upload(q, q_values, stats); sam::internal::upload(k, k_values, stats); sam::internal::upload(v, v_values, stats);
-    graph.compute(); const auto actual = sam::internal::download(out, stats);
+    graph.compute();
+    check_backend_placement(backend, stats);
+    const auto actual = sam::internal::download(out, stats);
     for (int query = 0; query < queries; ++query) for (int head = 0; head < heads; ++head) {
         std::vector<double> scores(keys);
         for (int key = 0; key < keys; ++key) for (int c = 0; c < head_size; ++c)
@@ -465,8 +493,8 @@ void check_sam_cross_attention() {
     }
 }
 
-void check_sam_cross_attention_batch() {
-    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 1}, true);
+void check_sam_cross_attention_batch(sam::Backend backend) {
+    sam::internal::GgmlRuntime runtime({backend, 1}, true);
     constexpr int channels = 32, queries = 3, keys = 11, heads = 2, batch = 8;
     std::vector<float> matrix(channels * channels), q_values(channels * queries);
     std::vector<float> k_values(channels * keys * batch), v_values(k_values.size());
@@ -503,6 +531,7 @@ void check_sam_cross_attention_batch() {
         sam::internal::upload(k, k_values, stats);
         sam::internal::upload(v, initial, stats);
         graph.compute();
+        check_backend_placement(backend, stats);
         require(out->ne[0] == channels && out->ne[1] == queries && out->ne[2] == batch,
                 "SAM attention did not retain object-major batch output");
         auto before = sam::internal::download(out, stats);
@@ -512,6 +541,7 @@ void check_sam_cross_attention_batch() {
         sam::internal::upload(k, k_values, stats);
         sam::internal::upload(v, updated, stats);
         graph.compute();
+        check_backend_placement(backend, stats);
         return std::pair{std::move(before), sam::internal::download(out, stats)};
     };
 
@@ -553,8 +583,8 @@ void check_sam_cross_attention_batch() {
     require(target_changed, "Changing one SAM object did not alter its own output slice");
 }
 
-std::vector<float> run_deconv_batch(const std::vector<float>& inputs) {
-    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 1}, true);
+std::vector<float> run_deconv_batch(const std::vector<float>& inputs, sam::Backend backend) {
+    sam::internal::GgmlRuntime runtime({backend, 1}, true);
     sam::RuntimeStats stats;
     sam::internal::GraphExecution graph(runtime, 128, stats);
     auto* ctx = graph.context();
@@ -566,15 +596,16 @@ std::vector<float> run_deconv_batch(const std::vector<float>& inputs) {
     sam::internal::upload(weights, kernel, stats);
     sam::internal::upload(input, inputs, stats);
     graph.compute();
+    check_backend_placement(backend, stats);
     return sam::internal::download(output, stats);
 }
 
-void check_deconv_batch() {
+void check_deconv_batch(sam::Backend backend) {
     const std::vector<float> inputs{1.0f, -0.5f, 2.0f, 3.0f};
-    const auto batched = run_deconv_batch(inputs);
+    const auto batched = run_deconv_batch(inputs, backend);
     require(batched.size() == inputs.size() * 4, "Batched deconvolution returned the wrong spatial layout");
     for (std::size_t batch = 0; batch < inputs.size(); ++batch) {
-        const auto single = run_deconv_batch({inputs[batch]});
+        const auto single = run_deconv_batch({inputs[batch]}, backend);
         require(single.size() == 4, "Single-object deconvolution changed its output layout");
         for (std::size_t pixel = 0; pixel < single.size(); ++pixel)
             require(std::abs(batched[batch * single.size() + pixel] - single[pixel]) < 1e-7f,
@@ -582,10 +613,10 @@ void check_deconv_batch() {
     }
 }
 
-void check_mask_decoder_batch() {
-    constexpr int D = 128, H = 2, batch = 4, feature_channels = 256;
+void check_mask_decoder_batch(sam::Backend backend) {
+    constexpr int D = 256, H = 2, batch = 4, feature_channels = 256;
     constexpr int high = H * 4, middle = H * 2;
-    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 1}, true);
+    sam::internal::GgmlRuntime runtime({backend, 1}, true);
     sam::RuntimeStats stats;
     sam::internal::GraphExecution graph(runtime, 16384, stats);
     auto* ctx = graph.context();
@@ -758,6 +789,7 @@ void check_mask_decoder_batch() {
     graph.allocate();
     for (const auto& input : uploads) sam::internal::upload(input.first, input.second, stats);
     graph.compute();
+    check_backend_placement(backend, stats);
 
     constexpr std::size_t mask_pixels = high * high;
     require(batched.masks->ne[0] == mask_pixels && batched.masks->ne[1] == 4 && batched.masks->ne[2] == batch &&
@@ -800,14 +832,19 @@ void check_mask_decoder_batch() {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const auto backend = sam::test::cuda_requested(argc, argv) ? sam::Backend::Cuda : sam::Backend::Cpu;
+        if (backend == sam::Backend::Cuda && !sam::test::cuda_available()) {
+            std::cout << "SKIP: CUDA tracking subgraphs require a visible GPU\n";
+            return 77;
+        }
         check_mutable_tracker_chunk_limit();
         check_none_serial_policy_key();
         check_deferred_resident_upload_lifecycle();
-        check_preprocessing(); check_inventory(); check_attention(); check_sam_cross_attention();
-        check_sam_cross_attention_batch(); check_deconv_batch(); check_memory_attention_batch();
-        check_mask_decoder_batch();
+        check_preprocessing(); check_mask_resize(); check_inventory(); check_attention(backend); check_sam_cross_attention(backend);
+        check_sam_cross_attention_batch(backend); check_deconv_batch(backend); check_memory_attention_batch(backend);
+        check_mask_decoder_batch(backend);
         check_memory_selection(); return 0;
     }
     catch (const std::exception& error) { std::cerr << "tracking math: " << error.what() << '\n'; return 1; }

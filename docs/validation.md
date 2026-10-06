@@ -20,6 +20,13 @@ remains unchanged. Use new output directories for source copies, references,
 and comparisons. The pinned dependency environment currently matches the
 validated platform; another platform needs a compatible environment.
 
+Linux x86_64 CUDA references use [requirements-linux-cuda.lock](../tools/requirements-linux-cuda.lock).
+Pass `--device cuda` to both source preparation and reference export, using new
+source/reference directories. CUDA exports use explicit F32 math attention with
+TF32 disabled; video retains its F16 input and BF16 feature/memory boundaries.
+Use a CUDA build with `--backend cuda --cuda-device 0` for validation. The device
+index is relative to `CUDA_VISIBLE_DEVICES`.
+
 ## Compare image inference
 
 Run from the repository root:

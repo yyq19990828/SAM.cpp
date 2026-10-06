@@ -32,12 +32,21 @@ int main() {
                  {"--threads", "0"}, {"--repeat", "-1"}, {"--repeat", "2junk"},
                  {"--score-threshold", "nan"}, {"--score-threshold", "1.1"},
                  {"--score-threshold", " 0.5"}, {"--score-threshold", "1e-999"},
-                 {"--backend", "cuda"}, {"--model", "other.gguf"}, {"--wat", "x"}, {"--threads"}}) {
+                 {"--backend", "unknown"}, {"--cuda-device", "0"}, {"--backend", "cuda", "--cuda-device", "-1"},
+                 {"--backend", "cuda", "--cuda-device", "1junk"}, {"--backend", "cuda", "--cuda-device", "2147483648"},
+                 {"--model", "other.gguf"}, {"--wat", "x"}, {"--threads"}}) {
             arguments = valid;
             arguments.insert(arguments.end(), suffix.begin(), suffix.end());
             bool rejected = false;
             try { (void) parse(arguments); } catch (const std::invalid_argument&) { rejected = true; }
             require(rejected, "Invalid CLI arguments were accepted");
+        }
+        for (const auto& index : {"0", "2"}) {
+            arguments = valid;
+            arguments.insert(arguments.end(), {"--cuda-device", index, "--backend", "cuda"});
+            const auto cuda = parse(arguments);
+            require(cuda.backend.backend == sam::Backend::Cuda && cuda.backend.cuda_device == std::stoi(index),
+                    "CUDA device selection was not preserved");
         }
         require(parse({"sam_image", "--help"}).help, "Help should work without model input");
         bool rejected = false;
@@ -45,10 +54,10 @@ int main() {
         require(rejected, "Required arguments were not enforced");
         require(sam_example::json_string("\"\\\n") == "\"\\\"\\\\\\u000a\"", "JSON escaping failed");
         sam::RuntimeStats timings;
-        timings.image_ms = 1.25; timings.text_ms = 2.5; timings.inference_ms = 3.75;
+        timings.image_ms = 1.25; timings.text_ms = 2.5; timings.inference_ms = 3.75; timings.cuda_nodes = 17;
         std::ostringstream timing_json;
         sam_example::write_runtime_stats(timing_json, timings);
-        for (const auto& field : {"\"image_ms\":1.25", "\"text_ms\":2.5", "\"inference_ms\":3.75"})
+        for (const auto& field : {"\"image_ms\":1.25", "\"text_ms\":2.5", "\"inference_ms\":3.75", "\"cuda_nodes\":17"})
             require(timing_json.str().find(field) != std::string::npos, "Runtime encoding timer was omitted from JSON");
 
         const auto directory = std::filesystem::temp_directory_path() /

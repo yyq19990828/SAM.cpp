@@ -37,7 +37,8 @@ from validate_image import (GATES, QUANTIZATION_GATES, QUANTIZATION_GATES_PATH,
 class QuantizationChecks(unittest.TestCase):
     @staticmethod
     def compare_case_fixture(precision, reference_scores, actual_scores, reference_detections,
-                             actual_detections, high_mask_iou=1.0, model=None, runtime_modules=None):
+                             actual_detections, high_mask_iou=1.0, model=None, runtime_modules=None,
+                             backend="cpu", result_override=None):
         import numpy as np
         import validate_image
 
@@ -57,11 +58,18 @@ class QuantizationChecks(unittest.TestCase):
         result_base = {"schema_version": 1, "width": 2, "height": 2, "prompt": "truck",
                        "score_threshold": 0.5, "detections": []}
         reference_result = dict(result_base)
-        actual_result = {**result_base, "backend": "cpu", "precision": precision,
+        arithmetic_profiles = {"cpu": "ggml-quantized-weights-f32-v1", "metal": "ggml-quantized-native-v1",
+                               "cuda": "ggml-quantized-cuda-native-v1"}
+        actual_result = {**result_base, "backend": backend, "precision": precision,
                          "storage_profile": (model or {}).get("storage_profile", ""),
-                         "arithmetic_profile": ("ggml-quantized-weights-f32-v1" if precision in QUANTIZED_PRECISIONS
+                         "arithmetic_profile": (arithmetic_profiles[backend] if precision in QUANTIZED_PRECISIONS
                                                 else ""),
-                         "runtime": {"cpu_nodes": 1, "blas_nodes": 0, "metal_nodes": 0}}
+                         "runtime": {"cpu_nodes": int(backend == "cpu"), "blas_nodes": 0,
+                                     "metal_nodes": int(backend == "metal"), "cuda_nodes": int(backend == "cuda")}}
+        if backend == "cuda":
+            actual_result.update(device_name="CUDA fixture", cuda_device=0)
+        if result_override is not None:
+            actual_result.update(result_override)
         if (model or {}).get("sam_schema_version") == 4:
             actual_result["quantization_modules"] = ((model or {}).get("quantization_modules")
                                                        if runtime_modules is None else runtime_modules)
@@ -74,7 +82,7 @@ class QuantizationChecks(unittest.TestCase):
                   (reference_result, reference_detections), (actual_result, actual_detections)]),
               patch.object(validate_image, "mask_iou", return_value=high_mask_iou)):
             return validate_image.compare_case(Path("reference"), Path("actual"), case,
-                                               precision, "cpu", model)
+                                               precision, backend, model)
 
     def test_frozen_profiles_and_legacy_gates(self):
         self.assertEqual(QUANTIZATION_GATES_SHA256,
@@ -489,6 +497,7 @@ class QuantizationChecks(unittest.TestCase):
     def test_runtime_arithmetic_profiles_are_backend_and_receipt_bound(self):
         self.assertEqual(allowed_runtime_arithmetic_profiles("cpu"), {"ggml-quantized-weights-f32-v1"})
         self.assertEqual(allowed_runtime_arithmetic_profiles("metal"), {"ggml-quantized-native-v1"})
+        self.assertEqual(allowed_runtime_arithmetic_profiles("cuda"), {"ggml-quantized-cuda-native-v1"})
         self.assertTrue(runtime_arithmetic_profiles_valid("cpu", ["ggml-quantized-weights-f32-v1"]))
         self.assertFalse(runtime_arithmetic_profiles_valid("cpu", ["ggml-quantized-native-v1"]))
         self.assertTrue(runtime_arithmetic_profiles_valid(
@@ -498,6 +507,36 @@ class QuantizationChecks(unittest.TestCase):
             allow_historical_cpu_native=True))
         self.assertTrue(runtime_arithmetic_profiles_valid("metal", ["ggml-quantized-native-v1"]))
         self.assertFalse(runtime_arithmetic_profiles_valid("metal", ["ggml-quantized-weights-f32-v1"]))
+        self.assertTrue(runtime_arithmetic_profiles_valid("cuda", ["ggml-quantized-cuda-native-v1"]))
+        for profile in ("ggml-quantized-native-v1", "ggml-quantized-weights-f32-v1"):
+            self.assertFalse(runtime_arithmetic_profiles_valid("cuda", [profile], allow_historical_cpu_native=True))
+        for backend in ("cpu", "metal"):
+            self.assertFalse(runtime_arithmetic_profiles_valid(backend, ["ggml-quantized-cuda-native-v1"]))
+        self.assertFalse(runtime_arithmetic_profiles_valid("cuda", []))
+        self.assertFalse(runtime_arithmetic_profiles_valid(
+            "cuda", ["ggml-quantized-cuda-native-v1", "ggml-quantized-native-v1"]))
+
+    def test_cuda_quantized_output_requires_its_arithmetic_and_selected_device(self):
+        import numpy as np
+
+        scores = np.full(200, 0.1); scores[0] = 0.9
+        high = {"query_index": 0, "score": 0.9, "box": [0.0, 0.0, 2.0, 2.0],
+                "mask": {"file": "mask.bin", "dtype": "uint8", "shape": [2, 2]}}
+        model = {"storage_profile": "image-vision-linear-q8_0-v1"}
+        compare = lambda **override: self.compare_case_fixture(
+            "q8_0", scores, scores, {0: high}, {0: high}, model=model,
+            backend="cuda", result_override=override)
+        self.assertTrue(compare()["output_quality_passed"])
+        for profile in ("ggml-quantized-native-v1", "ggml-quantized-weights-f32-v1"):
+            invalid = compare(arithmetic_profile=profile)
+            self.assertFalse(invalid["output_quality_passed"])
+            self.assertTrue(any("arithmetic profile" in failure for failure in invalid["failures"]))
+        for override in ({"cuda_device": 1}, {"device_name": ""},
+                         {"runtime": {"cuda_nodes": 0}},
+                         *({"runtime": {"cuda_nodes": 1, counter: 1}}
+                           for counter in ("cpu_nodes", "metal_nodes", "blas_nodes"))):
+            with self.assertRaisesRegex(ValueError, "CUDA acceptance"):
+                compare(**override)
 
     def test_supplementary_case_must_reuse_exact_transform_and_input(self):
         frozen = {"id": "crop", "prompt": "truck", "score_threshold": 0.5,

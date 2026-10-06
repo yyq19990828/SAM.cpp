@@ -15,6 +15,13 @@
 参考工具在独立源码副本中运行，保留上游目录不变。源码副本、参考导出和对照结果均使用
 新输出目录。固定依赖环境对应已经验证的平台，其他平台需要准备兼容环境。
 
+Linux x86_64 CUDA 参考环境使用
+[requirements-linux-cuda.lock](../tools/requirements-linux-cuda.lock)。源码准备和参考
+导出均传入 `--device cuda`，并使用新的源码与参考目录。CUDA 导出使用显式 F32
+math attention，关闭 TF32；视频保留 F16 输入与 BF16 feature/memory 边界。
+验收时使用 CUDA 构建并传入 `--backend cuda --cuda-device 0`；设备序号相对
+于 `CUDA_VISIBLE_DEVICES` 的可见设备列表。
+
 ## 图像对照
 
 在仓库根目录运行：

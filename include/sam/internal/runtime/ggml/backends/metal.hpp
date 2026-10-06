@@ -39,7 +39,11 @@ inline BackendDriver make_metal_backend() {
     for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
         auto* device = ggml_backend_dev_get(i);
         const std::string name = ggml_backend_reg_name(ggml_backend_dev_backend_reg(device));
-        if (name == "MTL") { driver.handle.reset(ggml_backend_dev_init(device, nullptr)); break; }
+        if (name == "MTL") {
+            driver.handle.reset(ggml_backend_dev_init(device, nullptr));
+            driver.device_name = ggml_backend_dev_description(device);
+            break;
+        }
     }
     if (driver.handle) validate_metal_precision(driver.handle.get());
     return driver;

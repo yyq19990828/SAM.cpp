@@ -6,6 +6,7 @@ if(NOT TARGET ggml)
     endif()
     set(GGML_BUILD_TESTS OFF CACHE BOOL "Build GGML tests")
     set(GGML_BUILD_EXAMPLES OFF CACHE BOOL "Build GGML examples")
+    set(GGML_CUDA_GRAPHS OFF CACHE BOOL "CUDA graph capture requires separate SAM validation")
     FetchContent_Declare(ggml
         GIT_REPOSITORY https://github.com/ggml-org/ggml.git
         GIT_TAG 353b63b439f27ab2cc19dac97ab1681ba6d2d084
@@ -19,7 +20,7 @@ if(NOT TARGET ggml)
     endif()
 endif()
 if(TARGET ggml AND NOT patched_ggml_source)
-    message(STATUS "Using caller-owned GGML target; Metal must honor GGML_PREC_F32 (SAM patch or equivalent)")
+    message(STATUS "Using caller-owned GGML target; Metal/CUDA must honor SAM operator and F32 precision contracts")
 endif()
 
 # Check the actual supplied headers at build time, including host targets whose

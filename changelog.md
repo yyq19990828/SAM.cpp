@@ -8,7 +8,10 @@ No releases have been published.
 
 ### Added
 
-- Header-only C++17 SAM model integration with owned results, reusable sessions, and the `sam::sam` CMake target. The current adapter provides SAM 3 text image segmentation and forward video tracking on CPU and Metal.
+- CUDA backend selection with a visible-device index, device identity, CUDA node statistics and strict GPU compute placement. SAM 3 F32/F16 image, eight vision/full quantized image presets and F32/hybrid video have original-model qualification on Linux x86_64 RTX 4090.
+- Pinned GGML CUDA corrections for F32 dense/attention precision and native window operations, with required-GPU CTest checks.
+- CUDA native quantized image arithmetic with a distinct runtime profile, RHS Q8_1 staging and separate output-quality and tensor-diagnostic records.
+- Header-only C++17 SAM model integration with owned results, reusable sessions, and the `sam::sam` CMake target. The current adapter provides SAM 3 text image segmentation and forward video tracking on CPU, Metal and CUDA.
 - GGUF v3 conversion and loading for image F32/F16, full video F32/F16/hybrid, and vision-only image Q8_0/Q6_K/Q5_K/Q4_K profiles. Quantized video is not available.
 - `sam_image` and `sam_video` command-line tools with masks, boxes, scores, persistent video IDs, runtime statistics, and optional diagnostic tensor exports.
 - Image, video, session, header/linkage, and conversion checks, plus original-model reference and performance tools.
@@ -19,6 +22,7 @@ No releases have been published.
 
 ### Changed
 
+- Runtime backend node counters count compute operations, excluding metadata-only views, reshapes, permutations and transposes.
 - Video conversion defaults to `visual-tracker-f32-v1` hybrid weights; image conversion requires an explicit precision. F16 video remains diagnostic.
 - CPU execution uses registered BLAS when available. Quantized weights remain compressed in memory while matrix operations use temporary F32 weights.
 - Explicit F32 Metal execution and native Metal window operations are available. Quantized Metal execution rejects CPU compute fallback.
@@ -32,6 +36,11 @@ No releases have been published.
 
 ### Fixed
 
+- Keep shared video workspaces within their serial memory budget when graph stages grow device and host arenas in opposite directions.
+- Preserve CUDA position-cache placement when preparing original-model reference sources.
+- Make image antialias preprocessing match the original float resize path across compilers, including byte-rounding boundaries.
+- Preserve mask resize rounding at video initialization thresholds across host compilers.
+- Accept and record native quantizers linked to the pinned combined Metal/CUDA GGML patches.
 - Preserve positional `RuntimeStats` aggregate initialization when adding BLAS statistics.
 - Preserve canonical video object IDs and required F32 tensor shapes during conversion and diagnostic output.
 - Keep required detector attention and window operations on Metal, and preserve activation precision for CPU/Metal matrix operations.

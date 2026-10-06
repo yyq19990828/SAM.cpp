@@ -80,6 +80,7 @@ void unchanged(const sam::VideoStats& actual, const sam::VideoStats& before) {
             actual.runtime.text_encodes == before.runtime.text_encodes &&
             actual.runtime.inferences == before.runtime.inferences &&
             actual.runtime.cpu_nodes == before.runtime.cpu_nodes && actual.runtime.metal_nodes == before.runtime.metal_nodes &&
+            actual.runtime.cuda_nodes == before.runtime.cuda_nodes &&
             actual.runtime.compute_buffer_bytes == before.runtime.compute_buffer_bytes,
             "pushing one video changed the other video's state or graph counters");
 }
@@ -94,9 +95,11 @@ void bounded(const sam::VideoStats& stats, int frame, sam::Backend backend) {
     require(stats.runtime.vision_encodes == static_cast<std::uint64_t>(frame + 1) &&
             stats.runtime.inferences == static_cast<std::uint64_t>(frame + 1) && stats.runtime.text_encodes == 1,
             "a session recomputed text or reused another session's vision cache");
-    require(backend == sam::Backend::Metal
-                ? stats.runtime.metal_nodes > 0 && stats.runtime.cpu_nodes == 0
-                : stats.runtime.cpu_nodes > 0 && stats.runtime.metal_nodes == 0,
+    require(backend == sam::Backend::Cuda
+                ? stats.runtime.cuda_nodes > 0 && stats.runtime.cpu_nodes == 0 && stats.runtime.metal_nodes == 0 && stats.runtime.blas_nodes == 0
+                : backend == sam::Backend::Metal
+                    ? stats.runtime.metal_nodes > 0 && stats.runtime.cpu_nodes == 0 && stats.runtime.cuda_nodes == 0
+                    : stats.runtime.cpu_nodes > 0 && stats.runtime.metal_nodes == 0 && stats.runtime.cuda_nodes == 0,
             "long video used the wrong backend or fallback");
 }
 
@@ -105,7 +108,7 @@ void bounded(const sam::VideoStats& stats, int frame, sam::Backend backend) {
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--help") {
-            std::cout << "Usage: test_video_long_session VIDEO_MODEL ENTRY_64_PNG_DIRECTORY NEGATIVE_IMAGE cpu|metal THREADS NEW_DIR\n";
+            std::cout << "Usage: test_video_long_session VIDEO_MODEL ENTRY_64_PNG_DIRECTORY NEGATIVE_IMAGE cpu|metal|cuda THREADS NEW_DIR\n";
             return 0;
         }
         if (argc != 7) throw std::invalid_argument("Use --help for the six positional arguments");
@@ -189,6 +192,8 @@ int main(int argc, char** argv) {
              << ",\"backend\":" << sam_example::json_string(sam_example::backend_name(info.backend))
              << ",\"precision\":" << sam_example::json_string(info.precision)
              << ",\"storage_profile\":" << sam_example::json_string(info.storage_profile)
+             << ",\"device_name\":" << sam_example::json_string(info.device_name)
+             << ",\"cuda_device\":" << info.cuda_device
              << ",\"threads\":" << info.threads
              << ",\"owned_results\":true,\"model_lifetime\":true,\"independent_sessions\":true"
              << ",\"positive_stats\":";

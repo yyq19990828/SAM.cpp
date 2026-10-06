@@ -1,4 +1,4 @@
-# GGML Metal precision and window patch
+# GGML precision and window patches
 
 `ggml-precise-metal.patch` supplies local precision corrections and native window
 partition/restoration against official
@@ -136,3 +136,38 @@ The caller-owned-GGML consumer reuses this same maintained regression.
 
 These are direct arithmetic and layout probes. Full-model frozen numerical gates and
 performance are recorded separately in the SAM milestone reports.
+
+## CUDA patch
+
+`ggml-precise-cuda.patch` targets the same pinned GGML revision and retains its
+MIT license. CMake applies both patches to a verified build-local source copy.
+CUDA patch SHA-256: `9417f66f5488503c97ec284d949de096d075e6e1344dc692aaabb59f890649a6`.
+Combined source-tree SHA-256: `2c6aa3654bd83a67943d789df12ad266e557d082854b1745221658716da069e5`.
+Unmodified archives, verified Metal-only archives and verified combined archives
+are accepted; caller-owned GGML targets are used directly.
+
+For NVIDIA CUDA, dense F32/F16-by-F32 matrix operations with explicit
+`GGML_PREC_F32` use cuBLAS pedantic F32 arithmetic. This bypasses reduced-precision
+custom matrix kernels and prevents `GGML_CUDA_CUBLAS_COMPUTE_TYPE` from overriding
+the explicit precision request. Default precision and quantized operands retain
+the upstream dispatch rules.
+
+Explicit F32 attention with F32 Q/K/V and equal head dimensions 32 or 64 uses
+pedantic F32 cuBLAS products and an F32 masked softmax. Scratch storage holds
+one head and at most 128 queries at a time in GGML's CUDA pool. Q/K/V may have
+outer strides; masks support broadcast or per-head/per-batch F16 additive values.
+The complete mask/key range remains authoritative when sparse hints are present.
+Fully masked rows produce zero. Attention sinks, ALiBi, softcap and other head
+profiles are outside this specialization. HIP and MUSA retain upstream attention
+and matrix dispatch; they are not validated by these CUDA checks.
+
+Native window partition/restoration supports contiguous F32 inputs/outputs with
+one image batch. Kernels preserve channel/window order, pad edge windows with
+zero, crop restoration and guard tail threads using 64-bit indices.
+
+The SAM CUDA driver checks required matrix and head-32/64 attention precision at
+initialization, including with caller-owned targets. Explicit CUDA graphs require
+every compute node on the selected device; CPU remains available for input copies.
+CUDA graph capture defaults to off pending separate validation. Arithmetic/layout
+checks on RTX 4090 and subsequent model results are recorded in the
+[CUDA implementation plan](../../docs/plans/20261006-215722-cuda-backend.md).

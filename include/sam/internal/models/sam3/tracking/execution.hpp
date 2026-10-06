@@ -1293,11 +1293,9 @@ private:
         if (actual_bytes) *actual_bytes = required;
         if (resident > budget || required > budget - resident) return false;
         const auto arena_limit = budget - resident;
-        // A shared scheduler retains its largest previous allocation. Drop that
-        // arena before binding a smaller shape when its live peak would exceed
-        // this workload's serial baseline.
-        if (workspace_->allocated_bytes() > arena_limit) workspace_->release_storage();
-        graph.allocate();
+        // Different backend arenas can grow in opposite directions between
+        // stages. Compare their combined retained/required sizes before binding.
+        graph.allocate(arena_limit);
         const auto actual = workspace_->allocated_bytes();
         if (actual_bytes) *actual_bytes = actual;
         if (actual > arena_limit) {

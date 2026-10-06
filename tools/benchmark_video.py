@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import statistics
 import subprocess
@@ -57,7 +58,7 @@ def encoding_timings(samples):
             "scope": "image includes ViT/necks/geometry; detector pipeline includes prompt/fusion/detection/masks. Host transfers/allocation included; not GPU-only kernel time."}
 
 
-def analyze_run(directory, expected_objects, precision, backend, width, height):
+def analyze_run(directory, expected_objects, precision, backend, width, height, cuda_device=0):
     """Reject incomplete/wrong workloads before computing a benchmark summary."""
     directory = Path(directory)
     manifest = read_json(directory / "manifest.json")
@@ -69,6 +70,8 @@ def analyze_run(directory, expected_objects, precision, backend, width, height):
             or manifest.get("width") != width or manifest.get("height") != height
             or manifest.get("prompt") != "truck"):
         raise ValueError("benchmark manifest is incomplete or has a different workload/profile/backend")
+    if backend == "cuda" and (manifest.get("cuda_device") != cuda_device or not manifest.get("device_name")):
+        raise ValueError("benchmark CUDA device differs or lacks device identity")
     if expected_objects not in (1, 4) or precision not in ("f32", "f16", "hybrid"):
         raise ValueError("video performance cells require 1/4 objects and f32/f16/hybrid storage")
     if type(manifest.get("model_load_ms")) not in (int, float) or not math.isfinite(manifest["model_load_ms"]) or manifest["model_load_ms"] < 0:
@@ -104,8 +107,9 @@ def analyze_run(directory, expected_objects, precision, backend, width, height):
             raise ValueError(f"frame {frame}: frame/output/state bound differs")
         runtime = stats["runtime"]
         nodes = runtime[f"{backend}_nodes"]
-        other = "cpu" if backend == "metal" else "metal"
-        if (runtime[f"{other}_nodes"] != 0 or nodes <= last_nodes
+        others = [other for other in ("cpu", "metal", "cuda") if other != backend]
+        if (any(runtime.get(f"{other}_nodes", 0) != 0 for other in others)
+                or (backend == "cuda" and runtime.get("blas_nodes", 0) != 0) or nodes <= last_nodes
                 or runtime["vision_encodes"] != frame + 1 or runtime["inferences"] != frame + 1
                 or runtime["text_encodes"] != 1):
             raise ValueError(f"frame {frame}: graph placement or per-session encode counts differ")
@@ -162,14 +166,52 @@ def current_rss(parent_pid, executable_name):
 
 def conditions():
     result = {"time_unix": time.time(), "platform": platform.platform(), "machine": platform.machine()}
-    for name, command in {"power": ["/usr/bin/pmset", "-g", "batt"], "thermal": ["/usr/bin/pmset", "-g", "therm"],
-                          "cpu_memory": ["/usr/sbin/sysctl", "machdep.cpu.brand_string", "hw.memsize", "hw.physicalcpu", "hw.logicalcpu"]}.items():
+    if sys.platform == "linux":
+        cpuinfo = Path("/proc/cpuinfo").read_text()
+        result["cpu_memory"] = {"cpu": next((line.split(":", 1)[1].strip() for line in cpuinfo.splitlines()
+                                                if line.startswith("model name")), platform.processor()),
+                                "logical_cpus": os.cpu_count(),
+                                "physical_memory_bytes": os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")}
+        commands = {"nvidia": ["nvidia-smi", "--query-gpu=name,uuid,driver_version,memory.total,power.limit,temperature.gpu,clocks.sm,clocks.mem",
+                               "--format=csv,noheader"]}
+    else:
+        commands = {"power": ["/usr/bin/pmset", "-g", "batt"], "thermal": ["/usr/bin/pmset", "-g", "therm"],
+                    "cpu_memory": ["/usr/sbin/sysctl", "machdep.cpu.brand_string", "hw.memsize", "hw.physicalcpu", "hw.logicalcpu"]}
+    for name, command in commands.items():
         try:
             value = subprocess.run(command, capture_output=True, text=True, timeout=10)
             result[name] = value.stdout.strip() if value.returncode == 0 else "unavailable: " + value.stderr.strip()
         except (OSError, subprocess.TimeoutExpired) as error:
             result[name] = "unavailable: " + str(error)
     return result
+
+
+def process_timing(log_text, system):
+    if system == "linux":
+        match = re.search(r"^SAM_TIME (\d+) ([0-9.]+) ([0-9.]+) ([0-9.]+)$", log_text, re.MULTILINE)
+        if not match:
+            raise ValueError("missing GNU time peak RSS/wall/user/system receipt")
+        return {"peak_rss_bytes": int(match[1]) * 1024, "wall_seconds": float(match[2]),
+                "user_seconds": float(match[3]), "system_seconds": float(match[4]),
+                "source": "GNU time %M KiB * 1024; %e/%U/%S seconds"}
+    peak = re.search(r"^\s*(\d+)\s+maximum resident set size", log_text, re.MULTILINE)
+    wall = re.search(r"([0-9.]+)\s+real\s+([0-9.]+)\s+user\s+([0-9.]+)\s+sys", log_text)
+    if not peak or not wall:
+        raise ValueError("missing /usr/bin/time -l peak RSS or wall-time receipt")
+    return {"peak_rss_bytes": int(peak[1]), "wall_seconds": float(wall[1]),
+            "user_seconds": float(wall[2]), "system_seconds": float(wall[3]),
+            "source": "macOS time -l RSS bytes; real/user/sys seconds"}
+
+
+def current_cuda_memory(pid):
+    text = subprocess.check_output(["nvidia-smi", "--query-compute-apps=pid,gpu_uuid,used_gpu_memory",
+                                    "--format=csv,noheader,nounits"], text=True, timeout=5)
+    devices = []
+    for line in text.splitlines():
+        fields = [item.strip() for item in line.split(",")]
+        if len(fields) == 3 and fields[0] == str(pid):
+            devices.append({"gpu_uuid": fields[1], "used_bytes": int(fields[2]) * 1024 * 1024})
+    return devices
 
 
 def validate_qualification_records(qualification, expected_objects):
@@ -185,8 +227,8 @@ def validate_qualification_records(qualification, expected_objects):
 
 
 def run(args):
-    if sys.platform != "darwin":
-        raise ValueError("this measured M2 protocol requires macOS /usr/bin/time -l; no cross-platform RSS conversion is assumed")
+    if sys.platform not in ("darwin", "linux"):
+        raise ValueError("video process timing requires macOS time -l or Linux GNU time")
     precision, reference, _ = check_provenance(args.model, args.reference)
     if precision not in ("f32", "f16", "hybrid") or args.threads != 4:
         raise ValueError("standard video benchmark cells use original F32/F16/hybrid and four threads")
@@ -205,6 +247,9 @@ def run(args):
                        and isinstance(case.get("output_sha256"), dict) and case["output_sha256"]
                        for case in accepted_cases)):
         raise ValueError("a passing current full original-reference validation is required for this exact cell")
+    cuda_device = getattr(args, "cuda_device", None) or 0
+    if args.backend == "cuda" and accepted.get("cuda_device") != cuda_device:
+        raise ValueError("full numerical acceptance used a different CUDA device")
     verify_run_artifacts(accepted["run_artifact_sha256"])
     fixture = read_json(args.fixture_manifest)
     workload = next((item for item in fixture["workloads"] if item["id"] == args.workload), None)
@@ -235,14 +280,18 @@ def run(args):
     artifacts = freeze_run_artifacts(args.build_dir, executable, args.model, expected_model)
     project = Path(__file__).resolve().parents[1]
     sources = [*project.glob("include/**/*.hpp"), *project.glob("examples/*.cpp"), *project.glob("examples/*.hpp"),
-               project / "cmake/patches/ggml-precise-metal.patch", project / "cmake/ggml.cmake", project / "tools/sam3_tensor_schema.json",
+               project / "cmake/patches/ggml-precise-metal.patch", project / "cmake/patches/ggml-precise-cuda.patch",
+               project / "cmake/ggml.cmake", project / "cmake/prepare_ggml.cmake", project / "tools/sam3_tensor_schema.json",
                *[project / "tools" / name for name in ("benchmark_video.py", "sam3_artifacts.py", "validate_video.py", "validate_image.py", "sam3_gguf.py")],
                args.fixture_manifest, args.qualification, args.validation, args.recipe_script]
     source_hashes = {str(path.absolute()): sha256_file(path) for path in sources}
     args.output.mkdir(parents=True, exist_ok=False)
     actual = args.output / "run"
-    command = ["/usr/bin/time", "-l", str(executable.resolve()), "--model", str(args.model.resolve()), "--frames", str(frames),
+    time_arguments = ["-f", "SAM_TIME %M %e %U %S"] if sys.platform == "linux" else ["-l"]
+    command = ["/usr/bin/time", *time_arguments, str(executable.resolve()), "--model", str(args.model.resolve()), "--frames", str(frames),
                "--text", "truck", "--backend", args.backend, "--threads", "4", "--max-objects", "8", "--output", str(actual)]
+    if args.backend == "cuda":
+        command.extend(["--cuda-device", str(cuda_device)])
     report = {"schema_version": 1, "complete": False, "passed": False, "kind": "m2-video-performance-64-16-48",
               "numerical_acceptance": "separate passing full original-reference receipt", "backend": args.backend,
               "precision": precision, "storage_profile": HYBRID_PROFILE if precision == "hybrid" else "",
@@ -252,7 +301,7 @@ def run(args):
               "run_artifact_sha256": artifacts, "source_sha256": source_hashes, "input_sha256": inputs,
               "conditions_before": conditions(), "failures": []}
     write_json(args.output / "benchmark.json", report)
-    process, rss_samples, rss_errors = None, [], []
+    process, rss_samples, rss_errors, cuda_samples, cuda_errors = None, [], [], [], []
     first_output_observed = None
     try:
         verify_run_artifacts(artifacts); verify_run_artifacts(source_hashes); verify_run_artifacts(inputs)
@@ -272,6 +321,15 @@ def run(args):
                         sample.update(elapsed_seconds=elapsed, last_stats_file_frame=int(available[-1].name[:6]) if available else None)
                         rss_samples.append(sample)
                         rss_log.write(json.dumps(sample) + "\n"); rss_log.flush()
+                        if args.backend == "cuda":
+                            try:
+                                devices = current_cuda_memory(sample["pid"])
+                                if devices:
+                                    cuda_samples.append({"elapsed_seconds": elapsed, "devices": devices,
+                                                         "total_used_bytes": sum(device["used_bytes"] for device in devices)})
+                            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                                if str(error) not in cuda_errors:
+                                    cuda_errors.append(str(error))
                 except (OSError, ValueError, subprocess.TimeoutExpired) as error:
                     if str(error) not in rss_errors:
                         rss_errors.append(str(error))
@@ -285,15 +343,9 @@ def run(args):
         outputs = freeze_output_files(actual)
         report["output_sha256"] = outputs
         write_json(args.output / "benchmark.json", report)
-        report.update(analyze_run(actual, workload["expected_objects"], precision, args.backend, fixture["width"], fixture["height"]))
-        import re
+        report.update(analyze_run(actual, workload["expected_objects"], precision, args.backend, fixture["width"], fixture["height"], cuda_device))
         log_text = (args.output / "sam_video.log").read_text()
-        peak = re.search(r"^\s*(\d+)\s+maximum resident set size", log_text, re.MULTILINE)
-        wall = re.search(r"([0-9.]+)\s+real\s+([0-9.]+)\s+user\s+([0-9.]+)\s+sys", log_text)
-        if not peak or not wall:
-            raise ValueError("missing /usr/bin/time -l peak RSS or wall-time receipt")
-        report["process"] = {"peak_rss_bytes": int(peak.group(1)), "wall_seconds": float(wall.group(1)),
-                             "user_seconds": float(wall.group(2)), "system_seconds": float(wall.group(3))}
+        report["process"] = process_timing(log_text, sys.platform)
         report["first_output"]["observed_elapsed_seconds"] = first_output_observed
         report["first_output"]["observation_scope"] = "First output-file observation, sampled about once per second; includes load/decode/file work."
         measured_rss = [sample["rss_bytes"] for sample in rss_samples if sample["last_stats_file_frame"] is not None
@@ -311,6 +363,11 @@ def run(args):
         report["failures"].append(str(error))
         report["current_rss_partial"] = rss_samples
     finally:
+        if args.backend == "cuda":
+            report["cuda_memory"] = {"available": bool(cuda_samples), "cuda_device": cuda_device,
+                                     "sampled_peak_bytes": max((sample["total_used_bytes"] for sample in cuda_samples), default=None),
+                                     "samples": cuda_samples, "errors": cuda_errors,
+                                     "scope": "nvidia-smi process memory in MiB, sampled about once per second; includes CUDA context/pools, may miss transient peaks."}
         if process is not None and process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -329,10 +386,13 @@ def main():
     for name in ("build-dir", "model", "reference", "validation", "fixture-manifest", "qualification", "recipe-script", "output"):
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--workload", required=True, choices=("one-object", "four-object"))
-    parser.add_argument("--backend", required=True, choices=("cpu", "metal"))
+    parser.add_argument("--backend", required=True, choices=("cpu", "metal", "cuda"))
+    parser.add_argument("--cuda-device", type=int, help="Index among CUDA-visible devices (default: 0)")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--timeout-seconds", type=float, default=14400)
     args = parser.parse_args()
+    if args.cuda_device is not None and (args.backend != "cuda" or args.cuda_device < 0):
+        parser.error("--cuda-device requires backend cuda and a nonnegative index")
     if args.threads != 4 or not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
         parser.error("standard M2 cells require four threads and a positive finite timeout")
     try:

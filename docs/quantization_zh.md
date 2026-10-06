@@ -5,7 +5,8 @@
 
 ## 按模块选择
 
-SAM 3 图像权重支持以下模块，可单独选择或组合选择。一次转换使用同一种目标量化格式，激活精度不随模块选择改变。
+SAM 3 图像权重支持以下模块，可单独选择或组合选择。一次转换使用同一种目标量化格式；
+模块选择决定权重存储，矩阵 staging 遵循后端算术 profile。
 
 | 模块名 | 范围 | 可量化线性矩阵 |
 | --- | --- | ---: |
@@ -16,7 +17,10 @@ SAM 3 图像权重支持以下模块，可单独选择或组合选择。一次�
 
 `--quantize-modules text,decoder` 只量化所选模块的目标矩阵，其余模块保留 F32。嵌入、位置参数、偏置、归一化、卷积、部分小矩阵和标量输出投影始终保留 F32。几何权重的存储选择不会新增点或框提示 API；当前任务仍是文本提示图像分割。
 
-仓库提供两组固定预设：`image-vision-linear-{precision}-v1` 仅量化视觉线性权重；`image-full-linear-{precision}-v1` 覆盖四模块的 348 个目标矩阵。这里的全模块量化仍有上述浮点例外，也不量化激活或视频跟踪状态。
+仓库提供两组固定预设：`image-vision-linear-{precision}-v1` 仅量化视觉线性权重；
+`image-full-linear-{precision}-v1` 覆盖四模块的 348 个目标矩阵，仍保留上述浮点例外。
+GGUF 量化存储权重；共享图保留 F32 激活缓冲，原生 GPU kernel 可按后端算术策略
+降低矩阵操作数 staging 精度。视频跟踪状态不属于这些图像 profile。
 
 数值验收聚焦这两组预设，具体支持状态见[模型列表](../MODEL_ZOO_zh.md)。使用 `--quantize-modules` 的自定义组合采用 `image-modules-linear-{precision}-v1`，需要用户在应用数据上验证；即使选齐四个模块，也保留自定义诊断标签。它不能与 `--storage-profile` 同时使用。
 
@@ -39,7 +43,13 @@ K block 要求 256 元素行宽。选择 `vision` 时，32 个 MLP `lin2` 矩阵
 
 ## 验证范围
 
-四个精确的 `image-vision-linear-*` profile 已在仓库固定图像集上通过输出行为验证，覆盖 CPU（有无 BLAS）和 Metal。四个 `image-full-linear-*` 全模块预设也已通过同一图像集的 CPU（启用 BLAS）和 Metal 输出质量检查。这一结论仅适用于有限图像集，不是数据集级准确率保证。输出检查关注最终检测、掩码、分数和边框；通过检查不表示中间 tensor 与原始 checkpoint 完全一致，量化会改变中间数值。不同精度使用各自的验证标准，而不是对所有格式共用一个容差。
+四个精确的 `image-vision-linear-*` profile 已在仓库固定图像集上通过输出行为验证，
+覆盖 CPU（有无 BLAS）和 Metal。四个 `image-full-linear-*` 全模块预设也已通过
+同一图像集的 CPU（启用 BLAS）和 Metal 输出质量检查。两组预设在 Linux x86_64
+RTX 4090 CUDA 上也已通过七 case 原始模型输出质量验收。这一结论仅适用于有限
+图像集，不是数据集级准确率保证。输出检查关注最终检测、掩码、分数和边框；
+通过检查不表示中间 tensor 与原始 checkpoint 完全一致，量化会改变中间数值。
+不同精度使用各自的验证标准，而不是对所有格式共用一个容差。
 
 量化版本以最终输出质量作为主要验收标准。中间张量的相对 L2 和最大绝对误差单独报告，供诊断和选型参考，超出张量保真容差不会直接判定量化版本不合格。分词、输入变换、形状、有限数值及后端执行仍需正确。当前固定语料验收使用以下输出容差：
 
@@ -58,6 +68,8 @@ K block 要求 256 元素行宽。选择 `vision` 时，32 个 MLP `lin2` 矩阵
 ## 转换 checkpoint
 
 使用 Python 3.12 和锁定的参考环境依赖。将 `sam3_weights_dir` 设置为包含原始 `sam3.pt` checkpoint 与 BPE 文件的目录。输出必须是新文件；转换器会同时写出 GGUF manifest，并拒绝覆盖已有文件。
+
+Linux x86_64 的 CUDA 参考验证使用 [requirements-linux-cuda.lock](../tools/requirements-linux-cuda.lock) 替换安装命令中的 `tools/requirements.lock`。
 
 ```sh
 python3.12 -m venv .venv-reference
@@ -108,7 +120,7 @@ cmake --build build/quant-cpu --target sam_quantize_rows --parallel
 
 ## 运行推理
 
-使用 CPU 或 Metal 构建中的 `sam_image` 可执行文件；输出目录必须不存在。例如：
+使用 CPU、Metal 或 CUDA 构建中的 `sam_image` 可执行文件；输出目录必须不存在。例如：
 
 ```sh
 build/cpu/examples/sam_image \
@@ -117,8 +129,17 @@ build/cpu/examples/sam_image \
   --output outputs/truck-q8 --backend cpu
 ```
 
-要显式请求 Metal，请改用 Metal 构建中的可执行文件并传入 `--backend metal`。当前量化模型的 `auto` 选择 CPU。
+使用对应构建，传入 `--backend metal` 或 `--backend cuda` 可显式选择 GPU 后端。
+CUDA 的 `--cuda-device N` 表示可见设备序号。当前量化模型的 `auto` 选择 CPU。
 
 ## Backend 行为
 
-GGUF 精度说明权重的存储方式，不等同于端到端算术精度。CPU 会保持 packed 量化权重常驻，并在共享计算图的 `MUL_MAT` 前创建临时 F32 cast；这部分工作区会影响峰值内存。`ModelInfo` 将该策略报告为 `ggml-quantized-weights-f32-v1`。Metal 使用带 half staging 的原生量化 kernel，并报告 `ggml-quantized-native-v1`，因此它与 CPU 的算术路径和内存使用不同。部署时应验证实际使用的 backend。格式契约见[GGUF schema 说明](gguf.md)，支持范围见[模型列表](../MODEL_ZOO_zh.md)，硬件相关的实测图像性能见[性能测试](../BENCHMARK_zh.md)。
+GGUF 精度说明权重的存储方式，不等同于端到端算术精度。CPU 会保持 packed
+量化权重常驻，并在共享计算图的 `MUL_MAT` 前创建临时 F32 cast；这部分工作区
+会影响峰值内存。`ModelInfo` 将该策略报告为 `ggml-quantized-weights-f32-v1`。
+Metal 使用带 half staging 的原生量化 kernel，并报告 `ggml-quantized-native-v1`。
+CUDA 同样保持 packed 权重常驻，在已验证设备的原生 MMVQ/MMQ 中使用 RHS Q8_1
+staging，报告 `ggml-quantized-cuda-native-v1`，并拒绝 CPU/Metal/BLAS 图计算回退。
+各后端分别验收 profile，部署前应核对支持表。
+格式契约见[GGUF schema 说明](gguf.md)，支持范围见[模型列表](../MODEL_ZOO_zh.md)，
+硬件相关的实测图像性能见[性能测试](../BENCHMARK_zh.md)。

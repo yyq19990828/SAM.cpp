@@ -6,10 +6,11 @@ adapters and shared execution backends. The integration layer is header-only;
 GGML is a compiled dependency and model weights remain external.
 
 The current implementation provides SAM 3 text-prompted image segmentation and
-experimental forward video tracking. CPU and Apple Metal are the implemented
-backends, with validation currently performed on Apple hardware. Linux, Windows,
-other CPU architectures, CUDA, and additional model adapters need their own
-build and numerical validation before being listed as supported.
+experimental forward video tracking on CPU, Apple Metal and NVIDIA CUDA.
+Validation covers macOS CPU/Metal and Linux x86_64 CUDA on an RTX 4090, with
+F32/F16 image checks on the same Linux CPU/BLAS host. Other operating systems,
+CPU/GPU architectures and model adapters need their own builds and numerical
+validation. See the model catalog for task and weight-profile scope.
 
 [Models and precision](MODEL_ZOO.md) |
 [Download and conversion](docs/models/sam3-details.md) |
@@ -22,10 +23,10 @@ build and numerical validation before being listed as supported.
 
 | Task | Model / weights | Backends |
 | --- | --- | --- |
-| Text-prompted image segmentation | SAM 3 F32 or mixed F16/F32 | CPU, Metal |
-| Text-prompted image segmentation | SAM 3 vision-only Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal |
-| Text-prompted image segmentation | SAM 3 full-component linear Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal |
-| Forward video tracking | SAM 3 F32 or hybrid `visual-tracker-f32-v1` | CPU, Metal |
+| Text-prompted image segmentation | SAM 3 F32 or mixed F16/F32 | CPU, Metal, CUDA |
+| Text-prompted image segmentation | SAM 3 vision-only Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal, CUDA |
+| Text-prompted image segmentation | SAM 3 full-component linear Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal, CUDA |
+| Forward video tracking | SAM 3 F32 or hybrid `visual-tracker-f32-v1` | CPU, Metal, CUDA |
 
 Video conversion defaults to hybrid weights. Quantized files currently support
 images only. SAM 3 also supports custom vision/text/fusion/decoder selections;
@@ -55,6 +56,29 @@ cmake -S . -B build/metal -DCMAKE_BUILD_TYPE=Release \
 cmake --build build/metal --parallel
 ctest --test-dir build/metal --output-on-failure
 ```
+
+For CUDA, install the NVIDIA driver and CUDA Toolkit, then build
+with an architecture matching your GPU (`89` below is an RTX 4090 example):
+
+```sh
+cmake -S . -B build/cuda -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CUDA=ON -DGGML_METAL=OFF -DCMAKE_CUDA_ARCHITECTURES=89 \
+  -DSAM_REQUIRE_CUDA_TESTS=ON
+cmake --build build/cuda --parallel
+ctest --test-dir build/cuda --output-on-failure
+```
+
+`SAM_REQUIRE_CUDA_TESTS=ON` makes a missing GPU fail the CUDA tests. Otherwise,
+CUDA checks skip when no device is visible. CUDA requires the project's GGML
+precision/window patch and defaults to `GGML_CUDA_GRAPHS=OFF`. Quantized CUDA
+uses the distinct `ggml-quantized-cuda-native-v1` arithmetic profile.
+
+Select CUDA explicitly with `--backend cuda --cuda-device 0`, or
+`sam::BackendOptions{sam::Backend::Cuda, 4, 0}`. The index is relative to
+`CUDA_VISIBLE_DEVICES`. `Auto` keeps its existing CPU/Metal selection policy.
+CUDA rejects unsupported operators and CPU compute fallback. Model information
+and CLI JSON include `device_name` and `cuda_device`; `cuda_nodes` reports actual
+scheduled compute work.
 
 Metal shaders are embedded and compiled at runtime. CPU builds can use a
 registered GGML BLAS backend; add `-DGGML_BLAS=OFF` for native CPU execution.
@@ -128,8 +152,8 @@ Inspect `model.backend()` and `model.info()` for the resolved backend, task,
 storage profile, and arithmetic profile.
 
 Weight precision describes storage. CPU loading promotes F16 values to F32;
-Metal retains mixed F16/F32 weights. Quantized CPU execution retains packed
-weights and uses temporary F32 matrix weights; Metal uses native quantized
+Metal and CUDA retain mixed F16/F32 weights. Quantized CPU execution retains packed
+weights and uses temporary F32 matrix weights; Metal and CUDA use native quantized
 kernels. See [precision details](MODEL_ZOO.md#precision-contract) before choosing
 a model for memory-sensitive applications.
 

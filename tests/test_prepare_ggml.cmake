@@ -57,6 +57,22 @@ if(NOT prepatched_hash STREQUAL prepared_hash)
     message(FATAL_ERROR "Already-patched source changed during preparation")
 endif()
 
+# Previously prepared Metal-only archives acquire the CUDA patch exactly once.
+file(COPY "${prepared}/" DESTINATION "${fixture}/metal-only")
+execute_process(COMMAND ${CMAKE_COMMAND} -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
+    "GIT_CEILING_DIRECTORIES=${fixture}" ${GIT_EXECUTABLE} apply --reverse
+    "${CMAKE_CURRENT_LIST_DIR}/../cmake/patches/ggml-precise-cuda.patch"
+    WORKING_DIRECTORY "${fixture}/metal-only" RESULT_VARIABLE reverse_cuda_result
+    ERROR_VARIABLE reverse_cuda_error)
+if(NOT reverse_cuda_result EQUAL 0)
+    message(FATAL_ERROR "Could not prepare legacy Metal-only archive fixture: ${reverse_cuda_error}")
+endif()
+sam_prepare_ggml("${fixture}/metal-only" "${fixture}/upgraded-copy" upgraded)
+sam_ggml_tree_hash("${upgraded}" upgraded_hash)
+if(NOT upgraded_hash STREQUAL prepared_hash)
+    message(FATAL_ERROR "Metal-only archive did not acquire the verified combined patches")
+endif()
+
 # A dirty archive must fail provenance validation before patch application.
 file(APPEND "${prepatched}/include/ggml.h" "\n// unverified source override\n")
 file(WRITE "${fixture}/reject-source.cmake"

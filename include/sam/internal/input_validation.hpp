@@ -19,11 +19,14 @@ inline std::size_t checked_product(std::size_t a, std::size_t b, const char* wha
 
 inline void validate_backend_options(const BackendOptions& options) {
     if (options.backend != Backend::Auto && options.backend != Backend::Cpu &&
-        options.backend != Backend::Metal) {
+        options.backend != Backend::Metal && options.backend != Backend::Cuda) {
         throw std::invalid_argument("unknown SAM backend");
     }
     if (options.threads <= 0) {
         throw std::invalid_argument("CPU thread count must be positive");
+    }
+    if (options.cuda_device < 0 || (options.backend != Backend::Cuda && options.cuda_device != 0)) {
+        throw std::invalid_argument("CUDA device must be nonnegative and requires an explicit CUDA backend");
     }
 }
 

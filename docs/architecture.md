@@ -2,10 +2,10 @@
 
 SAM.cpp is designed as a C++17 library for multiple segmentation and detection
 models and execution backends. The current model adapter implements SAM 3 image
-and forward-video tasks; the current GGML runtime provides CPU and Metal
-backends. New model families and platforms are extension targets, not implied
-support claims. Linux, Windows, CUDA, SAM 2/2.1, SAM 3.1, GroundingSAM and DART
-need their own implementation and validation before they are advertised.
+and forward-video tasks; the GGML runtime provides CPU, Metal and CUDA backends.
+New model families and
+platforms need their own implementation and numerical validation before they
+are advertised as supported.
 
 The public CMake target is `sam::sam`. Applications use `sam::Model` and the
 task-specific session interfaces in `sam/sam.hpp`. Public input, result and
@@ -92,16 +92,17 @@ The current GGML modules are split by responsibility:
 | `backend.hpp` | Driver/device contract, identity, storage policy and node statistics |
 | `backends/cpu.hpp` | CPU and optional BLAS discovery, initialization and threading |
 | `backends/metal.hpp` | Metal discovery and initialization |
+| `backends/cuda.hpp` | Visible CUDA device selection, initialization and required F32 arithmetic checks |
 | `runtime.hpp` | Driver selection, execution order and resource ownership |
 | `graph.hpp` | Shared scheduling, operation checks, transfers and execution statistics |
 | `workspace.hpp` | Reusable graph allocations, safe rebinding and internal diagnostics |
 
-Backend drivers use GGML's device registry. CPU and Metal use the shared SAM 3
+Backend drivers use GGML's device registry. CPU, Metal and CUDA use the shared SAM 3
 graphs; backend-specific precision and fallback rules remain in the runtime.
 On CPU, eligible matrix operations may use a registered BLAS device before the
 native CPU backend. Quantized CPU weights remain packed and shared F32 cast
-nodes prepare `MUL_MAT` operands. Quantized Metal uses native quantized kernels
-with its required staging. These are distinct arithmetic profiles; see the
+nodes prepare `MUL_MAT` operands. Quantized Metal and CUDA use native packed-weight
+kernels with separate staging and arithmetic profiles; see the
 [quantization guide](quantization.md) for the profile contract.
 
 The common GGUF reader in `internal/io/gguf_reader.hpp` performs bounded
@@ -112,9 +113,16 @@ metadata and tensor schema. The reader uses the pinned GGML GGUF APIs and
 canonical metadata serialization rather than adding a second general-purpose
 container parser.
 
-CPU and Metal are the implemented backend modules. Adding CUDA or another
-platform requires a real driver, supported-driver selection, public
-configuration, device-aware statistics and validation on matching hardware.
+The CUDA module selects an index among visible devices and checks the linked
+GGML's required F32 arithmetic at initialization. Its shared scheduler pins
+every compute node to that device and rejects unsupported operations or CPU
+compute fallback before execution. Inputs may still use CPU buffers for copies.
+Backend node counters exclude metadata-only view/reshape/permutation/transpose operations.
+Quantized CUDA uses native packed-weight kernels and reports a distinct arithmetic
+profile; model qualification is separate from CPU and Metal.
+
+Adding another platform requires a real driver, supported-driver selection,
+public configuration, device-aware statistics and matching hardware validation.
 The pinned [GGML backend registry](https://github.com/ggml-org/ggml/blob/353b63b439f27ab2cc19dac97ab1681ba6d2d084/src/ggml-backend-reg.cpp)
 provides the registration mechanism; a new backend still needs operator,
 precision, transfer and fallback checks. A non-GGML engine would need its own
@@ -159,7 +167,7 @@ ownership, then add the implementation and reference comparisons together.
 | SAM 3.1 Object Multiplex | New adapter, checkpoint schema, neck/memory/decoder and bucket assignment | Object counts at bucket boundaries (1, 16, 17), removal/reassignment, accuracy, latency and memory |
 | GroundingSAM / Grounded SAM 2 | Pipeline composing a grounding detector and a promptable segmenter | Shared image-space boxes, coordinate conversion, labels, empty detections and tracking behavior |
 | DART | Detection-oriented SAM 3 composition reusing compatible vision/text/fusion/detection stages | Class embedding/cache, multiclass execution, class mapping and batched versus individual output |
-| CUDA or another compute backend | Runtime backend module, independent of model family | Device selection, operator coverage, storage/arithmetic precision, transfers and fallback behavior on matching hardware |
+| Another compute backend | Runtime backend module, independent of model family | Device selection, operator coverage, storage/arithmetic precision, transfers and fallback behavior on matching hardware |
 
 The linked projects motivate these boundaries: [SAM 2](https://github.com/facebookresearch/sam2),
 [Grounded SAM 2](https://github.com/IDEA-Research/Grounded-SAM-2), and

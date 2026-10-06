@@ -1,4 +1,5 @@
 #include <sam/internal/runtime/ggml.hpp>
+#include "backend_test_support.hpp"
 
 #include <array>
 #include <iostream>
@@ -41,7 +42,7 @@ WindowResult run_window(ggml_backend_t backend, int channels, int width, int hei
     return result;
 }
 
-void check_windows(ggml_backend_t cpu, ggml_backend_t metal) {
+void check_windows(ggml_backend_t cpu, ggml_backend_t device) {
     // Handwritten golden layouts fix channel order, window order and zero padding.
     const auto rectangle = run_window(cpu, 2, 3, 2, 2);
     if (rectangle.partitioned != std::vector<float>{1, 2, 3, 4, 7, 8, 9, 10, 5, 6, 0, 0, 11, 12, 0, 0}) {
@@ -56,22 +57,28 @@ void check_windows(ggml_backend_t cpu, ggml_backend_t metal) {
             {{2, 3, 2, 2}}, {{1, 3, 3, 2}}, {{3, 1, 1, 4}},
             {{37, 7, 5, 4}}, {{33, 2, 5, 1}}, {{1024, 72, 72, 24}}}}) {
         const auto reference = run_window(cpu, shape[0], shape[1], shape[2], shape[3]);
-        if (metal) {
-            const auto actual = run_window(metal, shape[0], shape[1], shape[2], shape[3]);
+        if (device) {
+            const auto actual = run_window(device, shape[0], shape[1], shape[2], shape[3]);
             if (actual.partitioned != reference.partitioned || actual.restored != reference.restored) {
-                throw std::runtime_error("Metal window layout differs from CPU");
+                throw std::runtime_error("Device window layout differs from CPU");
             }
         }
-        std::cout << ggml_backend_name(metal ? metal : cpu) << " windows C" << shape[0]
+        std::cout << ggml_backend_name(device ? device : cpu) << " windows C" << shape[0]
                   << ' ' << shape[1] << 'x' << shape[2] << " W" << shape[3] << ": exact CPU match\n";
     }
 }
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
         sam::internal::GgmlRuntime cpu({sam::Backend::Cpu, 1}, false);
+        if (sam::test::cuda_requested(argc, argv)) {
+            if (!sam::test::cuda_available()) return 77;
+            sam::internal::GgmlRuntime cuda({sam::Backend::Cuda, 1}, false);
+            check_windows(cpu.weights_backend(), cuda.weights_backend());
+            return 0;
+        }
         for (std::size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             auto* device = ggml_backend_dev_get(i);
             if (std::string(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device))) == "MTL") {

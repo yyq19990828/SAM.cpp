@@ -38,13 +38,17 @@ public:
         roots_.push_back(tensor);
         ggml_build_forward_expand(graph_, tensor);
     }
-    void allocate() {
+    void allocate(std::size_t arena_limit = std::numeric_limits<std::size_t>::max()) {
         prepare();
+        if (arena_limit != std::numeric_limits<std::size_t>::max()) {
+            if (buffer_requirements_.empty()) required_workspace_bytes();
+            workspace_->fit_allocation_plan(buffer_requirements_, arena_limit);
+        }
         workspace_->bind(context_.get(), graph_);
     }
     std::size_t required_workspace_bytes() {
         prepare();
-        return workspace_->required_bytes(context_.get(), graph_);
+        return workspace_->required_bytes(context_.get(), graph_, &buffer_requirements_);
     }
     const GraphDiagnostics& diagnostics() const { return workspace_->diagnostics(); }
 private:
@@ -57,9 +61,9 @@ private:
             auto* node = ggml_graph_node(graph_, i);
             if (node->op == GGML_OP_MUL_MAT) ggml_prec_set_acc(node, GGML_PREC_F32);
             if (node->op == GGML_OP_FLASH_ATTN_EXT) ggml_prec_set_acc(node, GGML_PREC_F32);
-            bool supported = runtime_.quantized_native_metal_only()
+            bool supported = runtime_.requires_primary_compute()
                 ? ggml_backend_supports_op(runtime_.weights_backend(), node) : false;
-            if (!runtime_.quantized_native_metal_only())
+            if (!runtime_.requires_primary_compute())
                 for (auto* backend : runtime_.backends()) supported = supported || ggml_backend_supports_op(backend, node);
             if (!supported) {
                 std::string message = std::string("no backend supports SAM operation ") +
@@ -77,12 +81,9 @@ public:
         workspace_->compute(context_.get(), graph_);
         for (int i = 0; i < ggml_graph_n_nodes(graph_); ++i) {
             auto* tensor = ggml_graph_node(graph_, i);
-            if (tensor->op == GGML_OP_NONE || tensor->op == GGML_OP_VIEW || tensor->op == GGML_OP_RESHAPE ||
-                tensor->op == GGML_OP_PERMUTE || tensor->op == GGML_OP_TRANSPOSE) continue;
+            if (!is_compute_node(tensor)) continue;
             auto* backend = ggml_backend_sched_get_tensor_backend(workspace_->scheduler(), tensor);
             runtime_.record_node(backend, stats_);
-            if (runtime_.quantized_native_metal_only() && backend != runtime_.weights_backend())
-                throw std::runtime_error("quantized Metal graph attempted CPU fallback");
         }
         stats_.graph_partitions += ggml_backend_sched_get_n_splits(workspace_->scheduler());
         stats_.compute_buffer_bytes = std::max(stats_.compute_buffer_bytes, workspace_->buffer_bytes());
@@ -134,6 +135,7 @@ private:
     std::shared_ptr<GraphWorkspace> workspace_;
     ggml_cgraph* graph_ = nullptr;
     std::vector<ggml_tensor*> roots_;
+    std::vector<std::size_t> buffer_requirements_;
     bool graph_prepared_ = false;
     bool graph_validated_ = false;
 };

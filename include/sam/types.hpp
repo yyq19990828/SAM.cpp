@@ -8,11 +8,12 @@
 
 namespace sam {
 
-enum class Backend { Auto, Cpu, Metal };
+enum class Backend { Auto, Cpu, Metal, Cuda };
 
 struct BackendOptions {
     Backend backend = Backend::Auto;
     int threads = 4;
+    int cuda_device = 0; // Index among devices visible to the CUDA registry.
 };
 
 struct ModelInfo {
@@ -27,15 +28,19 @@ struct ModelInfo {
     std::string storage_profile; // Versioned weight policy, separate from the temporal profile.
     std::string arithmetic_profile; // Empty for legacy profiles; names the quantized runtime arithmetic contract.
     std::vector<std::string> quantization_modules; // Populated only by schema-4 modular image profiles.
+    std::string device_name;
+    int cuda_device = -1; // Resolved visible CUDA index; -1 on other backends.
 };
 
 struct RuntimeStats {
+    // Backend node counts exclude metadata-only views/reshapes/permutations.
     std::uint64_t vision_encodes = 0, text_encodes = 0, inferences = 0;
     std::uint64_t cpu_nodes = 0, metal_nodes = 0, graph_partitions = 0;
     std::uint64_t host_upload_bytes = 0, host_download_bytes = 0;
     std::size_t weight_buffer_bytes = 0, compute_buffer_bytes = 0;
     double image_ms = 0.0, text_ms = 0.0, inference_ms = 0.0;
     std::uint64_t blas_nodes = 0; // Subset of cpu_nodes, not additional device work.
+    std::uint64_t cuda_nodes = 0;
 };
 
 struct TensorData {

@@ -10,10 +10,10 @@ from future integration work.
 
 | Model / task | Weight choices | Current backends | Recommended starting point |
 | --- | --- | --- | --- |
-| SAM 3 text image segmentation | F32, mixed F16/F32 | CPU, Metal | F16 on Metal; F32 for a reference configuration |
-| SAM 3 text-prompted image segmentation (quantized weights) | Vision Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal | Q8_0 for a conservative quantized configuration |
-| SAM 3 text-prompted image segmentation (full-component mixed quantized weights) | Full-component linear Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal | Full preset for compression, followed by application-data checks |
-| SAM 3 forward video tracking | F32, hybrid | CPU, Metal | Hybrid `visual-tracker-f32-v1` |
+| SAM 3 text image segmentation | F32, mixed F16/F32 | CPU, Metal, CUDA | F16 on GPU; F32 for a reference configuration |
+| SAM 3 text-prompted image segmentation (quantized weights) | Vision Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal, CUDA | Q8_0 for a conservative quantized configuration |
+| SAM 3 text-prompted image segmentation (full-component mixed quantized weights) | Full-component linear Q8_0, Q6_K, Q5_K, Q4_K | CPU, Metal, CUDA | Full preset for compression, followed by application-data checks |
+| SAM 3 forward video tracking | F32, hybrid | CPU, Metal, CUDA | Hybrid `visual-tracker-f32-v1` |
 
 Vision quantization covers only ViT attention projections and MLP linear
 weights. The text encoder, fusion, detection and mask heads, and remaining
@@ -39,10 +39,12 @@ F16 video, legacy `image-linear-*` and custom `image-modules-linear-*` profiles
 remain diagnostic; validate application data before integration. Quantized video,
 reverse tracking, and interactive video prompts are not available.
 
-CPU is the portable execution path. Current platform validation covers macOS
-CPU and Metal; Linux, Windows, other CPU hardware, and additional accelerators
-require their own builds and numerical checks. Metal is an Apple-specific backend,
-not a requirement for the library's model interfaces.
+CPU is the portable execution path. Platform validation covers macOS CPU/Metal
+and Linux x86_64 CUDA on an RTX 4090: F32/F16 image, the eight vision/full image
+quantization presets, and F32/hybrid video. F32/F16 image also passed on the same
+Linux CPU with OpenBLAS. Other CPU/GPU hardware and operating systems require
+their own builds and numerical checks. Metal is an Apple-specific backend, not
+a requirement for the library's model interfaces.
 
 ## Model and pipeline roadmap
 
@@ -63,16 +65,17 @@ interfaces and model/backend extension boundaries.
 Weight labels describe storage. Computation and state can use different formats.
 The following policies belong to the current SAM 3 adapter and backends.
 
-| Weight label | Disk / Metal resident weights | CPU resident weights |
+| Weight label | Disk / Metal / CUDA resident weights | CPU resident weights |
 | --- | --- | --- |
 | F32 | Original F32 | F32 |
 | F16 | Mixed F16/F32 | Stored F16 promoted to F32 |
 | Hybrid | F32 visual/tracker weights, mixed detector/text | Remaining F16 promoted to F32 |
-| Vision quantized | Packed Q8/K vision linears, other weights F32 | Packed weights retained; temporary F32 matrix weights |
+| Vision / full quantized | Packed Q8/K selected linears, other weights F32 | Packed weights retained; temporary F32 matrix weights |
 
 Promotion preserves rounded values, not the original F32 values. Quantized
-Metal execution uses native kernels; CPU keeps compressed weights resident and
-performs matrix operations with temporary F32 weights. `ModelInfo::precision`,
+Metal and CUDA execution use native kernels with separate arithmetic profiles;
+CUDA's validated MMVQ/MMQ paths use RHS Q8_1 staging. CPU keeps compressed weights
+resident and performs matrix operations with temporary F32 weights. `ModelInfo::precision`,
 `storage_profile`, and `arithmetic_profile` describe the loaded configuration.
 See the [quantization guide](docs/quantization.md) for exact profile names.
 

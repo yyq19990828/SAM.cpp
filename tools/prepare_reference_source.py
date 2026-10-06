@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Copy pinned Meta sources and apply recorded CPU image/video adaptations.
+"""Copy pinned Meta sources and apply recorded FP32 image/video adaptations.
 
 The original checkout stays untouched. This does not load, download, or alter weights.
 The exporter separately records its unfused FP32 MLP adaptation.
@@ -71,9 +71,23 @@ VIDEO_SOURCE_HASHES = {
 }
 
 
-def video_adaptations(source):
+def image_patches(device="cpu"):
+    if device not in ("cpu", "cuda"):
+        raise ValueError("unsupported reference device")
+    if device == "cpu":
+        return PATCHES
+    # These caches are plain tensors rather than registered buffers, so moving
+    # the model cannot move caches precomputed on CPU. Keep the pinned CUDA
+    # precomputation for both image and video CUDA references.
+    cpu_cache_files = {"sam3/model/position_encoding.py", "sam3/model/decoder.py"}
+    return [patch for patch in PATCHES if patch["file"] not in cpu_cache_files]
+
+
+def video_adaptations(source, device="cpu"):
+    if device not in ("cpu", "cuda"):
+        raise ValueError("unsupported reference device")
     changes = []
-    for patch in PATCHES:
+    for patch in image_patches(device):
         text = (source / patch["file"]).read_text(encoding="utf-8")
         if patch["file"] == "sam3/model_builder.py":
             if hashlib.sha256(text.encode()).hexdigest() != patch["source_sha256"]:
@@ -99,8 +113,13 @@ def video_adaptations(source):
                              "    from sam3.model.edt import edt_triton\n\n    fn_mask_dt = edt_triton(padded_fn_masks)")]
         if filename.endswith("sam3_tracking_predictor.py"):
             replacements = [("torch.autocast(device_type=\"cuda\", dtype=torch.bfloat16)",
-                             "torch.autocast(device_type=\"cpu\", enabled=False)"),
+                             f"torch.autocast(device_type=\"{device}\", enabled=False)"),
                             ("torch.device(\"cuda\")", "self.device")]
+        if filename.endswith("sam3_video_inference.py") and device == "cuda":
+            original = '@torch.autocast(device_type="cuda", dtype=torch.bfloat16)'
+            if text.count(original) != 2:
+                raise ValueError("expected two pinned video autocast decorators")
+            text = text.replace(original, '@torch.autocast(device_type="cuda", enabled=False)')
         if filename.endswith("sam3_video_base.py"):
             replacements = [(f'sam3_image_out["tracker_backbone_fpn_{i}"]',
                              f'sam3_image_out["tracker_backbone_fpn_{i}"].float()') for i in range(3)]
@@ -120,8 +139,10 @@ def video_adaptations(source):
         if filename.endswith("sam3_tracker_base.py"):
             text = text.replace('prev["maskmem_features"].to(device=self.device, non_blocking=True)',
                                 'prev["maskmem_features"].to(device=self.device, non_blocking=True).float()')
-        changes.append((filename, text,
-                        "CPU-only transfers and FP32 consumers; retain explicit BF16 storage and original temporal rules. Defer unused interactive Triton import."))
+        reason = "CPU-only transfers and FP32 consumers; retain explicit BF16 storage and original temporal rules. Defer unused interactive Triton import."
+        if device == "cuda":
+            reason = "Device-aware transfers and FP32 consumers/autocast; retain explicit BF16 storage and original temporal rules. Defer unused interactive Triton import."
+        changes.append((filename, text, reason))
     return [{"file": filename, "source_sha256": sha256_file(source / filename),
              "adapted_sha256": hashlib.sha256(text.encode()).hexdigest(), "reason": reason,
              "text": text} for filename, text, reason in changes]
@@ -146,9 +167,11 @@ def patched_text(text, patch):
     return text
 
 
-def prepare(source, output, task="image"):
+def prepare(source, output, task="image", device="cpu"):
     if task not in ("image", "video"):
         raise ValueError("unsupported reference task")
+    if device not in ("cpu", "cuda"):
+        raise ValueError("unsupported reference device")
     source, _, _ = validate_source(source)
     output = output.resolve()
     if output.is_relative_to(source) or source.is_relative_to(output):
@@ -160,7 +183,7 @@ def prepare(source, output, task="image"):
     try:
         shutil.copytree(source / "sam3", staging / "sam3", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
         shutil.copyfile(source / "LICENSE", staging / "LICENSE")
-        changes = video_adaptations(source) if task == "video" else PATCHES
+        changes = video_adaptations(source, device) if task == "video" else image_patches(device)
         for patch in changes:
             path = staging / patch["file"]
             text = patch["text"] if task == "video" else patched_text(path.read_text(encoding="utf-8"), patch)
@@ -168,11 +191,12 @@ def prepare(source, output, task="image"):
         write_json(staging / "adaptations.json", {"source": str(source), "source_revision": SAM3_REVISION,
                                                  "adapted_source": str(output), "preparer_sha256": sha256_file(__file__),
                                                  "task": task,
+                                                 "device": device,
                                                  "changes": [{key: value for key, value in patch.items() if key != "text"}
                                                              for patch in changes]})
         validate_source(source, staging)
         os.rename(staging, output)
-        print(f"Prepared pinned CPU-{task} reference source: {output}")
+        print(f"Prepared pinned {device.upper()}-{task} reference source: {output}")
     except BaseException:
         shutil.rmtree(staging)
         raise
@@ -183,9 +207,10 @@ def main():
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--task", choices=("image", "video"), default="image")
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     args = parser.parse_args()
     try:
-        prepare(args.source, args.output, args.task)
+        prepare(args.source, args.output, args.task, args.device)
     except (OSError, ValueError, RuntimeError) as error:
         parser.exit(1, f"reference source preparation failed: {error}\n")
 

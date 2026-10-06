@@ -32,9 +32,10 @@ void test_stats_aggregate_compatibility() {
     require(stats.host_upload_bytes == 7 && stats.host_download_bytes == 8 &&
             stats.weight_buffer_bytes == 9 && stats.compute_buffer_bytes == 10 &&
             stats.image_ms == 11.25 && stats.text_ms == 12.5 && stats.inference_ms == 13.75 &&
-            stats.blas_nodes == 0, "Legacy stats aggregate positions changed");
+            stats.blas_nodes == 0 && stats.cuda_nodes == 0, "Legacy stats aggregate positions changed");
     const sam::ModelInfo info{"sam3", "q8_0", sam::Backend::Cpu, 2, 1, 34, false};
-    require(info.arithmetic_profile.empty() && info.quantization_modules.empty(),
+    require(info.arithmetic_profile.empty() && info.quantization_modules.empty() &&
+            info.device_name.empty() && info.cuda_device == -1,
             "Legacy ModelInfo aggregate fields changed or schema-4 modules leaked into old models");
 }
 
@@ -49,6 +50,12 @@ void test_model_quantization_modules_json() {
     sam_example::write_model_profile(modular, info);
     require(modular.str().find(",\"quantization_modules\":[\"vision\",\"text\",\"fusion\",\"decoder\"]") != std::string::npos,
             "schema-4 module names were not serialized as a canonical JSON array");
+    info.device_name = "NVIDIA GPU";
+    info.cuda_device = 2;
+    std::ostringstream device;
+    sam_example::write_model_profile(device, info);
+    require(device.str().find(",\"device_name\":\"NVIDIA GPU\",\"cuda_device\":2") != std::string::npos,
+            "selected CUDA device identity was not serialized");
 }
 
 template<class Exception, class Function>
@@ -287,10 +294,32 @@ void test_images() {
     const std::vector<std::uint8_t> half_step{0,0,0, 1,1,1};
     const auto ties = sam::internal::sam3::preprocess_image({half_step.data(), half_step.size(), 2,1,6},3);
     require(ties[1] == -1.0f, "resize half-values were not rounded to nearest even");
+    // Frozen torchvision 0.25.0 / torch 2.10.0 CUDA float-antialias results.
+    // These high-coordinate samples cross a byte-rounding boundary if an
+    // absolute center or filtering accumulation is rounded before subtraction.
+    for (const auto shape : {std::array<int, 3>{129, 83, 71}, std::array<int, 3>{257, 129, 97}}) {
+        const int width = shape[0], height = shape[1], target = shape[2];
+        std::vector<std::uint8_t> synthetic(static_cast<std::size_t>(width) * height * 3);
+        for (std::size_t i = 0; i < synthetic.size(); ++i)
+            synthetic[i] = static_cast<std::uint8_t>((i * 97 + 19) % 256);
+        const auto actual = sam::internal::sam3::preprocess_image(
+            {synthetic.data(), synthetic.size(), width, height, static_cast<std::size_t>(width) * 3}, target);
+        if (width == 129) {
+            require(actual[target * target + 62 * target + 54] == 0.13725495338439941f,
+                    "float antialias resize lost the relative-coordinate contraction");
+        } else {
+            require(actual[target * target + 27 * target + 92] == 0.15294122695922852f &&
+                    actual[target * target + 37 * target + 46] == 0.20784318447113037f,
+                    "float antialias resize changed independently frozen RGB8 rounding");
+        }
+    }
     rejects<std::invalid_argument>([] { sam::internal::validate_score_threshold(std::numeric_limits<float>::quiet_NaN()); }, "NaN threshold was accepted");
     rejects<std::invalid_argument>([] { sam::internal::validate_score_threshold(-0.1f); }, "negative threshold was accepted");
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cpu, 0}); }, "zero CPU threads were accepted");
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({static_cast<sam::Backend>(99), 4}); }, "unknown backend was accepted");
+    sam::internal::validate_backend_options({sam::Backend::Cuda, 4, 2});
+    rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cuda, 4, -1}); }, "negative CUDA device was accepted");
+    rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cpu, 4, 1}); }, "CUDA device index was accepted for CPU");
 }
 
 void test_results() {

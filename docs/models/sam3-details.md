@@ -61,6 +61,10 @@ Use Python 3.12 and the pinned [reference dependency lock](../../tools/requireme
 Conversion runs in an isolated environment; the C++ runtime does not require
 Python.
 
+For Linux x86_64 CUDA reference runs, install
+[requirements-linux-cuda.lock](../../tools/requirements-linux-cuda.lock) in place
+of `tools/requirements.lock` to pin the CUDA package dependencies as well.
+
 ```sh
 python3.12 -m venv .venv-reference
 .venv-reference/bin/python -m pip install -r tools/requirements.lock

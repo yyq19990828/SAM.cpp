@@ -4,6 +4,7 @@
 #include "resources.hpp"
 #include "sam/types.hpp"
 #include <cstdint>
+#include <string>
 
 namespace sam::internal {
 
@@ -15,7 +16,14 @@ struct BackendDriver {
     BackendPtr handle;
     bool promote_f16_weights = false;
     std::uint64_t RuntimeStats::* node_counter = nullptr;
+    std::string device_name;
+    int cuda_device = -1;
 };
+
+inline bool is_compute_node(const ggml_tensor* tensor) {
+    return tensor->op != GGML_OP_NONE && tensor->op != GGML_OP_VIEW &&
+        tensor->op != GGML_OP_RESHAPE && tensor->op != GGML_OP_PERMUTE && tensor->op != GGML_OP_TRANSPOSE;
+}
 
 } // namespace sam::internal
 

@@ -124,6 +124,8 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
     state->model_info.profile = file.video ? "meta-sam3-temporal-v1" : "";
     state->model_info.storage_profile = file.storage_profile;
     state->model_info.arithmetic_profile = state->runtime->arithmetic_profile();
+    state->model_info.device_name = state->runtime->device_name();
+    state->model_info.cuda_device = state->runtime->cuda_device();
     if (file.modular_quantized)
         state->model_info.quantization_modules = std::move(file.quantization_modules);
     return state;

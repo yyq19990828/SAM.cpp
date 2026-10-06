@@ -1,0 +1,2 @@
+# Unified diffs require a single-space marker for empty context lines.
+cmake/patches/*.patch whitespace=-blank-at-eol

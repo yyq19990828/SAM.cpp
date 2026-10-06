@@ -1,0 +1,347 @@
+--- a/src/ggml-cuda/ggml-cuda.cu
++++ b/src/ggml-cuda/ggml-cuda.cu
+@@ -26,6 +26,7 @@
+ #include "ggml-cuda/diagmask.cuh"
+ #include "ggml-cuda/diag.cuh"
+ #include "ggml-cuda/fattn.cuh"
++#include "ggml-cuda/sam-precise.cuh"
+ #include "ggml-cuda/fwht.cuh"
+ #include "ggml-cuda/getrows.cuh"
+ #include "ggml-cuda/im2col.cuh"
+@@ -1501,6 +1502,12 @@
+     size_t nbd3 = dst->nb[3];
+ 
+     cublasComputeType_t cu_compute_type = traits::compute_type;
++#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
++    const bool precise_f32 = compute_type == GGML_TYPE_F32 && dst->op_params[0] == GGML_PREC_F32;
++    if (precise_f32) cu_compute_type = CUBLAS_COMPUTE_32F_PEDANTIC;
++#else
++    const bool precise_f32 = false;
++#endif
+     cudaDataType_t cu_data_type = traits::data_type;
+     cudaDataType_t cu_data_type_a = traits::data_type;
+     cudaDataType_t cu_data_type_b = traits::data_type;
+@@ -1541,7 +1548,7 @@
+     // Theoretically cublasGemmStridedBatchedEx would always work, even for a single matrix.
+     // However, for some old NVIDIA and AMD GPUs the strided/Ex GEMM is much slower,
+     //     probably because the internal kernel selection logic is suboptimal.
+-    if (compute_type == GGML_TYPE_F32 && ne12 == 1 && ne13 == 1) {
++    if (compute_type == GGML_TYPE_F32 && !precise_f32 && ne12 == 1 && ne13 == 1) {
+         CUBLAS_CHECK(
+             cublasSgemm(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
+                     ne01, ne11, ne10,
+@@ -1640,7 +1647,12 @@
+     }
+ 
+     const char * env_c = getenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE");
+-    if (env_c != nullptr) {
++#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
++    const bool allow_compute_override = dst->op_params[0] != GGML_PREC_F32;
++#else
++    const bool allow_compute_override = true;
++#endif
++    if (env_c != nullptr && allow_compute_override) {
+         std::string env_cpp = env_c;
+         for (char & c : env_cpp) {
+             c = std::tolower(c);
+@@ -1823,6 +1835,16 @@
+ 
+ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+     GGML_TENSOR_BINARY_OP_LOCALS
++#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
++    // The custom tensor-core MMF path stages dense operands at reduced precision.
++    // An explicit F32 request must preserve F32 activations and stored F16 values.
++    if (dst->op_params[0] == GGML_PREC_F32 &&
++            (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16) &&
++            src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
++        ggml_cuda_mul_mat_cublas(ctx, src0, src1, dst);
++        return;
++    }
++#endif
+ 
+     const int32_t hint = ggml_get_op_params_i32(dst, 1);
+     if (hint == GGML_HINT_SRC0_IS_HADAMARD && ggml_cuda_op_fwht(ctx, src1, dst)) {
+@@ -2368,6 +2390,10 @@
+         case GGML_OP_ARGSORT:
+             ggml_cuda_op_argsort(ctx, dst);
+             break;
++        case GGML_OP_WIN_PART:
++        case GGML_OP_WIN_UNPART:
++            ggml_cuda_sam_window(ctx, dst);
++            break;
+         case GGML_OP_FLASH_ATTN_EXT:
+             ggml_cuda_flash_attn_ext(ctx, dst);
+             break;
+@@ -5578,6 +5604,9 @@
+             return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
+                 op->src[2]->type == GGML_TYPE_F32 && (op->src[3] == nullptr || op->src[3]->type == GGML_TYPE_F32) &&
+                 op->type == GGML_TYPE_F32;
++        case GGML_OP_WIN_PART:
++        case GGML_OP_WIN_UNPART:
++            return ggml_cuda_sam_window_supported(op);
+         case GGML_OP_FLASH_ATTN_EXT:
+             return ggml_cuda_flash_attn_ext_supported(dev_ctx->device, op);
+         case GGML_OP_CROSS_ENTROPY_LOSS:
+--- a/src/ggml-cuda/fattn.cu
++++ b/src/ggml-cuda/fattn.cu
+@@ -1,3 +1,4 @@
++#include "sam-precise.cuh"
+ #include "common.cuh"
+ #include "fattn-common.cuh"
+ #include "fattn-mma-f16.cuh"
+@@ -717,6 +718,7 @@
+ }
+ 
+ size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * dst) {
++    if (ggml_cuda_sam_f32_attention_requested(dst)) return ggml_nbytes(dst);
+     GGML_ASSERT(dst->op == GGML_OP_FLASH_ATTN_EXT);
+ 
+     const ggml_tensor * Q = dst->src[0];
+@@ -754,6 +756,10 @@
+ 
+ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+     ggml_cuda_set_device(ctx.device);
++    if (ggml_cuda_sam_f32_attention_requested(dst)) {
++        ggml_cuda_sam_f32_attention(ctx, dst);
++        return;
++    }
+     switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {
+         case BEST_FATTN_KERNEL_NONE:
+             GGML_ABORT("fatal error");
+@@ -770,5 +776,6 @@
+ }
+ 
+ bool ggml_cuda_flash_attn_ext_supported(int device, const ggml_tensor * dst) {
++    if (ggml_cuda_sam_f32_attention_requested(dst)) return ggml_cuda_sam_f32_attention_supported(dst);
+     return ggml_cuda_get_best_fattn_kernel(device, dst) != BEST_FATTN_KERNEL_NONE;
+ }
+--- /dev/null
++++ b/src/ggml-cuda/sam-precise.cu
+@@ -0,0 +1,212 @@
++// SPDX-License-Identifier: MIT
++// SAM's precise, bounded-workspace CUDA operators for pinned GGML.
++#include "sam-precise.cuh"
++
++#include <algorithm>
++#include <climits>
++#include <cstdint>
++
++static __global__ void sam_window_f32(const float * src, float * dst, int64_t count,
++        int64_t channels, int64_t width, int64_t height, int64_t window, int64_t windows_x,
++        bool partition) {
++    for (int64_t index = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
++         index < count; index += int64_t(gridDim.x) * blockDim.x) {
++        const int64_t channel = index % channels;
++        const int64_t pixel = index / channels;
++        if (partition) {
++            const int64_t x = pixel % window;
++            const int64_t y = (pixel / window) % window;
++            const int64_t tile = pixel / (window * window);
++            const int64_t source_x = (tile % windows_x) * window + x;
++            const int64_t source_y = (tile / windows_x) * window + y;
++            dst[index] = source_x < width && source_y < height
++                ? src[(source_y * width + source_x) * channels + channel] : 0.0f;
++        } else {
++            const int64_t x = pixel % width;
++            const int64_t y = pixel / width;
++            const int64_t tile = (y / window) * windows_x + x / window;
++            dst[index] = src[((tile * window + y % window) * window + x % window)
++                * channels + channel];
++        }
++    }
++}
++
++bool ggml_cuda_sam_window_supported(const ggml_tensor * dst) {
++    const auto * src = dst->src[0];
++    if (!src || src->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32 ||
++            !ggml_is_contiguous(src) || !ggml_is_contiguous(dst)) {
++        return false;
++    }
++    const bool partition = dst->op == GGML_OP_WIN_PART;
++    const int64_t window = ggml_get_op_params_i32(dst, partition ? 2 : 0);
++    const auto * image = partition ? src : dst;
++    const auto * tiles = partition ? dst : src;
++    if (window <= 0 || image->ne[3] != 1 || image->ne[0] != tiles->ne[0] ||
++            tiles->ne[1] != window || tiles->ne[2] != window) {
++        return false;
++    }
++    const int64_t nx = image->ne[1] / window + (image->ne[1] % window != 0);
++    const int64_t ny = image->ne[2] / window + (image->ne[2] % window != 0);
++    return tiles->ne[3] == nx * ny && (!partition ||
++        (ggml_get_op_params_i32(dst, 0) == nx && ggml_get_op_params_i32(dst, 1) == ny));
++}
++
++void ggml_cuda_sam_window(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
++    GGML_ASSERT(ggml_cuda_sam_window_supported(dst));
++    const bool partition = dst->op == GGML_OP_WIN_PART;
++    const auto * image = partition ? dst->src[0] : dst;
++    const int64_t window = ggml_get_op_params_i32(dst, partition ? 2 : 0);
++    const int64_t nx = image->ne[1] / window + (image->ne[1] % window != 0);
++    const int64_t count = ggml_nelements(dst);
++    if (count == 0) return;
++    const unsigned blocks = unsigned(std::min<int64_t>((count + 255) / 256, 65535));
++    sam_window_f32<<<blocks, 256, 0, ctx.stream()>>>((const float *) dst->src[0]->data,
++        (float *) dst->data, count, image->ne[0], image->ne[1], image->ne[2], window, nx, partition);
++    CUDA_CHECK(cudaGetLastError());
++}
++
++bool ggml_cuda_sam_f32_attention_requested(const ggml_tensor * dst) {
++#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
++    GGML_UNUSED(dst);
++    return false;
++#else
++    return ggml_flash_attn_ext_get_prec(dst) == GGML_PREC_F32 &&
++        dst->src[0]->type == GGML_TYPE_F32 && dst->src[1]->type == GGML_TYPE_F32 &&
++        dst->src[2]->type == GGML_TYPE_F32 &&
++        (dst->src[0]->ne[0] == 32 || dst->src[0]->ne[0] == 64);
++#endif
++}
++
++bool ggml_cuda_sam_f32_attention_supported(const ggml_tensor * dst) {
++#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
++    GGML_UNUSED(dst);
++    return false;
++#else
++    if (!ggml_cuda_sam_f32_attention_requested(dst) || !ggml_is_contiguous(dst) || dst->src[4]) {
++        return false;
++    }
++    const auto * q = dst->src[0];
++    const auto * k = dst->src[1];
++    const auto * v = dst->src[2];
++    if (k->ne[0] != q->ne[0] || v->ne[0] != q->ne[0] || k->ne[1] != v->ne[1] ||
++        k->ne[2] != v->ne[2] || k->ne[3] != v->ne[3] ||
++        q->ne[2] % k->ne[2] != 0 || q->ne[3] % k->ne[3] != 0) return false;
++    for (const auto * src : {q, k, v}) {
++        if (src->nb[0] != sizeof(float) || src->ne[1] <= 0 || src->ne[1] > INT_MAX ||
++            src->nb[1] / sizeof(float) > INT_MAX) return false;
++        for (int axis = 1; axis < GGML_MAX_DIMS; ++axis) {
++            if (src->nb[axis] % sizeof(float)) return false;
++        }
++    }
++    float max_bias, softcap;
++    memcpy(&max_bias, (const float *) dst->op_params + 1, sizeof(float));
++    memcpy(&softcap, (const float *) dst->op_params + 2, sizeof(float));
++    if (max_bias != 0.0f || softcap != 0.0f) return false;
++    const auto * mask = dst->src[3];
++    return !mask || (mask->type == GGML_TYPE_F16 && mask->nb[0] == sizeof(half) &&
++        mask->ne[0] == k->ne[1] && mask->ne[1] >= q->ne[1] &&
++        (mask->ne[2] == 1 || mask->ne[2] == q->ne[2]) &&
++        (mask->ne[3] == 1 || mask->ne[3] == q->ne[3]));
++#endif
++}
++
++#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
++static __global__ void sam_attention_softmax(float * scores, const char * mask,
++        int keys, int first_query, size_t mask_row_stride) {
++    const int query = blockIdx.x;
++    float * row = scores + int64_t(query) * keys;
++    const half * mask_row = mask ? (const half *) (mask +
++        size_t(first_query + query) * mask_row_stride) : nullptr;
++    __shared__ float reduction[256];
++    float maximum = -INFINITY;
++    for (int key = threadIdx.x; key < keys; key += blockDim.x) {
++        const float score = row[key] + (mask_row ? __half2float(mask_row[key]) : 0.0f);
++        row[key] = score;
++        maximum = fmaxf(maximum, score);
++    }
++    reduction[threadIdx.x] = maximum;
++    __syncthreads();
++    for (int offset = 128; offset; offset /= 2) {
++        if (threadIdx.x < offset) reduction[threadIdx.x] =
++            fmaxf(reduction[threadIdx.x], reduction[threadIdx.x + offset]);
++        __syncthreads();
++    }
++    maximum = reduction[0];
++    __syncthreads();
++    float sum = 0.0f;
++    for (int key = threadIdx.x; key < keys; key += blockDim.x) {
++        const float value = maximum == -INFINITY ? 0.0f : expf(row[key] - maximum);
++        row[key] = value;
++        sum += value;
++    }
++    reduction[threadIdx.x] = sum;
++    __syncthreads();
++    for (int offset = 128; offset; offset /= 2) {
++        if (threadIdx.x < offset) reduction[threadIdx.x] += reduction[threadIdx.x + offset];
++        __syncthreads();
++    }
++    const float reciprocal = reduction[0] > 0.0f ? 1.0f / reduction[0] : 0.0f;
++    for (int key = threadIdx.x; key < keys; key += blockDim.x) row[key] *= reciprocal;
++}
++
++static __global__ void sam_attention_output(const float * src, char * dst,
++        int dimensions, int queries, size_t query_stride) {
++    const int index = int(blockIdx.x) * blockDim.x + threadIdx.x;
++    if (index < dimensions * queries) {
++        *(float *) (dst + (index / dimensions) * query_stride + (index % dimensions) * sizeof(float)) = src[index];
++    }
++}
++#endif
++
++void ggml_cuda_sam_f32_attention(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
++    GGML_ASSERT(ggml_cuda_sam_f32_attention_supported(dst));
++#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
++    const auto * q = dst->src[0];
++    const auto * k = dst->src[1];
++    const auto * v = dst->src[2];
++    const auto * mask = dst->src[3];
++    const int dimensions = int(q->ne[0]);
++    const int keys = int(k->ne[1]);
++    const int tile = int(std::min<int64_t>(q->ne[1], 128));
++    // Only one head/query tile is live. The existing CUDA pool owns temporaries
++    // and orders reuse on this stream; no per-model or global scratch allocation.
++    ggml_cuda_pool_alloc<float> scores(ctx.pool(), size_t(keys) * tile);
++    ggml_cuda_pool_alloc<float> result(ctx.pool(), size_t(dimensions) * tile);
++    float scale;
++    memcpy(&scale, dst->op_params, sizeof(float));
++    const float zero = 0.0f, one = 1.0f;
++    const int64_t head_ratio = q->ne[2] / k->ne[2];
++    const int64_t batch_ratio = q->ne[3] / k->ne[3];
++    for (int64_t batch = 0; batch < q->ne[3]; ++batch) {
++        for (int64_t head = 0; head < q->ne[2]; ++head) {
++            const char * key_data = (const char *) k->data + (batch / batch_ratio) * k->nb[3] +
++                (head / head_ratio) * k->nb[2];
++            const char * value_data = (const char *) v->data + (batch / batch_ratio) * v->nb[3] +
++                (head / head_ratio) * v->nb[2];
++            const char * mask_data = mask ? (const char *) mask->data +
++                (batch % mask->ne[3]) * mask->nb[3] + (head % mask->ne[2]) * mask->nb[2] : nullptr;
++            for (int64_t first = 0; first < q->ne[1]; first += tile) {
++                const int queries = int(std::min<int64_t>(tile, q->ne[1] - first));
++                const char * query_data = (const char *) q->data + batch * q->nb[3] + head * q->nb[2] + first * q->nb[1];
++                CUBLAS_CHECK(cublasGemmEx(ctx.cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
++                    keys, queries, dimensions, &scale, key_data, CUDA_R_32F, int(k->nb[1] / sizeof(float)),
++                    query_data, CUDA_R_32F, int(q->nb[1] / sizeof(float)), &zero,
++                    scores.get(), CUDA_R_32F, keys, CUBLAS_COMPUTE_32F_PEDANTIC, CUBLAS_GEMM_DEFAULT));
++                sam_attention_softmax<<<queries, 256, 0, ctx.stream()>>>(scores.get(), mask_data,
++                    keys, int(first), mask ? mask->nb[1] : 0);
++                CUDA_CHECK(cudaGetLastError());
++                CUBLAS_CHECK(cublasGemmEx(ctx.cublas_handle(), CUBLAS_OP_N, CUBLAS_OP_N,
++                    dimensions, queries, keys, &one, value_data, CUDA_R_32F, int(v->nb[1] / sizeof(float)),
++                    scores.get(), CUDA_R_32F, keys, &zero, result.get(), CUDA_R_32F, dimensions,
++                    CUBLAS_COMPUTE_32F_PEDANTIC, CUBLAS_GEMM_DEFAULT));
++                char * output = (char *) dst->data + batch * dst->nb[3] + head * dst->nb[1] + first * dst->nb[2];
++                sam_attention_output<<<(dimensions * queries + 255) / 256, 256, 0, ctx.stream()>>>(
++                    result.get(), output, dimensions, queries, dst->nb[2]);
++                CUDA_CHECK(cudaGetLastError());
++            }
++        }
++    }
++#else
++    GGML_UNUSED(ctx);
++#endif
++}
+--- /dev/null
++++ b/src/ggml-cuda/sam-precise.cuh
+@@ -0,0 +1,12 @@
++#ifndef GGML_CUDA_SAM_PRECISE_CUH
++#define GGML_CUDA_SAM_PRECISE_CUH
++
++#include "common.cuh"
++
++bool ggml_cuda_sam_window_supported(const ggml_tensor * dst);
++void ggml_cuda_sam_window(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
++bool ggml_cuda_sam_f32_attention_requested(const ggml_tensor * dst);
++bool ggml_cuda_sam_f32_attention_supported(const ggml_tensor * dst);
++void ggml_cuda_sam_f32_attention(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
++
++#endif // GGML_CUDA_SAM_PRECISE_CUH

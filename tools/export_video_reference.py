@@ -16,7 +16,7 @@ import shutil
 import sys
 import time
 
-from export_reference import install_unfused_fp32, validate_source
+from export_reference import configure_cuda_oracle, install_unfused_fp32, validate_source
 from prepare_reference_source import video_adaptations
 from sam3_artifacts import (BPE_SHA256, SAM3_REVISION, artifact_path, dump_array,
                            read_json, sha256_file, write_json)
@@ -225,9 +225,10 @@ def export(args):
     if sha256_file(args.checkpoint) != OFFICIAL_SHA256:
         raise ValueError("video oracle requires the pinned original checkpoint")
     source, runtime, adaptations = validate_source(args.sam3_source, args.sam3_runtime_source)
-    expected = [{key: value for key, value in change.items() if key != "text"} for change in video_adaptations(source)]
+    expected = [{key: value for key, value in change.items() if key != "text"}
+                for change in video_adaptations(source, args.device)]
     if adaptations != expected:
-        raise ValueError("CPU video source differs from the recorded preparer's adaptations")
+        raise ValueError("video source differs from the recorded preparer's device adaptations")
     bpe = args.bpe or source / "sam3/assets/bpe_simple_vocab_16e6.txt.gz"
     if sha256_file(bpe) != BPE_SHA256:
         raise ValueError("video tokenizer asset differs from the pinned official BPE")
@@ -263,13 +264,15 @@ def export(args):
     torch.use_deterministic_algorithms(True)
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cudnn.benchmark = False
+    cuda_oracle = configure_cuda_oracle(torch, args.device)
     replacement = install_unfused_fp32()
     model = build_sam3_video_model(checkpoint_path=str(args.checkpoint), bpe_path=str(bpe),
-                                  device="cpu", load_from_HF=False, compile=False)
+                                  device=args.device, load_from_HF=False, compile=False)
     model.max_num_objects = args.max_objects
     capture = Capture(model)
     cases = []
-    with torch.inference_mode(), torch.autocast(device_type="cpu", enabled=False):
+    with torch.inference_mode(), torch.autocast(device_type=args.device, enabled=False):
         for case in wanted:
             count = min(case["frames"], args.max_frames) if args.max_frames else case["frames"]
             directory = args.output / case["id"]
@@ -344,7 +347,7 @@ def export(args):
                 "reference_kind": "official-checkpoint", "checkpoint": {"sha256": OFFICIAL_SHA256},
                 "bpe": {"sha256": BPE_SHA256}, "cases_manifest": {"file": "cases.json", "sha256": sha256_file(args.cases)},
                 "max_objects": args.max_objects,
-                "oracle": {"variant": "official-video-fp32-explicit-storage", "device": "cpu", "precision": "float32",
+                "oracle": {**cuda_oracle, "variant": "official-video-fp32-explicit-storage", "device": args.device, "precision": "float32",
                            "compile": False, "autocast": False, "tf32": False, "threads": args.threads,
                            "input_storage": "float16", "tracker_transport": "bfloat16", "memory_storage": "bfloat16",
                            "runtime_adaptations": adaptations, "fp32_adaptation": replacement, "packages": packages,
@@ -365,7 +368,7 @@ def main():
     parser.add_argument("--cases", type=Path, default=CASES)
     parser.add_argument("--frames", type=Path, default=Path("models/video-cases"))
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--device", choices=("cpu",), default="cpu")
+    parser.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--max-objects", type=int, default=8)
     parser.add_argument("--case", choices=("motion", "entry", "occlusion", "hotstart-removal", "negative"))

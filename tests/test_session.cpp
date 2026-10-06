@@ -25,7 +25,8 @@ void same_result(const sam::Result& actual, const sam::Result& expected) {
 void same_computation_counts(const sam::RuntimeStats& a, const sam::RuntimeStats& b) {
     require(a.vision_encodes == b.vision_encodes && a.text_encodes == b.text_encodes &&
             a.inferences == b.inferences && a.compute_buffer_bytes == b.compute_buffer_bytes &&
-            a.cpu_nodes == b.cpu_nodes && a.metal_nodes == b.metal_nodes &&
+            a.cpu_nodes == b.cpu_nodes && a.metal_nodes == b.metal_nodes && a.cuda_nodes == b.cuda_nodes &&
+            a.blas_nodes == b.blas_nodes &&
             a.graph_partitions == b.graph_partitions && a.host_upload_bytes == b.host_upload_bytes &&
             a.host_download_bytes == b.host_download_bytes,
             "A cached prompt unexpectedly executed or allocated a graph");
@@ -36,7 +37,7 @@ void same_computation_counts(const sam::RuntimeStats& a, const sam::RuntimeStats
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--help") {
-            std::cout << "Usage: test_session MODEL IMAGE_A IMAGE_B PROMPT_A PROMPT_B cpu|metal THREADS NEW_DIR\n";
+            std::cout << "Usage: test_session MODEL IMAGE_A IMAGE_B PROMPT_A PROMPT_B cpu|metal|cuda THREADS NEW_DIR\n";
             return 0;
         }
         if (argc != 9) throw std::invalid_argument("Use --help for the eight positional arguments");
@@ -45,7 +46,7 @@ int main(int argc, char** argv) {
         std::vector<char*> pointers;
         for (auto& argument : arguments) pointers.push_back(argument.data());
         const auto options = sam_example::parse_options(static_cast<int>(pointers.size()), pointers.data(), false);
-        require(options.backend.backend != sam::Backend::Auto, "Session check requires explicit cpu or metal");
+        require(options.backend.backend != sam::Backend::Auto, "Session check requires an explicit backend");
         require(options.text != argv[5], "Session check requires two distinct prompts");
         require(!std::filesystem::exists(options.output), "Output directory already exists");
         const auto image_a = sam_example::read_image(options.image);
@@ -78,6 +79,13 @@ int main(int argc, char** argv) {
         same_computation_counts(first.stats(), cached);
         same_result(second.segment_text(options.text), second_result);
         same_computation_counts(second.stats(), second_cached);
+
+        if (info.backend == sam::Backend::Cuda) {
+            require(!info.device_name.empty() && info.cuda_device == 0, "Session CUDA device identity is missing");
+            for (const auto* stats : {&first.stats(), &second.stats()})
+                require(stats->cuda_nodes > 0 && stats->cpu_nodes == 0 && stats->metal_nodes == 0 && stats->blas_nodes == 0,
+                        "Session used compute outside the selected CUDA device");
+        }
 
         first.set_image(sam_example::image_view(image_b));
         same_result(first.segment_text(options.text), second_result);
@@ -131,6 +139,8 @@ int main(int argc, char** argv) {
              << ",\"prompt_b\":" << sam_example::json_string(argv[5])
              << ",\"threads\":" << info.threads
              << ",\"precision\":" << sam_example::json_string(info.precision)
+             << ",\"device_name\":" << sam_example::json_string(info.device_name)
+             << ",\"cuda_device\":" << info.cuda_device
              << ",\"tokenizer_compatibility_repaired\":"
              << (info.tokenizer_compatibility_repaired ? "true" : "false")
              << ",\"changed_prompt_runs\":10,\"new_prompt_cached_vision_ms\":" << new_prompt_ms

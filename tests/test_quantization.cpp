@@ -3,6 +3,7 @@
 #include "sam/internal/runtime/ggml.hpp"
 #include "sam/internal/runtime/ggml/backends/cpu.hpp"
 #include "sam/internal/runtime/ggml/backends/metal.hpp"
+#include "backend_test_support.hpp"
 
 #include <algorithm>
 #include <array>
@@ -303,6 +304,43 @@ void compare_product(ggml_backend_t backend, ggml_tensor* output, ggml_type type
                      std::int64_t width, std::int64_t rows, const std::vector<char>& packed,
                      const std::vector<float>& right, std::int64_t columns, const char* label);
 
+void check_quantized_cuda_scheduler() {
+    sam::internal::GgmlRuntime runtime({sam::Backend::Cuda, 2}, false, true);
+    require(runtime.backend() == sam::Backend::Cuda && !runtime.quantized_cpu_f32_weights() &&
+            !runtime.quantized_native_metal_only() && runtime.requires_primary_compute() &&
+            std::string(runtime.arithmetic_profile()) == "ggml-quantized-cuda-native-v1" &&
+            runtime.cuda_device() == 0 && !runtime.device_name().empty(),
+            "quantized CUDA did not select its own native arithmetic and device policy");
+    constexpr std::int64_t width = 256, rows = 257;
+    for (const auto type : {GGML_TYPE_Q8_0, GGML_TYPE_Q6_K, GGML_TYPE_Q5_K, GGML_TYPE_Q4_K}) {
+        auto weights = sam::internal::make_context(2);
+        auto* weight = ggml_new_tensor_2d(weights.get(), type, width, rows);
+        sam::internal::BufferPtr buffer(ggml_backend_alloc_ctx_tensors(weights.get(), runtime.weights_backend()));
+        if (!buffer) throw std::runtime_error("failed to allocate packed CUDA scheduler weights");
+        ggml_backend_buffer_set_usage(buffer.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        const auto packed = encode_rows(type, width, rows, matrix_values(width, rows, 11));
+        ggml_backend_tensor_set(weight, packed.data(), 0, packed.size());
+        for (const std::int64_t columns : {3, 33}) {
+            sam::RuntimeStats stats;
+            sam::internal::GraphExecution execution(runtime, 16, stats);
+            auto* right = sam::internal::input_tensor(execution.context(), "right", width, columns);
+            auto* product = ggml_mul_mat(execution.context(), weight, right);
+            execution.output(product);
+            execution.allocate();
+            require(product->src[0] == weight && weight->type == type,
+                    "quantized CUDA scheduler replaced packed weights with a graph F32 cast");
+            const auto input = matrix_values(width, columns, 7);
+            sam::internal::upload(right, input, stats);
+            execution.compute();
+            compare_product(runtime.weights_backend(), product, type, width, rows, packed, input, columns,
+                            "CUDA-packed-scheduler");
+            require(stats.cuda_nodes == 1 && stats.cpu_nodes == 0 && stats.metal_nodes == 0 &&
+                    stats.blas_nodes == 0 && stats.graph_partitions > 0,
+                    "quantized CUDA scheduler used a non-CUDA compute node");
+        }
+    }
+}
+
 std::vector<float> positive_weights(std::int64_t width, std::int64_t rows, float adjustment) {
     std::vector<float> values(static_cast<std::size_t>(width * rows));
     for (std::int64_t row = 0; row < rows; ++row)
@@ -451,17 +489,18 @@ void compare_product(ggml_backend_t backend, ggml_tensor* output, ggml_type type
         }
     }
     std::cout << ggml_backend_name(backend) << ' ' << label << ' ' << ggml_type_name(type)
+              << " columns=" << columns
               << " max_abs_error=" << maximum_error << '\n';
 }
 
-void check_backend_quantized_math(ggml_backend_t backend) {
+void check_backend_quantized_math(ggml_backend_t backend, std::int64_t columns = 3) {
     const std::array<ggml_type, 4> types{
         GGML_TYPE_Q8_0, GGML_TYPE_Q6_K, GGML_TYPE_Q5_K, GGML_TYPE_Q4_K};
     const std::array<std::int64_t, 2> widths{256, 1024};
     for (std::size_t type_index = 0; type_index < types.size(); ++type_index) {
         const auto type = types[type_index];
         for (const auto width : widths) {
-            const std::int64_t rows = 3 * width, columns = 3, tail_rows = 257;
+            const std::int64_t rows = 3 * width, tail_rows = 257;
             auto context = sam::internal::make_context(32, 32);
             auto* qkv = ggml_new_tensor_2d(context.get(), type, width, rows);
             auto* right_tensor = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, width, columns);
@@ -519,8 +558,8 @@ void check_backend_quantized_math(ggml_backend_t backend) {
     }
 }
 
-void check_backend_q8_k_fallback(ggml_backend_t backend) {
-    constexpr std::int64_t width = 4736, rows = 17, columns = 3;
+void check_backend_q8_k_fallback(ggml_backend_t backend, std::int64_t columns = 3) {
+    constexpr std::int64_t width = 4736, rows = 17;
     auto context = sam::internal::make_context(8, 8);
     auto* weight = ggml_new_tensor_2d(context.get(), GGML_TYPE_Q8_0, width, rows);
     auto* right_tensor = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, width, columns);
@@ -545,8 +584,20 @@ void check_backend_q8_k_fallback(ggml_backend_t backend) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (sam::test::cuda_requested(argc, argv)) {
+            if (!sam::test::cuda_available()) return 77;
+            check_quantized_cuda_scheduler();
+            auto cuda = sam::internal::make_cuda_backend(0);
+            check_backend_quantized_math(cuda.handle.get());
+            check_backend_q8_k_fallback(cuda.handle.get());
+            // More than MMVQ's maximum batch selects MMQ on the pinned Ada
+            // backend. The odd column count also exercises a partial tile.
+            check_backend_quantized_math(cuda.handle.get(), 33);
+            check_backend_q8_k_fallback(cuda.handle.get(), 33);
+            return 0;
+        }
         check_profile_policy();
         check_modular_profile_policy();
         check_quantized_payload_validation();
