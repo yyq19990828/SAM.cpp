@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "gate_set": "sam3-runtime-quantization-output-v1",
+  "status": "frozen-before-runtime-quantization-model-runs",
+  "scope": "Original-checkpoint comparison plus separately required annotated evaluation; output screening alone does not qualify a runtime profile",
+  "common": {
+    "score_threshold": 0.5,
+    "high_confidence_reference_score_min": 0.6,
+    "low_confidence_reference_score_max": 0.4,
+    "threshold_adjacent_interval": [0.4, 0.6],
+    "every_high_confidence_query_remains_selected": true,
+    "no_low_confidence_query_becomes_selected": true,
+    "all_outputs_finite": true
+  },
+  "reparameterization": {
+    "vision_feature_relative_l2_max": 0.00001,
+    "zero_norm_max_abs": 0.00001,
+    "mask_iou_min": 0.999,
+    "score_absolute_error_max": 0.0001,
+    "box_dimension_fraction_max": 0.0001
+  },
+  "quantized": {
+    "mask_iou_min": 0.96,
+    "score_absolute_error_max": 0.02,
+    "box_dimension_fraction_max": 0.01
+  },
+  "annotated_evaluation": {
+    "mask_ap_drop_max": 0.01,
+    "positive_union_mask_miou_drop_max": 0.005,
+    "negative_prompt_false_positives_reported_separately": true,
+    "evaluation_images_min": 512,
+    "candidate_fixed_before_evaluation": true,
+    "scope": "Prompted image/category pairs from the held-out custom COCO subset, not full val2017 AP"
+  }
+}

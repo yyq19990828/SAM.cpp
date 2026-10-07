@@ -247,14 +247,15 @@ inline struct ggml_tensor* sam3_vit_block_forward(struct ggml_context* ctx,
 // Output: [E, W, H, 1] where E=1024, W=H=72
 inline struct ggml_tensor* sam3_build_vit_prefix_graph(struct ggml_context* ctx,
                                                        struct ggml_tensor* input,
-                                                       const sam3_model& model) {
+                                                       const sam3_model& model,
+                                                       ggml_type columns_type = GGML_TYPE_F32) {
     const auto& hp = model.hparams;
     const int E = hp.vit_embed_dim;  // 1024
     const int H = hp.n_img_embd();   // 72
     const int W = hp.n_img_embd();   // 72
 
     // Patch embedding: ggml conv outputs [W, H, E, 1], permute to [E, W, H, B]
-    auto* x = sam3_conv_2d_sk_p0(ctx, model.vit.patch_embed_w, input);
+    auto* x = sam3_conv_2d_sk_p0(ctx, model.vit.patch_embed_w, input, columns_type);
     x = ggml_cont(ctx, ggml_permute(ctx, x, 1, 2, 0, 3));
 
     // pos_embed [E, 24, 24] is the pretrained resolution — tile 3x3 to [E, 72, 72]
@@ -276,10 +277,11 @@ inline struct ggml_tensor* sam3_build_vit_prefix_graph(struct ggml_context* ctx,
 // Output: [E, W, H, 1] where E=1024, W=H=72
 inline struct ggml_tensor* sam3_build_vit_graph(struct ggml_context* ctx,
                                                 struct ggml_tensor* input,
-                                                const sam3_model& model) {
+                                                const sam3_model& model,
+                                                ggml_type columns_type = GGML_TYPE_F32) {
     const auto& hp = model.hparams;
 
-    struct ggml_tensor * x = sam3_build_vit_prefix_graph(ctx, input, model);
+    struct ggml_tensor * x = sam3_build_vit_prefix_graph(ctx, input, model, columns_type);
 
     // ── 32 transformer blocks ─────────────────────────────────────────────
     for (int i = 0; i < hp.vit_depth; ++i) {
@@ -305,7 +307,8 @@ inline struct ggml_tensor* sam3_build_vit_graph(struct ggml_context* ctx,
 inline void sam3_build_neck_graph(struct ggml_context* ctx,
                                   struct ggml_tensor* vit_out,
                                   const sam3_neck& neck,
-                                  struct ggml_tensor* out[4]) {
+                                  struct ggml_tensor* out[4],
+                                  ggml_type columns_type = GGML_TYPE_F32) {
     // Permute from [E, W, H, B] to [W, H, E, B] for conv operations
     auto* x = ggml_cont(ctx, ggml_permute(ctx, vit_out, 2, 0, 1, 3));
 
@@ -324,9 +327,9 @@ inline void sam3_build_neck_graph(struct ggml_context* ctx,
         s0 = ggml_gelu_erf(ctx, s0);
         s0 = sam3_deconv_2x2(ctx, neck.scales[0].deconv2_w, s0);
         s0 = add_bias(s0, neck.scales[0].deconv2_b);
-        s0 = sam3_conv_2d_sk_p0(ctx, neck.scales[0].conv1x1_w, s0);
+        s0 = sam3_conv_2d_sk_p0(ctx, neck.scales[0].conv1x1_w, s0, columns_type);
         s0 = add_bias(s0, neck.scales[0].conv1x1_b);
-        s0 = sam3_conv_2d_s1_ph(ctx, neck.scales[0].conv3x3_w, s0);
+        s0 = sam3_conv_2d_s1_ph(ctx, neck.scales[0].conv3x3_w, s0, columns_type);
         s0 = add_bias(s0, neck.scales[0].conv3x3_b);
         out[0] = ggml_cont(ctx, ggml_permute(ctx, s0, 1, 2, 0, 3));
     }
@@ -335,18 +338,18 @@ inline void sam3_build_neck_graph(struct ggml_context* ctx,
     {
         auto* s1 = sam3_deconv_2x2(ctx, neck.scales[1].deconv1_w, x);
         s1 = add_bias(s1, neck.scales[1].deconv1_b);
-        s1 = sam3_conv_2d_sk_p0(ctx, neck.scales[1].conv1x1_w, s1);
+        s1 = sam3_conv_2d_sk_p0(ctx, neck.scales[1].conv1x1_w, s1, columns_type);
         s1 = add_bias(s1, neck.scales[1].conv1x1_b);
-        s1 = sam3_conv_2d_s1_ph(ctx, neck.scales[1].conv3x3_w, s1);
+        s1 = sam3_conv_2d_s1_ph(ctx, neck.scales[1].conv3x3_w, s1, columns_type);
         s1 = add_bias(s1, neck.scales[1].conv3x3_b);
         out[1] = ggml_cont(ctx, ggml_permute(ctx, s1, 1, 2, 0, 3));
     }
 
     // Scale 2 (1×)
     {
-        auto* s2 = sam3_conv_2d_sk_p0(ctx, neck.scales[2].conv1x1_w, x);
+        auto* s2 = sam3_conv_2d_sk_p0(ctx, neck.scales[2].conv1x1_w, x, columns_type);
         s2 = add_bias(s2, neck.scales[2].conv1x1_b);
-        s2 = sam3_conv_2d_s1_ph(ctx, neck.scales[2].conv3x3_w, s2);
+        s2 = sam3_conv_2d_s1_ph(ctx, neck.scales[2].conv3x3_w, s2, columns_type);
         s2 = add_bias(s2, neck.scales[2].conv3x3_b);
         out[2] = ggml_cont(ctx, ggml_permute(ctx, s2, 1, 2, 0, 3));
     }
@@ -354,9 +357,9 @@ inline void sam3_build_neck_graph(struct ggml_context* ctx,
     // Scale 3 (0.5× downsample)
     {
         auto* s3 = ggml_pool_2d(ctx, x, GGML_OP_POOL_MAX, 2, 2, 2, 2, 0, 0);
-        s3 = sam3_conv_2d_sk_p0(ctx, neck.scales[3].conv1x1_w, s3);
+        s3 = sam3_conv_2d_sk_p0(ctx, neck.scales[3].conv1x1_w, s3, columns_type);
         s3 = add_bias(s3, neck.scales[3].conv1x1_b);
-        s3 = sam3_conv_2d_s1_ph(ctx, neck.scales[3].conv3x3_w, s3);
+        s3 = sam3_conv_2d_s1_ph(ctx, neck.scales[3].conv3x3_w, s3, columns_type);
         s3 = add_bias(s3, neck.scales[3].conv3x3_b);
         out[3] = ggml_cont(ctx, ggml_permute(ctx, s3, 1, 2, 0, 3));
     }

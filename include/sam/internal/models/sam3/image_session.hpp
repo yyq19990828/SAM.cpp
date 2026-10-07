@@ -73,6 +73,13 @@ public:
     const RuntimeStats& stats() const override { return stats_; }
     const std::vector<std::int32_t>& token_ids() const override { return last_tokens_; }
 
+    // Internal experiment accounting; debug F32 snapshots are excluded.
+    std::size_t feature_cache_bytes() const {
+        std::size_t bytes = 0;
+        for (const auto& feature : image_.vision) bytes += feature.size_bytes();
+        return bytes;
+    }
+
     // Numerical validation hook. Native GGML buffers are never exposed. These
     // owned snapshots are materialized only when requested, then invalidated
     // by the next image or changed prompt.

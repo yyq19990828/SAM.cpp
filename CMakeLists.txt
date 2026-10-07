@@ -7,9 +7,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 option(SAM_BUILD_TESTS "Build SAM contract and integration checks" ${SAM_STANDALONE})
 option(SAM_BUILD_EXAMPLES "Build the SAM image command-line example" ${SAM_STANDALONE})
+option(SAM_BUILD_CUDA_PROBES "Build experimental CUDA quantization probes" OFF)
 set(SAM_REFERENCE_DIR "" CACHE PATH "Optional official reference bundle directory")
 
 include(cmake/ggml.cmake)
+
+if(SAM_BUILD_CUDA_PROBES)
+    enable_language(CUDA)
+endif()
 
 add_library(sam INTERFACE)
 add_library(sam::sam ALIAS sam)
@@ -20,7 +25,7 @@ target_include_directories(sam INTERFACE
 target_link_libraries(sam INTERFACE ggml)
 add_dependencies(sam sam_ggml_api_check)
 
-if(SAM_BUILD_EXAMPLES OR SAM_BUILD_TESTS)
+if(SAM_BUILD_EXAMPLES OR SAM_BUILD_TESTS OR SAM_BUILD_CUDA_PROBES)
     add_subdirectory(examples)
 endif()
 if(SAM_BUILD_TESTS)

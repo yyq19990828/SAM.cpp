@@ -1,4 +1,6 @@
 #include "backend_test_support.hpp"
+#include <sam/internal/models/sam3/ops.hpp>
+#include <sam/internal/runtime/ggml/graph.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -7,6 +9,64 @@
 #include <vector>
 
 namespace {
+
+void check_compact_convolution(sam::internal::GgmlRuntime& runtime, int kernel_size, int stride, int padding,
+                               ggml_type weight_type) {
+    constexpr int width = 31, height = 29, inputs = 3, outputs = 5, batches = 2;
+    const int out_width = (width + 2 * padding - kernel_size) / stride + 1;
+    const int out_height = (height + 2 * padding - kernel_size) / stride + 1;
+    std::vector<float> image(width * height * inputs * batches);
+    std::vector<float> weights(kernel_size * kernel_size * inputs * outputs);
+    for (std::size_t i = 0; i < image.size(); ++i)
+        image[i] = i >= image.size() / 2 ? 1000.0f : float(std::sin(0.071 * i) + 0.0003);
+    for (std::size_t i = 0; i < weights.size(); ++i)
+        weights[i] = i >= weights.size() * 4 / 5 ? 1.0f : float(std::cos(0.037 * i) * 0.1 - 0.0003);
+    auto run = [&](ggml_type columns_type) {
+        sam::RuntimeStats stats;
+        sam::internal::GraphExecution graph(runtime, 64, stats);
+        auto* values = sam::internal::input_tensor(graph.context(), "conv_values", width, height, inputs, batches);
+        auto* kernel = sam::internal::input_tensor(graph.context(), "conv_weights", kernel_size, kernel_size,
+                                                   inputs, outputs, weight_type);
+        auto* result = sam::internal::sam3::sam3_conv_2d(graph.context(), kernel, values,
+                                                        stride, stride, padding, padding, columns_type);
+        graph.output(result);
+        graph.allocate();
+        sam::internal::upload(values, image, stats);
+        if (weight_type == GGML_TYPE_F16) {
+            std::vector<ggml_fp16_t> stored(weights.size());
+            ggml_fp32_to_fp16_row(weights.data(), stored.data(), int64_t(stored.size()));
+            ggml_backend_tensor_set(kernel, stored.data(), 0, ggml_nbytes(kernel));
+        } else sam::internal::upload(kernel, weights, stats);
+        graph.compute();
+        if (stats.cpu_nodes || !stats.cuda_nodes) throw std::runtime_error("compact convolution fell back to CPU");
+        return sam::internal::download(result, stats);
+    };
+    const auto original = run(GGML_TYPE_F32);
+    const auto compact = run(runtime.convolution_columns_type());
+    if (compact != original) throw std::runtime_error("direct half columns changed existing F16 convolution results");
+    if (compact.size() != std::size_t(out_width * out_height * outputs * batches))
+        throw std::runtime_error("compact convolution has the wrong output layout");
+    for (auto& value : image) value = ggml_fp16_to_fp32(ggml_fp32_to_fp16(value));
+    for (auto& value : weights) value = ggml_fp16_to_fp32(ggml_fp32_to_fp16(value));
+    for (int batch = 0; batch < batches; ++batch)
+        for (int output = 0; output < outputs; ++output)
+            for (int y = 0; y < out_height; ++y)
+                for (int x = 0; x < out_width; ++x) {
+                    double expected = 0;
+                    for (int channel = 0; channel < inputs; ++channel)
+                        for (int ky = 0; ky < kernel_size; ++ky)
+                            for (int kx = 0; kx < kernel_size; ++kx) {
+                                const int ix = x * stride + kx - padding, iy = y * stride + ky - padding;
+                                if (ix < 0 || ix >= width || iy < 0 || iy >= height) continue;
+                                const auto a = image[((batch * inputs + channel) * height + iy) * width + ix];
+                                const auto w = weights[((output * inputs + channel) * kernel_size + ky) * kernel_size + kx];
+                                expected += double(a) * double(w);
+                            }
+                    const auto actual = compact[((batch * outputs + output) * out_height + y) * out_width + x];
+                    if (!std::isfinite(actual) || std::abs(actual - expected) > 3e-5 * (1 + std::abs(expected)))
+                        throw std::runtime_error("compact convolution differs from scalar F16-input/F32-output reference");
+                }
+}
 
 void check_matrix(ggml_backend_t backend, ggml_type type, int batches, bool broadcast, bool fast = false) {
     constexpr int inner = 257, rows = 17, columns = 35;
@@ -198,6 +258,11 @@ int main() {
         check_attention(backend, 64, 129, 137, 9, 9, 2, true, 9, 2, true);
         check_attention(backend, 32, 1025, 131, 9, 9, 1, false, 1, 1);
         sam::internal::GgmlRuntime fast_runtime({sam::Backend::Cuda, 1, 0, sam::CudaComputeMode::F16}, false);
+        for (const auto type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+            check_compact_convolution(fast_runtime, 1, 1, 0, type);
+            check_compact_convolution(fast_runtime, 3, 2, 1, type);
+            check_compact_convolution(fast_runtime, 14, 14, 0, type);
+        }
         for (const auto type : {GGML_TYPE_F32, GGML_TYPE_F16})
             for (const bool broadcast : {false, true}) check_matrix(fast_runtime.weights_backend(), type, 3, broadcast, true);
         check_attention(fast_runtime.weights_backend(), 64, 129, 137, 4, 2, 2, false, 1, 2, true, true);

@@ -8,6 +8,11 @@ No releases have been published.
 
 ### Added
 
+- Experimental image-feature cache tools and typed host storage, with native GGML F16/Q8_0 codec checks and a mixed Q8_0 recipe that preserves the F32 detection feature. Public model loading continues to use the existing cache precision.
+- Original-model COCO screening for calibrated vision linears, with separate weight/activation ablations, frozen per-object gates, prompted mask AP, positive-mask mIoU and negative-prompt counts. These tools do not qualify a runtime W8A8 profile.
+- Opt-in CUDA linear quantization probes with independently checked INT8 arithmetic, calibrated channel scaling, explicit temporary-memory accounting, and separate GGML comparisons. FP8 probes remain diagnostic and require their numerical gates to pass.
+- Internal graph profiling with alias-aware live allocation spans, tensor shapes/types and backend arena sizes, plus bounded original-FP32 vision calibration statistics, reproducible disjoint COCO data manifests, and offline W8A8 channel-scaling studies.
+- Document a [staged runtime quantization roadmap](docs/plans/20261007-143003-activation-and-runtime-quantization.md) with separate quality, latency and memory criteria. Calibrated W8A8/FP8, quantized attention and additional video-state compression remain planned.
 - Explicit CUDA F16 compute mode with F32 dense accumulation/output, separate arithmetic profiles, and final-output quality validation independent of weight storage.
 - CUDA backend selection with a visible-device index, device identity, CUDA node statistics and strict GPU compute placement. SAM 3 F32/F16 image, eight vision/full quantized image presets and F32/hybrid video have original-model qualification on Linux x86_64 RTX 4090.
 - Pinned GGML CUDA corrections for F32 dense/attention precision and native window operations, with required-GPU CTest checks.
@@ -23,6 +28,7 @@ No releases have been published.
 
 ### Changed
 
+- Reduce CUDA F16 convolution workspace and scratch memory in image segmentation and shared video encoding/detection by producing F16 expanded columns directly for the existing F16-input/F32-output arithmetic.
 - Focus routine performance tables on GPU and CPU/BLAS; retain native CPU measurements in the historical record and keep native CPU correctness coverage.
 - Reduce CUDA image/video latency with batched cuBLAS attention products, bounded query tiles and direct output assembly, preserving default numerical qualification and existing GGUF conversion receipts.
 - Batch CUDA concat launches across tensor planes; combine quantized-image prediction stages in default compute mode to reduce host transfers; use fused head-256 tracker memory attention in the opt-in F16 mode.
@@ -41,6 +47,7 @@ No releases have been published.
 
 ### Fixed
 
+- Preserve the original Linear bias operation in numerical reparameterization studies; add explicit mixed-layer selection and exactly representable channel-scale experiments without changing runtime defaults.
 - Bind CUDA validation and video benchmark receipts to their compute mode, and report the selected quantization tensor gate identity correctly.
 - Replace broken links to unavailable historical performance receipts with archive path records, preserving their original hashes.
 - Keep shared video workspaces within their serial memory budget when graph stages grow device and host arenas in opposite directions.

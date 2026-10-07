@@ -30,9 +30,12 @@ inline std::vector<float> promote_f16(const std::vector<char>& bytes) {
     return values;
 }
 
-inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOptions options) {
+inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOptions options,
+                                             FeatureCacheMode cache = FeatureCacheMode::F32) {
     validate_backend_options(options);
     auto file = inspect_weights(path); // Validate every file range before allocating weights.
+    if (file.video && cache != FeatureCacheMode::F32)
+        throw std::invalid_argument("experimental image feature caches require an image model");
     auto state = std::make_shared<ModelState>();
     state->context = make_context(4096);
     auto& definition = state->definition.weights;
@@ -70,7 +73,7 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         if (!definition.tensors.count(tensor.name))
             throw std::runtime_error("unknown SAM 3 tensor: " + tensor.name);
     }
-    state->runtime = std::make_unique<GgmlRuntime>(options, file.ftype == 0, file.quantized);
+    state->runtime = std::make_unique<GgmlRuntime>(options, file.ftype == 0, file.quantized, cache);
     const bool promote_weights_f16 = file.ftype == 1 && state->runtime->promote_f16_weights();
     if (promote_weights_f16) {
         // The CPU F16 dot path narrows activations to F16. Preserve the exact

@@ -28,8 +28,11 @@ Two fixed preset families are available: `image-vision-linear-{precision}-v1`
 quantizes vision linears, while `image-full-linear-{precision}-v1` covers 348
 target matrices across all four components. Full-component quantization retains
 the floating-point exceptions above. GGUF quantizes stored weights; shared
-graphs retain F32 activation buffers, while native GPU kernels may stage matrix
-operands in lower precision. Video tracking state is outside these image profiles.
+graphs primarily retain F32 activations. With explicit CUDA F16 compute, image
+convolutions directly produce F16 expanded columns for the existing F16-input,
+F32-output matrix kernel, reducing temporary memory. Other native GPU kernels
+may stage matrix operands in lower precision. Video tracking state is outside
+these image profiles.
 
 Repository numerical acceptance focuses on those two preset families; see
 [model support](../MODEL_ZOO.md) for their status. Custom combinations selected

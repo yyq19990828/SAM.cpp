@@ -31,6 +31,7 @@ SOFTWARE.
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <stdexcept>
 
 namespace sam::internal::sam3 {
 
@@ -62,13 +63,17 @@ inline struct ggml_tensor* sam3_layer_norm(struct ggml_context* ctx,
     return x;
 }
 
-// GGML's convolution helper stages F32 activations in F16. Build the same
-// graph with F32 im2col; promoting kernels preserves their stored F16 values.
+// Preserve F32 columns unless the backend's arithmetic already consumes F16
+// operands. In that case im2col writes half directly; the GEMM still produces
+// F32 and no full-size F32 columns/cast pair is materialized.
 inline ggml_tensor* sam3_conv_2d(ggml_context* ctx, ggml_tensor* kernel, ggml_tensor* input,
-                                 int stride_x, int stride_y, int padding_x, int padding_y) {
+                                 int stride_x, int stride_y, int padding_x, int padding_y,
+                                 ggml_type columns_type = GGML_TYPE_F32) {
+    if (columns_type != GGML_TYPE_F32 && columns_type != GGML_TYPE_F16)
+        throw std::invalid_argument("unsupported SAM convolution columns type");
     if (kernel->type != GGML_TYPE_F32) kernel = ggml_cast(ctx, kernel, GGML_TYPE_F32);
     auto* columns = ggml_im2col(ctx, kernel, input, stride_x, stride_y, padding_x, padding_y,
-                               1, 1, true, GGML_TYPE_F32);
+                               1, 1, true, columns_type);
     auto* output = ggml_mul_mat(ctx,
         ggml_reshape_2d(ctx, columns, columns->ne[0], columns->ne[3] * columns->ne[2] * columns->ne[1]),
         ggml_reshape_2d(ctx, kernel, kernel->ne[0] * kernel->ne[1] * kernel->ne[2], kernel->ne[3]));
@@ -76,12 +81,14 @@ inline ggml_tensor* sam3_conv_2d(ggml_context* ctx, ggml_tensor* kernel, ggml_te
     return ggml_cont(ctx, ggml_permute(ctx, output, 0, 1, 3, 2));
 }
 
-inline ggml_tensor* sam3_conv_2d_sk_p0(ggml_context* ctx, ggml_tensor* kernel, ggml_tensor* input) {
-    return sam3_conv_2d(ctx, kernel, input, static_cast<int>(kernel->ne[0]), static_cast<int>(kernel->ne[1]), 0, 0);
+inline ggml_tensor* sam3_conv_2d_sk_p0(ggml_context* ctx, ggml_tensor* kernel, ggml_tensor* input,
+                                     ggml_type columns_type = GGML_TYPE_F32) {
+    return sam3_conv_2d(ctx, kernel, input, static_cast<int>(kernel->ne[0]), static_cast<int>(kernel->ne[1]), 0, 0, columns_type);
 }
 
-inline ggml_tensor* sam3_conv_2d_s1_ph(ggml_context* ctx, ggml_tensor* kernel, ggml_tensor* input) {
-    return sam3_conv_2d(ctx, kernel, input, 1, 1, static_cast<int>(kernel->ne[0] / 2), static_cast<int>(kernel->ne[1] / 2));
+inline ggml_tensor* sam3_conv_2d_s1_ph(ggml_context* ctx, ggml_tensor* kernel, ggml_tensor* input,
+                                     ggml_type columns_type = GGML_TYPE_F32) {
+    return sam3_conv_2d(ctx, kernel, input, 1, 1, static_cast<int>(kernel->ne[0] / 2), static_cast<int>(kernel->ne[1] / 2), columns_type);
 }
 
 inline ggml_tensor* sam3_deconv_2x2(ggml_context* ctx, ggml_tensor* w, ggml_tensor* x) {

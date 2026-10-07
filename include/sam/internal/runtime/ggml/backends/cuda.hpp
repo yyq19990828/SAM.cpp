@@ -128,8 +128,33 @@ inline void validate_cuda_f16_compute(ggml_backend_t backend) {
     }
 }
 
+inline void validate_cuda_feature_cache(ggml_backend_t backend, ggml_type type) {
+    if (type == GGML_TYPE_F32) return;
+    auto context = make_context(8, 8);
+    auto* input = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, 32, 2);
+    auto* packed = ggml_cast(context.get(), input, type);
+    auto* decoded = ggml_cast(context.get(), packed, GGML_TYPE_F32);
+    if (!ggml_backend_supports_op(backend, packed) || !ggml_backend_supports_op(backend, decoded))
+        throw std::runtime_error("GGML CUDA lacks the requested feature cache codec");
+    auto* graph = ggml_new_graph_custom(context.get(), 8, false);
+    ggml_build_forward_expand(graph, decoded);
+    BufferPtr buffer(ggml_backend_alloc_ctx_tensors(context.get(), backend));
+    if (!buffer) throw std::runtime_error("failed to allocate CUDA cache compatibility check");
+    std::vector<float> values(64, 0.0f);
+    for (int i = 0; i < 32; ++i) values[i] = static_cast<float>(i - 16);
+    values[0] = 127.0f;
+    values[1] = -127.0f;
+    ggml_backend_tensor_set(input, values.data(), 0, values.size() * sizeof(float));
+    if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS)
+        throw std::runtime_error("CUDA cache compatibility check failed to execute");
+    std::vector<float> actual(values.size());
+    ggml_backend_tensor_get(decoded, actual.data(), 0, actual.size() * sizeof(float));
+    if (actual != values)
+        throw std::runtime_error("GGML CUDA feature cache codec fails exact representable-value roundtrip");
+}
+
 inline BackendDriver make_cuda_backend(int device_index, CudaComputeMode compute = CudaComputeMode::F32,
-                                       bool quantized = false) {
+                                       bool quantized = false, FeatureCacheMode cache = FeatureCacheMode::F32) {
     BackendDriver driver{Backend::Cuda, BackendPtr{}, false, &RuntimeStats::cuda_nodes};
     auto* registration = ggml_backend_reg_by_name("CUDA");
     if (!registration)
@@ -152,8 +177,14 @@ inline BackendDriver make_cuda_backend(int device_index, CudaComputeMode compute
         validate_cuda_f16_compute(driver.handle.get());
         driver.configure_node = &configure_cuda_f16_node;
         driver.reduced_precision = true;
+        // The existing F16 GEMM already rounds columns to half. Produce the
+        // same half operands directly, avoiding the full F32 expansion and
+        // its duplicate conversion in the CUDA scratch pool.
+        driver.convolution_columns_type = GGML_TYPE_F16;
         driver.attention.fused_memory = true;
     }
+    driver.feature_cache_type = feature_cache_storage_type(cache);
+    validate_cuda_feature_cache(driver.handle.get(), driver.feature_cache_type);
     return driver;
 }
 

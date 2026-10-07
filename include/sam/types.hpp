@@ -15,7 +15,7 @@ struct BackendOptions {
     Backend backend = Backend::Auto;
     int threads = 4;
     int cuda_device = 0; // Index among devices visible to the CUDA registry.
-    CudaComputeMode cuda_compute = CudaComputeMode::F32; // Opt-in reduced inputs; storage is unchanged.
+    CudaComputeMode cuda_compute = CudaComputeMode::F32; // Opt-in reduced operands; GGUF weight storage is unchanged.
 };
 
 struct ModelInfo {

@@ -2,6 +2,7 @@
 #define SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_RUNTIME_HPP
 
 #include "backend.hpp"
+#include "observer.hpp"
 #include "backends/cpu.hpp"
 #include "backends/metal.hpp"
 #include "backends/cuda.hpp"
@@ -9,6 +10,7 @@
 #include "sam/types.hpp"
 #include "ggml-backend.h"
 #include <cstddef>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -17,12 +19,16 @@ namespace sam::internal {
 
 class GgmlRuntime {
 public:
-    GgmlRuntime(BackendOptions options, bool fp32, bool quantized_profile = false) {
+    GgmlRuntime(BackendOptions options, bool fp32, bool quantized_profile = false,
+                FeatureCacheMode cache = FeatureCacheMode::F32) {
         validate_backend_options(options);
+        feature_cache_storage_type(cache); // Reject invalid enums before device allocation.
+        if (cache != FeatureCacheMode::F32 && options.backend != Backend::Cuda)
+            throw std::invalid_argument("experimental feature caches require an explicit CUDA backend");
         drivers_.push_back(make_cpu_backend(options.threads));
         if (options.backend == Backend::Cuda) {
             selected_ = drivers_.size();
-            drivers_.push_back(make_cuda_backend(options.cuda_device, options.cuda_compute, quantized_profile));
+            drivers_.push_back(make_cuda_backend(options.cuda_device, options.cuda_compute, quantized_profile, cache));
         }
         if (options.backend == Backend::Metal ||
             (!fp32 && !quantized_profile && options.backend == Backend::Auto)) {
@@ -59,6 +65,10 @@ public:
     int cuda_device() const { return drivers_[selected_].cuda_device; }
     const AttentionExecutionPolicy& attention_policy() const { return drivers_[selected_].attention; }
     bool combine_graph_stages() const { return drivers_[selected_].combine_graph_stages; }
+    ggml_type convolution_columns_type() const { return drivers_[selected_].convolution_columns_type; }
+    ggml_type feature_cache_type() const { return drivers_[selected_].feature_cache_type; }
+    void set_graph_observer(std::shared_ptr<GraphObserver> observer) { observer_ = std::move(observer); }
+    const std::shared_ptr<GraphObserver>& graph_observer() const { return observer_; }
     void configure_node(ggml_tensor* node) const {
         if (drivers_[selected_].configure_node) drivers_[selected_].configure_node(node);
     }
@@ -89,6 +99,7 @@ private:
     std::size_t selected_ = 0;
     bool quantized_profile_ = false;
     bool quantized_native_metal_only_ = false;
+    std::shared_ptr<GraphObserver> observer_;
 };
 
 } // namespace sam::internal

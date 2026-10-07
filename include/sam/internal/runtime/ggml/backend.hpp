@@ -4,9 +4,22 @@
 #include "resources.hpp"
 #include "sam/types.hpp"
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 
 namespace sam::internal {
+
+// Internal experiments only; no public model-loading option selects these.
+enum class FeatureCacheMode { F32, F16, Q8_0 };
+
+inline ggml_type feature_cache_storage_type(FeatureCacheMode mode) {
+    switch (mode) {
+        case FeatureCacheMode::F32: return GGML_TYPE_F32;
+        case FeatureCacheMode::F16: return GGML_TYPE_F16;
+        case FeatureCacheMode::Q8_0: return GGML_TYPE_Q8_0;
+    }
+    throw std::invalid_argument("unknown SAM feature cache mode");
+}
 
 struct AttentionExecutionPolicy {
     int query_tile = 128;
@@ -27,6 +40,8 @@ struct BackendDriver {
     // Device-owned operator policy; shared model graphs never select CUDA kernels.
     void (*configure_node)(ggml_tensor*) = nullptr;
     bool reduced_precision = false;
+    ggml_type convolution_columns_type = GGML_TYPE_F32;
+    ggml_type feature_cache_type = GGML_TYPE_F32;
     AttentionExecutionPolicy attention;
     bool combine_graph_stages = false;
 };

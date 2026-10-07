@@ -57,7 +57,8 @@ namespace sam::internal::sam3 {
 inline struct ggml_tensor* sam3_pixel_decoder(
     struct ggml_context* ctx,
     const sam3_model& model,
-    struct ggml_tensor* fpn_feats[3])  // [D, W, H, B] at 3 scales
+    struct ggml_tensor* fpn_feats[3],  // [D, W, H, B] at 3 scales
+    ggml_type columns_type = GGML_TYPE_F32)
 {
     const auto& seg = model.seg_head;
 
@@ -72,7 +73,7 @@ inline struct ggml_tensor* sam3_pixel_decoder(
     auto* fpn1 = ggml_cont(ctx, ggml_permute(ctx, fpn_feats[1], 2, 0, 1, 3));  // [144, 144, D, B]
     prev = ggml_add(ctx, fpn1, prev);                                          // merged
     // Conv 3x3 on the MERGED result (not individual FPN feat)
-    prev = sam3_conv_2d_s1_ph(ctx, seg.up_conv_w[0], prev);
+    prev = sam3_conv_2d_s1_ph(ctx, seg.up_conv_w[0], prev, columns_type);
     {
         auto* b3d = ggml_reshape_3d(ctx, seg.up_conv_b[0], 1, 1, seg.up_conv_b[0]->ne[0]);
         prev = ggml_add(ctx, prev, ggml_repeat(ctx, b3d, prev));
@@ -93,7 +94,7 @@ inline struct ggml_tensor* sam3_pixel_decoder(
     auto* fpn0 = ggml_cont(ctx, ggml_permute(ctx, fpn_feats[0], 2, 0, 1, 3));  // [288, 288, D, B]
     prev = ggml_add(ctx, fpn0, prev);                                          // merged
     // Conv 3x3 on the MERGED result
-    prev = sam3_conv_2d_s1_ph(ctx, seg.up_conv_w[1], prev);
+    prev = sam3_conv_2d_s1_ph(ctx, seg.up_conv_w[1], prev, columns_type);
     {
         auto* b3d = ggml_reshape_3d(ctx, seg.up_conv_b[1], 1, 1, seg.up_conv_b[1]->ne[0]);
         prev = ggml_add(ctx, prev, ggml_repeat(ctx, b3d, prev));
@@ -137,7 +138,8 @@ inline struct ggml_tensor* sam3_build_seg_head_graph(
     struct ggml_tensor* fpn_feats[3],   // FPN features at 3 scales
     struct ggml_tensor* query_outputs,  // [D, N, B]
     struct ggml_tensor* text_features,  // [D, T, B] (for cross-attn, can be nullptr)
-    struct ggml_tensor* text_attn_bias = nullptr) {
+    struct ggml_tensor* text_attn_bias = nullptr,
+    ggml_type columns_type = GGML_TYPE_F32) {
     const auto& seg = model.seg_head;
     const auto& tensors = model.tensors;
     const int64_t D = enc_hidden->ne[0];     // 256
@@ -169,14 +171,14 @@ inline struct ggml_tensor* sam3_build_seg_head_graph(
         enc_spatial,  // replaces original lowest-res FPN
     };
 
-    auto* pixel_feats = sam3_pixel_decoder(ctx, model, modified_fpn);
+    auto* pixel_feats = sam3_pixel_decoder(ctx, model, modified_fpn, columns_type);
 
     const int64_t W = pixel_feats->ne[1];  // 288
     const int64_t H = pixel_feats->ne[2];  // 288
 
     // Instance segmentation head (Conv1x1)
     auto* pf_conv = ggml_cont(ctx, ggml_permute(ctx, pixel_feats, 2, 0, 1, 3));
-    pf_conv = sam3_conv_2d_sk_p0(ctx, tensors.at("seg.instance_seg_head.weight"), pf_conv);
+    pf_conv = sam3_conv_2d_sk_p0(ctx, tensors.at("seg.instance_seg_head.weight"), pf_conv, columns_type);
     {
         auto* b3d = ggml_reshape_3d(ctx, tensors.at("seg.instance_seg_head.bias"),
                                     1, 1, tensors.at("seg.instance_seg_head.bias")->ne[0]);

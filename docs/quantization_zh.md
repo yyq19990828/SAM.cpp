@@ -19,7 +19,9 @@ SAM 3 图像权重支持以下模块，可单独选择或组合选择。一次�
 
 仓库提供两组固定预设：`image-vision-linear-{precision}-v1` 仅量化视觉线性权重；
 `image-full-linear-{precision}-v1` 覆盖四模块的 348 个目标矩阵，仍保留上述浮点例外。
-GGUF 量化存储权重；共享图保留 F32 激活缓冲，原生 GPU kernel 可按后端算术策略
+GGUF 量化存储权重；共享图主要保留 F32 激活缓冲。显式 CUDA F16 计算模式下，
+图像卷积直接生成 F16 展开列，交给既有 F16 输入、F32 输出的矩阵 kernel，减少
+临时内存。其他原生 GPU kernel 可按后端算术策略
 降低矩阵操作数 staging 精度。视频跟踪状态不属于这些图像 profile。
 
 数值验收聚焦这两组预设，具体支持状态见[模型列表](../MODEL_ZOO_zh.md)。使用 `--quantize-modules` 的自定义组合采用 `image-modules-linear-{precision}-v1`，需要用户在应用数据上验证；即使选齐四个模块，也保留自定义诊断标签。它不能与 `--storage-profile` 同时使用。

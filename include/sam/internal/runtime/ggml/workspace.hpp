@@ -56,6 +56,8 @@ public:
         ensure_scheduler();
         if (active_context_ == context && active_graph_ == graph) {
             ++diagnostics_.graph_reuses;
+            if (const auto& observer = runtime_.graph_observer())
+                observer->allocated(context, graph, scheduler_.get());
             return;
         }
         const auto start = std::chrono::steady_clock::now();
@@ -74,6 +76,8 @@ public:
         ++diagnostics_.graph_binds;
         diagnostics_.bind_ms += elapsed_ms(start);
         diagnostics_.workspace_peak_bytes = std::max(diagnostics_.workspace_peak_bytes, allocated_bytes());
+        if (const auto& observer = runtime_.graph_observer())
+            observer->allocated(context, graph, scheduler_.get());
     }
 
     std::size_t required_bytes(ggml_context* context, ggml_cgraph* graph,
@@ -150,11 +154,13 @@ public:
         const auto start = std::chrono::steady_clock::now();
         const auto status = ggml_backend_sched_graph_compute(scheduler_.get(), graph);
         ++diagnostics_.compute_calls;
-        diagnostics_.compute_ms += elapsed_ms(start);
+        const auto compute_ms = elapsed_ms(start);
+        diagnostics_.compute_ms += compute_ms;
         if (status != GGML_STATUS_SUCCESS) {
             release();
             throw std::runtime_error("SAM graph execution failed");
         }
+        if (const auto& observer = runtime_.graph_observer()) observer->computed(context, graph, compute_ms);
     }
 
     void discard(ggml_context* context) {

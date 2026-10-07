@@ -84,7 +84,9 @@ CUDA defaults to `--cuda-compute f32`: F16 weight storage alone does not enable
 F16 matrix arithmetic. Select `--cuda-compute f16` for reduced dense inputs with
 F32 accumulation/output and fused reduced-input attention. In C++, set
 `BackendOptions::cuda_compute = sam::CudaComputeMode::F16` with an explicit CUDA
-backend. Weight files and video state formats stay the same. The runtime reports
+backend. Image convolutions write their expanded temporary activations directly
+in F16, reducing workspace and conversion memory. Weight files and video state
+formats stay the same. The runtime reports
 `ggml-cuda-f16-v1`, or `ggml-quantized-cuda-f16-v1` for quantized weights.
 This mode is qualified by final segmentation/tracking quality; intermediate
 tensors are diagnostic. See [precision details](MODEL_ZOO.md#precision-contract)
@@ -103,6 +105,10 @@ set `VECLIB_MAXIMUM_THREADS` before starting the process.
 
 `SAM_BUILD_TESTS` and `SAM_BUILD_EXAMPLES` default to `ON` for standalone builds
 and `OFF` when embedded. Ordinary tests do not require checkpoints.
+`SAM_BUILD_CUDA_PROBES` defaults to `OFF`; enabling it with `GGML_CUDA=ON` builds
+standalone experimental linear and feature-cache quantization tools. Their checks
+and scope are documented in the [kernel plan](docs/plans/20261007-155334-cuda-w8a8-fp8-kernel-prototypes.md)
+and [cache plan](docs/plans/20261007-181154-typed-image-cache-runtime.md).
 To reuse a local GGML checkout, set
 `-DFETCHCONTENT_SOURCE_DIR_GGML=/absolute/path/to/pinned/ggml`.
 Use the pinned GGML 0.25.3 revision and [required patches](cmake/patches/README.md).

@@ -133,30 +133,28 @@ Quantized CUDA uses native packed-weight kernels with RHS Q8_1 staging and its
 own arithmetic profile. Qualification measures final output quality; it does
 not imply F32 tensor equivalence. See [quantized model use](docs/quantization.md).
 
-The separate opt-in `--cuda-compute f16` results follow. Dense matrices use
-F16 inputs with F32 accumulation/output, and eligible attention uses fused kernels.
-Both floating-point and all eight quantized configurations passed their final-output
-quality gates. Intermediate errors remain diagnostic; this does not promise tensor
-equivalence to default mode. Quantized weights retain their packed kernels.
+The following opt-in `--cuda-compute f16` results include direct F16 convolution
+columns. Each row passed all seven original-reference cases and retained bit-exact
+diagnostic tensors and masks relative to the previous F16 execution path. Dense
+matrices use F16 inputs with F32 accumulation/output; quantized weights retain
+their packed kernels. This does not imply equivalence to default F32 compute.
+These three rows use three independent processes with 20 complete warm calls
+each (60 samples); GPU memory is the maximum of three separate 50 ms sampled
+runs. Other image configurations' earlier F16 timings are retained in the
+[implementation record](docs/plans/20261007-143003-activation-and-runtime-quantization.md).
 
-| Image weights | F16 compute median, s | P95, s | Peak RSS, GB | Sampled GPU, GB |
-| --- | ---: | ---: | ---: | ---: |
-| F32 | 0.344 | 0.348 | 1.102 | 5.184 |
-| Mixed F16/F32 | 0.358 | 0.363 | 1.130 | 3.613 |
-| Vision Q8_0 | 0.336 | 0.346 | 1.137 | 3.878 |
-| Full-component Q8_0 | 0.335 | 0.341 | 1.140 | 2.911 |
-| Vision Q6_K | 0.335 | 0.346 | 1.143 | 3.808 |
-| Full-component Q6_K | 0.333 | 0.341 | 1.147 | 2.760 |
-| Vision Q5_K | 0.330 | 0.341 | 1.143 | 3.771 |
-| Full-component Q5_K | 0.330 | 0.339 | 1.147 | 2.678 |
-| Vision Q4_K | 0.332 | 0.341 | 1.142 | 3.733 |
-| Full-component Q4_K | 0.328 | 0.335 | 1.147 | 2.600 |
+| Image weights | F16 compute median, s | P95, s | Sampled GPU, GB |
+| --- | ---: | ---: | ---: |
+| Mixed F16/F32 | 0.356 | 0.359 | 2.974 |
+| Full-component Q8_0 | 0.336 | 0.341 | 2.227 |
+| Full-component Q4_K | 0.330 | 0.339 | 1.917 |
 
 CUDA accelerates lossless layout copies with simplified indexing and tiled transposes.
 It selects strategies by storage and compute mode: all modes batch concat
 launches; quantized images in default compute combine fusion, detection and mask
 stages to reduce internal host transfers; F16 compute uses fused head-256 tracker
-attention. Quantized weights retain native packed matrix kernels. Q8_0 and Q4_K
+attention. F16 image convolutions avoid full F32 expanded columns and their
+duplicate conversion buffer. Quantized weights retain native packed matrix kernels. Q8_0 and Q4_K
 latencies remain close, with smaller weight memory as the main benefit of lower
 bit storage. Joint prediction and fast compute change temporary-buffer needs;
 compare latency and GPU memory together.
@@ -165,7 +163,10 @@ compare latency and GPU memory together.
 
 F32 and hybrid `visual-tracker-f32-v1`, in both F32 and F16 compute modes, each
 passed the complete five-case, 216-frame original-reference corpus before timing.
-F16 compute uses the final tracking-quality gates. Each cell uses the fixed
+F16 compute uses the final tracking-quality gates. Its measurements below include
+direct F16 convolution columns in shared image encoding/detection; emitted outputs
+and diagnostic tensors also match the previous F16 path bit for bit.
+Each cell uses the fixed
 64-frame 1800 × 1200 RGB PNG workload, `truck` prompt, one or four persistent
 objects and an eight-object limit. The first 16 frames are warmup; the remaining
 48 frames provide the median and P95.
@@ -182,10 +183,10 @@ GPU memory use the process-wide definitions above.
 | F32 | 3.449 | F32 | 4 | 1.340 | 1.499 | 1.280 | 4.914 |
 | Hybrid | 2.765 | F32 | 1 | 0.765 | 0.836 | 1.136 | 4.228 |
 | Hybrid | 2.765 | F32 | 4 | 1.330 | 1.509 | 1.273 | 4.228 |
-| F32 | 3.449 | F16 | 1 | 0.577 | 0.650 | 1.351 | 5.320 |
-| F32 | 3.449 | F16 | 4 | 1.028 | 1.215 | 1.480 | 5.320 |
-| Hybrid | 2.765 | F16 | 1 | 0.581 | 0.654 | 1.350 | 4.635 |
-| Hybrid | 2.765 | F16 | 4 | 1.042 | 1.228 | 1.493 | 4.635 |
+| F32 | 3.449 | F16 | 1 | 0.580 | 0.650 | 1.356 | 4.744 |
+| F32 | 3.449 | F16 | 4 | 1.029 | 1.218 | 1.507 | 4.744 |
+| Hybrid | 2.765 | F16 | 1 | 0.581 | 0.657 | 1.356 | 4.056 |
+| Hybrid | 2.765 | F16 | 4 | 1.045 | 1.207 | 1.514 | 4.056 |
 
 ## Measure your workload
 
@@ -205,4 +206,5 @@ the [CUDA implementation plan](docs/plans/20261006-215722-cuda-backend.md),
 the [CUDA operator profiling plan](docs/plans/20261007-015552-cuda-operator-profiling.md),
 the [CUDA execution optimization plan](docs/plans/20261007-042706-cuda-execution-optimization.md),
 the [CUDA precision/dataflow plan](docs/plans/20261007-094949-cuda-precision-and-dataflow-optimization.md),
-and the [CUDA layout copy plan](docs/plans/20261007-113358-cuda-layout-kernel-optimization.md).
+the [CUDA layout copy plan](docs/plans/20261007-113358-cuda-layout-kernel-optimization.md),
+and the [activation and runtime quantization plan](docs/plans/20261007-143003-activation-and-runtime-quantization.md).

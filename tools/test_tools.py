@@ -22,6 +22,10 @@ from sam3_gguf import (canonical_shape, converted_array, inspect_tensors, quanti
                        quantized_tensor_type, read_gguf, validate_metadata, write_metadata)
 from test_quantization_tools import QuantizationChecks
 from test_modular_quantization_tools import ModularQuantizationChecks
+from test_calibration import CalibrationChecks
+from test_runtime_quantization import RuntimeQuantizationChecks
+from test_cache_quantization import CacheQuantizationChecks
+from test_coco_screening import CocoScreeningChecks
 from validate_image import GATES, check_provenance, mask_iou, read_results, tensor_error
 
 
