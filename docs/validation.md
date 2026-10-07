@@ -27,6 +27,19 @@ TF32 disabled; video retains its F16 input and BF16 feature/memory boundaries.
 Use a CUDA build with `--backend cuda --cuda-device 0` for validation. The device
 index is relative to `CUDA_VISIBLE_DEVICES`.
 
+To qualify opt-in reduced-input CUDA arithmetic, add `--cuda-compute f16` to
+`validate_image.py` and `validate_video.py`. Each requires a fresh run and a
+matching runtime arithmetic profile. Dense models use the existing F16 final
+output gates; quantized models keep their original output gates. Preprocessing,
+token IDs, finite tensors, detection selection, video identity/lifecycle and
+state bounds remain mandatory; intermediate tensor fidelity is reported
+separately. Default F32 acceptance keeps its existing tensor gates. Pass the same
+compute mode and its passing receipt to `benchmark_video.py`.
+For F16 compute, internal mask/pointer candidate numbers may differ from the
+reference. Their differences are recorded; finite scores, valid indices, correct
+IoU selection, paired mask/pointer choices and propagation object identity remain
+required. Default F32 still requires the reference candidate numbers.
+
 ## Compare image inference
 
 Run from the repository root:

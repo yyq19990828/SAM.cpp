@@ -4,6 +4,7 @@
 #include "../backend.hpp"
 #include "ggml.h"
 #include "ggml-backend.h"
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
@@ -78,7 +79,57 @@ inline void validate_cuda_precision(ggml_backend_t backend) {
     }
 }
 
-inline BackendDriver make_cuda_backend(int device_index) {
+inline void configure_cuda_f16_node(ggml_tensor* node) {
+    if (node->op == GGML_OP_MUL_MAT &&
+        (node->src[0]->type == GGML_TYPE_F32 || node->src[0]->type == GGML_TYPE_F16))
+        ggml_prec_set_src(node, GGML_PREC_F16, 1);
+    // The pinned fused head-64 kernel produces NaNs for fully masked rows.
+    // Masked attention and head 32 retain the precise implementation; the
+    // precision hint on unmasked heads 64/256 selects reduced inputs.
+    if (node->op == GGML_OP_FLASH_ATTN_EXT &&
+        (node->src[0]->ne[0] == 64 || node->src[0]->ne[0] == 256) && !node->src[3])
+        ggml_prec_set_acc(node, GGML_PREC_F16);
+}
+
+inline void validate_cuda_f16_compute(ggml_backend_t backend) {
+    for (const auto type : {GGML_TYPE_F32, GGML_TYPE_F16}) {
+        auto context = make_context(8, 8);
+        auto* left = ggml_new_tensor_2d(context.get(), type, 257, 65);
+        auto* right = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, 257, 33);
+        auto* output = ggml_mul_mat(context.get(), left, right);
+        ggml_prec_set_acc(output, GGML_PREC_F32);
+        configure_cuda_f16_node(output);
+        if (!ggml_backend_supports_op(backend, output))
+            throw std::runtime_error("GGML CUDA lacks F16-input/F32-output matrix operations");
+        auto* graph = ggml_new_graph_custom(context.get(), 8, false);
+        ggml_build_forward_expand(graph, output);
+        BufferPtr buffer(ggml_backend_alloc_ctx_tensors(context.get(), backend));
+        if (!buffer) throw std::runtime_error("failed to allocate CUDA F16 compute check");
+        const std::vector<float> lhs(257 * 65, 1.0003f);
+        std::vector<float> rhs(257 * 33, 1.0003f);
+        // The last column exceeds F16 output/accumulator range. The other
+        // columns distinguish reduced operands from an ignored precision hint.
+        std::fill(rhs.end() - 257, rhs.end(), 1000.0f);
+        if (type == GGML_TYPE_F16) {
+            std::vector<ggml_fp16_t> stored(lhs.size());
+            ggml_fp32_to_fp16_row(lhs.data(), stored.data(), static_cast<int64_t>(stored.size()));
+            ggml_backend_tensor_set(left, stored.data(), 0, stored.size() * sizeof(ggml_fp16_t));
+        } else ggml_backend_tensor_set(left, lhs.data(), 0, lhs.size() * sizeof(float));
+        ggml_backend_tensor_set(right, rhs.data(), 0, rhs.size() * sizeof(float));
+        if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS)
+            throw std::runtime_error("CUDA F16 compute compatibility check failed to execute");
+        std::vector<float> actual(65 * 33);
+        ggml_backend_tensor_get(output, actual.data(), 0, actual.size() * sizeof(float));
+        for (std::size_t i = 0; i < actual.size(); ++i) {
+            const float expected = i / 65 == 32 ? 257000.0f : 257.0f;
+            if (!std::isfinite(actual[i]) || std::abs(actual[i] - expected) > 0.002f)
+                throw std::runtime_error("GGML CUDA lacks F16 operands with F32 accumulation/output; use the SAM CUDA patch");
+        }
+    }
+}
+
+inline BackendDriver make_cuda_backend(int device_index, CudaComputeMode compute = CudaComputeMode::F32,
+                                       bool quantized = false) {
     BackendDriver driver{Backend::Cuda, BackendPtr{}, false, &RuntimeStats::cuda_nodes};
     auto* registration = ggml_backend_reg_by_name("CUDA");
     if (!registration)
@@ -92,7 +143,17 @@ inline BackendDriver make_cuda_backend(int device_index) {
     if (!driver.handle) throw std::runtime_error("requested GGML CUDA backend failed initialization");
     driver.device_name = ggml_backend_dev_description(device);
     driver.cuda_device = device_index;
+    driver.attention = {512, true};
+    // Keep stage grouping independent of the numerical mode: reduced compute
+    // did not show a reliable gain from a larger combined prediction graph.
+    driver.combine_graph_stages = quantized && compute == CudaComputeMode::F32;
     validate_cuda_precision(driver.handle.get());
+    if (compute == CudaComputeMode::F16) {
+        validate_cuda_f16_compute(driver.handle.get());
+        driver.configure_node = &configure_cuda_f16_node;
+        driver.reduced_precision = true;
+        driver.attention.fused_memory = true;
+    }
     return driver;
 }
 

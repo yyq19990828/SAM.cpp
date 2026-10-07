@@ -79,6 +79,16 @@ resident and performs matrix operations with temporary F32 weights. `ModelInfo::
 `storage_profile`, and `arithmetic_profile` describe the loaded configuration.
 See the [quantization guide](docs/quantization.md) for exact profile names.
 
+CUDA compute precision is selected separately with `--cuda-compute f32|f16`
+(`BackendOptions::cuda_compute` in C++). The default preserves F32 dense inputs
+and attention. Opt-in F16 compute rounds dense operands to F16 while accumulating
+and returning F32, and enables supported fused reduced-input attention. It uses
+`ggml-cuda-f16-v1`; quantized weights keep their packed kernels and use
+`ggml-quantized-cuda-f16-v1`. The storage label and GGUF file do not change.
+F16 compute acceptance uses the existing F16 final mask/score/box gates, or the
+existing quantized output gates, while recording intermediate tensor errors
+separately. Video ID, lifecycle, output-delay and state bounds remain required.
+
 SAM 3 video retains these state boundaries for F32, F16, and hybrid storage:
 
 | Boundary | Representation |

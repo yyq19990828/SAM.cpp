@@ -32,12 +32,16 @@ void same_frames(const std::vector<sam::VideoFrameResult>& actual, const std::ve
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--help") {
-            std::cout << "Usage: test_video_session VIDEO_MODEL POSITIVE_IMAGE NEGATIVE_IMAGE cpu|metal|cuda THREADS NEW_DIR\n";
+            std::cout << "Usage: test_video_session VIDEO_MODEL POSITIVE_IMAGE NEGATIVE_IMAGE cpu|metal|cuda THREADS NEW_DIR [--cuda-compute f32|f16]\n";
             return 0;
         }
-        if (argc != 7) throw std::invalid_argument("Use --help for the six positional arguments");
+        if (argc != 7 && argc != 9) throw std::invalid_argument("Use --help for required arguments and optional CUDA compute mode");
         std::vector<std::string> arguments{"test_video_session", "--model", argv[1], "--image", argv[2],
             "--text", "truck", "--backend", argv[4], "--threads", argv[5], "--output", argv[6]};
+        if (argc == 9) {
+            if (std::string(argv[7]) != "--cuda-compute") throw std::invalid_argument("expected --cuda-compute");
+            arguments.insert(arguments.end(), {argv[7], argv[8]});
+        }
         std::vector<char*> pointers;
         for (auto& argument : arguments) pointers.push_back(argument.data());
         const auto options = sam_example::parse_options(pointers.size(), pointers.data(), false);
@@ -109,7 +113,8 @@ int main(int argc, char** argv) {
         sam_example::OutputDirectory output(options.output);
         auto json = sam_example::output_file(options.output / "results.json");
         json << "{\"passed\":true,\"backend\":" << sam_example::json_string(sam_example::backend_name(info.backend))
-             << ",\"precision\":" << sam_example::json_string(info.precision) << ",\"threads\":" << info.threads
+             << ",\"precision\":" << sam_example::json_string(info.precision)
+             << ",\"arithmetic_profile\":" << sam_example::json_string(info.arithmetic_profile) << ",\"threads\":" << info.threads
              << ",\"device_name\":" << sam_example::json_string(info.device_name)
              << ",\"cuda_device\":" << info.cuda_device
              << ",\"owned_results\":true,\"model_lifetime\":true,\"independent_sessions\":true"

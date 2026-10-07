@@ -8,7 +8,7 @@
 
 namespace {
 
-void check_matrix(ggml_backend_t backend, ggml_type type, int batches, bool broadcast) {
+void check_matrix(ggml_backend_t backend, ggml_type type, int batches, bool broadcast, bool fast = false) {
     constexpr int inner = 257, rows = 17, columns = 35;
     const int left_batches = broadcast ? 1 : batches;
     auto context = sam::internal::make_context(8, 16);
@@ -16,6 +16,7 @@ void check_matrix(ggml_backend_t backend, ggml_type type, int batches, bool broa
     auto* b = ggml_new_tensor_3d(context.get(), GGML_TYPE_F32, inner, columns, batches);
     auto* output = ggml_mul_mat(context.get(), a, b);
     ggml_prec_set_acc(output, GGML_PREC_F32);
+    if (fast) sam::internal::configure_cuda_f16_node(output);
     if (!ggml_backend_supports_op(backend, output)) throw std::runtime_error("CUDA rejected batched precise matmul");
     auto* graph = ggml_new_graph_custom(context.get(), 16, false);
     ggml_build_forward_expand(graph, output);
@@ -31,6 +32,10 @@ void check_matrix(ggml_backend_t backend, ggml_type type, int batches, bool broa
         ggml_fp16_to_fp32_row(stored.data(), left.data(), int64_t(left.size()));
     } else ggml_backend_tensor_set(a, left.data(), 0, ggml_nbytes(a));
     ggml_backend_tensor_set(b, right.data(), 0, ggml_nbytes(b));
+    if (fast) {
+        for (auto& value : left) value = ggml_fp16_to_fp32(ggml_fp32_to_fp16(value));
+        for (auto& value : right) value = ggml_fp16_to_fp32(ggml_fp32_to_fp16(value));
+    }
     if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS)
         throw std::runtime_error("batched matrix execution failed");
     std::vector<float> actual(ggml_nelements(output));
@@ -49,7 +54,7 @@ void check_matrix(ggml_backend_t backend, ggml_type type, int batches, bool broa
                 maximum = std::max(maximum, std::abs(double(value) - expected));
             }
     std::cout << "CUDA " << ggml_type_name(type) << " batch=" << batches << " broadcast=" << broadcast
-              << " matmul max abs=" << maximum << '\n';
+              << " reduced-inputs=" << fast << " matmul max abs=" << maximum << '\n';
 }
 
 struct Operand {
@@ -89,7 +94,7 @@ struct Operand {
 
 void check_attention(ggml_backend_t backend, int dimensions, int queries, int keys, int heads,
                      int kv_heads, int batches, bool strided, int mask_heads, int mask_batches,
-                     bool interleaved = false) {
+                     bool interleaved = false, bool fast = false) {
     auto context = sam::internal::make_context(24, 32);
     Operand q(context.get(), dimensions, queries, heads, batches, strided, 0.17, interleaved);
     Operand k(context.get(), dimensions, keys, kv_heads, batches, strided, 0.41, interleaved);
@@ -113,8 +118,9 @@ void check_attention(ggml_backend_t backend, int dimensions, int queries, int ke
     const float scale = 1.0f / std::sqrt(float(dimensions));
     auto* output = ggml_flash_attn_ext(context.get(), q.tensor, k.tensor, v.tensor, mask, scale, 0, 0);
     ggml_prec_set_acc(output, GGML_PREC_F32);
+    if (fast) sam::internal::configure_cuda_f16_node(output);
     // A smaller sparse hint must not truncate the authoritative mask/key range.
-    if (mask) ggml_flash_attn_ext_set_n_kv_max(output, keys / 2);
+    if (mask && !fast) ggml_flash_attn_ext_set_n_kv_max(output, keys / 2);
     if (!ggml_backend_supports_op(backend, output)) throw std::runtime_error("CUDA rejected precise attention boundary case");
     auto* graph = ggml_new_graph_custom(context.get(), 32, false);
     ggml_build_forward_expand(graph, output);
@@ -155,14 +161,17 @@ void check_attention(ggml_backend_t backend, int dimensions, int queries, int ke
                         expected += scores[key] * v.at(batch, kv_head, key, dimension);
                     if (total > 0) expected /= total;
                     const float value = actual[((batch * queries + query) * heads + head) * dimensions + dimension];
-                    if (!std::isfinite(value) || std::abs(double(value) - expected) > 5e-6)
+                    if (!std::isfinite(value) || std::abs(double(value) - expected) > (fast && !mask ? 2e-3 : 5e-6)) {
+                        std::cerr << "attention mismatch B" << batch << " H" << head << " Q" << query
+                                  << " D" << dimension << " actual=" << value << " expected=" << expected << '\n';
                         throw std::runtime_error("CUDA attention differs from independent double masked softmax/value sum");
+                    }
                     maximum_error = std::max(maximum_error, std::abs(double(value) - expected));
                 }
             }
     std::cout << "CUDA attention D" << dimensions << " Q" << queries << " K" << keys << " H" << heads
               << " KV" << kv_heads << " B" << batches << " strides=" << strided
-              << " interleaved=" << interleaved
+              << " interleaved=" << interleaved << " reduced-inputs=" << fast
               << " mask=" << mask_heads << 'x' << mask_batches << " max abs=" << maximum_error << '\n';
 }
 
@@ -185,6 +194,15 @@ int main() {
         // Cross the query-tile boundary, including an all-masked final row.
         check_attention(backend, 32, 1025, 131, 4, 2, 2, true, 4, 2);
         check_attention(backend, 64, 1025, 137, 2, 1, 1, false, 1, 1, true);
+        // More than one eight-head group, including masked and strided tails.
+        check_attention(backend, 64, 129, 137, 9, 9, 2, true, 9, 2, true);
+        check_attention(backend, 32, 1025, 131, 9, 9, 1, false, 1, 1);
+        sam::internal::GgmlRuntime fast_runtime({sam::Backend::Cuda, 1, 0, sam::CudaComputeMode::F16}, false);
+        for (const auto type : {GGML_TYPE_F32, GGML_TYPE_F16})
+            for (const bool broadcast : {false, true}) check_matrix(fast_runtime.weights_backend(), type, 3, broadcast, true);
+        check_attention(fast_runtime.weights_backend(), 64, 129, 137, 4, 2, 2, false, 1, 2, true, true);
+        check_attention(fast_runtime.weights_backend(), 64, 1025, 137, 2, 1, 1, false, 0, 0, true, true);
+        check_attention(fast_runtime.weights_backend(), 256, 129, 137, 1, 1, 3, false, 0, 0, false, true);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "CUDA numerics: " << error.what() << '\n';

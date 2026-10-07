@@ -21,7 +21,8 @@ inline struct ggml_tensor* sam3_build_mem_attn_graph(
     struct ggml_tensor* prompt_pos,    // [MD, M_total, B]
     struct ggml_tensor* rope_freqs,    // [2, D/2, N], shared across B
     struct ggml_tensor* rope_k_freqs,  // [2, D/2, M_spatial], shared across B or nullptr
-    int num_obj_ptr_tokens) {
+    int num_obj_ptr_tokens,
+    const AttentionExecutionPolicy& attention_policy = {}) {
     const auto& ma = model.mem_attn;
     const int D = model.hparams.neck_dim;  // 256
     if (!curr_tokens || !src_pos || !prompt || !prompt_pos || !rope_freqs || num_obj_ptr_tokens < 0)
@@ -65,7 +66,7 @@ inline struct ggml_tensor* sam3_build_mem_attn_graph(
             q = sam3_apply_rope(ctx, q, rope_freqs);
             k = sam3_apply_rope(ctx, k, rope_freqs);
 
-            auto* sa_out = tiled_memory_attention(ctx, q, k, v);
+            auto* sa_out = tiled_memory_attention(ctx, q, k, v, attention_policy);
             sa_out = ggml_add(ctx, ggml_mul_mat(ctx, ly.sa_out_w, sa_out), ly.sa_out_b);
             x = sam3_add_token_batch(ctx, x, sa_out);
             sam3_name_tensorf(x, "phase7_mem_attn_layer%d_after_sa", l);
@@ -100,7 +101,7 @@ inline struct ggml_tensor* sam3_build_mem_attn_graph(
                 }
             }
 
-            auto* ca_out = tiled_memory_attention(ctx, q, k, v);
+            auto* ca_out = tiled_memory_attention(ctx, q, k, v, attention_policy);
             ca_out = ggml_add(ctx, ggml_mul_mat(ctx, ly.ca_out_w, ca_out), ly.ca_out_b);
             x = sam3_add_token_batch(ctx, x, ca_out);
             sam3_name_tensorf(x, "phase7_mem_attn_layer%d_after_ca", l);

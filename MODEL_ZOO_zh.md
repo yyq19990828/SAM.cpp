@@ -59,6 +59,14 @@ Linux CPU 配合 OpenBLAS 的 F32/F16 图像也已通过。其他 CPU/GPU 硬件
 权重，并以临时 F32 权重完成矩阵运算。`ModelInfo::precision`、`storage_profile` 和
 `arithmetic_profile` 表示实际加载配置，具体名称见[量化指南](docs/quantization_zh.md)。
 
+CUDA 计算精度通过 `--cuda-compute f32|f16` 单独选择，C++ 对应
+`BackendOptions::cuda_compute`。默认保留 F32 dense 输入与 attention；显式 F16
+计算将 dense 操作数舍入为 F16，累加和输出保持 F32，并启用支持的低精度融合
+attention。其 profile 为 `ggml-cuda-f16-v1`；量化权重继续使用原生压缩 kernel，
+对应 `ggml-quantized-cuda-f16-v1`。存储标签与 GGUF 文件不变。
+F16 计算采用既有 F16 最终掩码／分数／框门限，量化权重采用其既有输出质量门限；
+中间张量误差单独记录。视频 ID、生命周期、输出延迟和状态边界仍须通过验收。
+
 SAM 3 视频在 F32、F16、hybrid 存储下均保留以下状态边界：
 
 | 边界 | 表示 |

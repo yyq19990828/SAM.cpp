@@ -38,7 +38,7 @@ class QuantizationChecks(unittest.TestCase):
     @staticmethod
     def compare_case_fixture(precision, reference_scores, actual_scores, reference_detections,
                              actual_detections, high_mask_iou=1.0, model=None, runtime_modules=None,
-                             backend="cpu", result_override=None):
+                             backend="cpu", result_override=None, cuda_compute="f32", preprocessed_error=0.0):
         import numpy as np
         import validate_image
 
@@ -50,7 +50,7 @@ class QuantizationChecks(unittest.TestCase):
             if expected_dtype == "uint8":
                 return np.ones((2, 2), dtype=np.uint8)
             if metadata == "preprocessed_image":
-                return np.asarray([0.0, 1.0], dtype=np.float32)
+                return np.asarray([0.0, 1.0], dtype=np.float32) + (preprocessed_error if Path(directory).name == "actual" else 0)
             if metadata == "mask_logits":
                 return np.asarray([2.0, 2.0] if Path(directory).name == "actual" else [1.0, 1.0], dtype=np.float32)
             raise AssertionError(metadata)
@@ -82,7 +82,37 @@ class QuantizationChecks(unittest.TestCase):
                   (reference_result, reference_detections), (actual_result, actual_detections)]),
               patch.object(validate_image, "mask_iou", return_value=high_mask_iou)):
             return validate_image.compare_case(Path("reference"), Path("actual"), case,
-                                               precision, backend, model)
+                                               precision, backend, model, cuda_compute=cuda_compute)
+
+    def test_cuda_f16_quality_is_explicit_and_keeps_hard_gates(self):
+        import numpy as np
+
+        scores = np.full(200, 0.1); scores[0] = 0.9
+        high = {"score": 0.9, "box": [0, 0, 1, 1], "mask": {"file": "mask.bin"}}
+        compare = lambda **kwargs: self.compare_case_fixture(
+            "f32", scores, scores, {0: high}, {0: high}, backend="cuda", **kwargs)
+        self.assertFalse(compare()["passed"])  # Large intermediate tensor error.
+        with self.assertRaisesRegex(ValueError, "arithmetic profile"):
+            compare(cuda_compute="f16")  # A default-mode receipt cannot qualify as fast.
+        fast = {"cuda_compute": "f16", "result_override": {"arithmetic_profile": "ggml-cuda-f16-v1"}}
+        accepted = compare(high_mask_iou=0.96, **fast)
+        self.assertTrue(accepted["passed"])
+        self.assertFalse(accepted["tensor_fidelity_passed"])
+        self.assertFalse(compare(high_mask_iou=0.94, **fast)["passed"])
+        self.assertFalse(compare(preprocessed_error=0.1, **fast)["passed"])
+        with self.assertRaisesRegex(ValueError, "arithmetic profile"):
+            compare(result_override={"arithmetic_profile": "ggml-cuda-f16-v1"})
+        self.assertFalse(runtime_arithmetic_profiles_valid("cuda", ["ggml-quantized-cuda-f16-v1"]))
+        self.assertTrue(runtime_arithmetic_profiles_valid(
+            "cuda", ["ggml-quantized-cuda-f16-v1"], cuda_compute="f16"))
+        with self.assertRaises(ValueError):
+            allowed_runtime_arithmetic_profiles("cpu", cuda_compute="f16")
+        quantized = self.compare_case_fixture(
+            "q8_0", scores, scores, {0: high}, {0: high}, backend="cuda", cuda_compute="f16",
+            model={"storage_profile": "image-linear-q8_0-v1"},
+            result_override={"arithmetic_profile": "ggml-quantized-cuda-f16-v1"})
+        self.assertTrue(quantized["passed"])
+        self.assertEqual(quantized["output_gate_precision"], "quantized-profile")
 
     def test_frozen_profiles_and_legacy_gates(self):
         self.assertEqual(QUANTIZATION_GATES_SHA256,

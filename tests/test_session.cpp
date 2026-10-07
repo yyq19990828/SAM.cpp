@@ -37,12 +37,16 @@ void same_computation_counts(const sam::RuntimeStats& a, const sam::RuntimeStats
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--help") {
-            std::cout << "Usage: test_session MODEL IMAGE_A IMAGE_B PROMPT_A PROMPT_B cpu|metal|cuda THREADS NEW_DIR\n";
+            std::cout << "Usage: test_session MODEL IMAGE_A IMAGE_B PROMPT_A PROMPT_B cpu|metal|cuda THREADS NEW_DIR [--cuda-compute f32|f16]\n";
             return 0;
         }
-        if (argc != 9) throw std::invalid_argument("Use --help for the eight positional arguments");
+        if (argc != 9 && argc != 11) throw std::invalid_argument("Use --help for required arguments and optional CUDA compute mode");
         std::vector<std::string> arguments = {"test_session", "--model", argv[1], "--image", argv[2],
             "--text", argv[4], "--backend", argv[6], "--threads", argv[7], "--output", argv[8]};
+        if (argc == 11) {
+            if (std::string(argv[9]) != "--cuda-compute") throw std::invalid_argument("expected --cuda-compute");
+            arguments.insert(arguments.end(), {argv[9], argv[10]});
+        }
         std::vector<char*> pointers;
         for (auto& argument : arguments) pointers.push_back(argument.data());
         const auto options = sam_example::parse_options(static_cast<int>(pointers.size()), pointers.data(), false);
@@ -139,6 +143,7 @@ int main(int argc, char** argv) {
              << ",\"prompt_b\":" << sam_example::json_string(argv[5])
              << ",\"threads\":" << info.threads
              << ",\"precision\":" << sam_example::json_string(info.precision)
+             << ",\"arithmetic_profile\":" << sam_example::json_string(info.arithmetic_profile)
              << ",\"device_name\":" << sam_example::json_string(info.device_name)
              << ",\"cuda_device\":" << info.cuda_device
              << ",\"tokenizer_compatibility_repaired\":"

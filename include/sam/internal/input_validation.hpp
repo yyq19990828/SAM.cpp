@@ -28,6 +28,10 @@ inline void validate_backend_options(const BackendOptions& options) {
     if (options.cuda_device < 0 || (options.backend != Backend::Cuda && options.cuda_device != 0)) {
         throw std::invalid_argument("CUDA device must be nonnegative and requires an explicit CUDA backend");
     }
+    if (options.cuda_compute != CudaComputeMode::F32 && options.cuda_compute != CudaComputeMode::F16)
+        throw std::invalid_argument("unknown CUDA compute mode");
+    if (options.cuda_compute != CudaComputeMode::F32 && options.backend != Backend::Cuda)
+        throw std::invalid_argument("reduced CUDA compute requires an explicit CUDA backend");
 }
 
 inline void validate_score_threshold(float threshold) {

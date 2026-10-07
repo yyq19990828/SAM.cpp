@@ -21,7 +21,17 @@
      cudaDataType_t cu_data_type = traits::data_type;
      cudaDataType_t cu_data_type_a = traits::data_type;
      cudaDataType_t cu_data_type_b = traits::data_type;
-@@ -1541,7 +1548,7 @@
+@@ -1510,7 +1517,8 @@
+     const int cc = ggml_cuda_info().devices[ctx.device].cc;
+     bool prefer_f32_output = false;
+     if (compute_type == GGML_TYPE_F16) {
+-        prefer_f32_output = cc == GGML_CUDA_CC_VOLTA || GGML_CUDA_CC_IS_RDNA4(cc) || GGML_CUDA_CC_IS_CDNA(cc);
++        prefer_f32_output = (dst->op_params[0] == GGML_PREC_F32 && dst->op_params[3] == GGML_PREC_F16) ||
++            cc == GGML_CUDA_CC_VOLTA || GGML_CUDA_CC_IS_RDNA4(cc) || GGML_CUDA_CC_IS_CDNA(cc);
+     } else if (compute_type == GGML_TYPE_BF16) {
+         prefer_f32_output = !GGML_CUDA_CC_IS_RDNA3(cc) && !GGML_CUDA_CC_IS_CDNA(cc);
+     }
+@@ -1541,7 +1549,7 @@
      // Theoretically cublasGemmStridedBatchedEx would always work, even for a single matrix.
      // However, for some old NVIDIA and AMD GPUs the strided/Ex GEMM is much slower,
      //     probably because the internal kernel selection logic is suboptimal.
@@ -30,7 +40,13 @@
          CUBLAS_CHECK(
              cublasSgemm(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
                      ne01, ne11, ne10,
-@@ -1640,7 +1647,12 @@
+@@ -1636,11 +1644,17 @@
+         }
+     }
+     if (dst->op_params[0] == GGML_PREC_F32) {
+-        compute_type = GGML_TYPE_F32;
++        // Explicit reduced operands retain the F32 accumulator/output contract.
++        compute_type = dst->op_params[3] == GGML_PREC_F16 ? GGML_TYPE_F16 : GGML_TYPE_F32;
      }
  
      const char * env_c = getenv("GGML_CUDA_CUBLAS_COMPUTE_TYPE");
@@ -44,7 +60,7 @@
          std::string env_cpp = env_c;
          for (char & c : env_cpp) {
              c = std::tolower(c);
-@@ -1823,6 +1835,16 @@
+@@ -1823,6 +1837,16 @@
  
  static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
      GGML_TENSOR_BINARY_OP_LOCALS
@@ -61,7 +77,7 @@
  
      const int32_t hint = ggml_get_op_params_i32(dst, 1);
      if (hint == GGML_HINT_SRC0_IS_HADAMARD && ggml_cuda_op_fwht(ctx, src1, dst)) {
-@@ -2368,6 +2390,10 @@
+@@ -2368,6 +2392,10 @@
          case GGML_OP_ARGSORT:
              ggml_cuda_op_argsort(ctx, dst);
              break;
@@ -72,7 +88,7 @@
          case GGML_OP_FLASH_ATTN_EXT:
              ggml_cuda_flash_attn_ext(ctx, dst);
              break;
-@@ -5578,6 +5604,9 @@
+@@ -5578,6 +5606,9 @@
              return op->src[0]->type == GGML_TYPE_F32 && op->src[1]->type == GGML_TYPE_F32 &&
                  op->src[2]->type == GGML_TYPE_F32 && (op->src[3] == nullptr || op->src[3]->type == GGML_TYPE_F32) &&
                  op->type == GGML_TYPE_F32;
@@ -117,7 +133,7 @@
  }
 --- /dev/null
 +++ b/src/ggml-cuda/sam-precise.cu
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,226 @@
 +// SPDX-License-Identifier: MIT
 +// SAM's precise, bounded-workspace CUDA operators for pinned GGML.
 +#include "sam-precise.cuh"
@@ -202,7 +218,7 @@
 +    GGML_UNUSED(dst);
 +    return false;
 +#else
-+    if (!ggml_cuda_sam_f32_attention_requested(dst) || !ggml_is_contiguous(dst) || dst->src[4]) {
++    if (!ggml_cuda_sam_f32_attention_requested(dst) || !ggml_is_contiguous(dst) || dst->nb[2] / sizeof(float) > INT_MAX || dst->src[4]) {
 +        return false;
 +    }
 +    const auto * q = dst->src[0];
@@ -232,11 +248,13 @@
 +
 +#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 +static __global__ void sam_attention_softmax(float * scores, const char * mask,
-+        int keys, int first_query, size_t mask_row_stride) {
++        int keys, int first_query, size_t mask_row_stride, int first_head,
++        int mask_heads, size_t mask_head_stride, size_t score_head_stride) {
 +    const int query = blockIdx.x;
-+    float * row = scores + int64_t(query) * keys;
++    float * row = scores + size_t(blockIdx.y) * score_head_stride + int64_t(query) * keys;
 +    const half * mask_row = mask ? (const half *) (mask +
-+        size_t(first_query + query) * mask_row_stride) : nullptr;
++        size_t(first_query + query) * mask_row_stride +
++        size_t((first_head + blockIdx.y) % mask_heads) * mask_head_stride) : nullptr;
 +    __shared__ float reduction[256];
 +    float maximum = -INFINITY;
 +    for (int key = threadIdx.x; key < keys; key += blockDim.x) {
@@ -269,13 +287,6 @@
 +    for (int key = threadIdx.x; key < keys; key += blockDim.x) row[key] *= reciprocal;
 +}
 +
-+static __global__ void sam_attention_output(const float * src, char * dst,
-+        int dimensions, int queries, size_t query_stride) {
-+    const int index = int(blockIdx.x) * blockDim.x + threadIdx.x;
-+    if (index < dimensions * queries) {
-+        *(float *) (dst + (index / dimensions) * query_stride + (index % dimensions) * sizeof(float)) = src[index];
-+    }
-+}
 +#endif
 +
 +void ggml_cuda_sam_f32_attention(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -288,41 +299,60 @@
 +    const int dimensions = int(q->ne[0]);
 +    const int keys = int(k->ne[1]);
 +    const int tile = int(std::min<int64_t>(q->ne[1], 1024));
-+    // Only one head/query tile is live. The existing CUDA pool owns temporaries
-+    // and orders reuse on this stream; no per-model or global scratch allocation.
-+    ggml_cuda_pool_alloc<float> scores(ctx.pool(), size_t(keys) * tile);
-+    ggml_cuda_pool_alloc<float> result(ctx.pool(), size_t(dimensions) * tile);
++    const size_t score_head_stride = size_t(keys) * tile;
++    // Batch heads while keeping score scratch bounded by 32 MiB or one head.
++    // GQA retains its original head mapping and single-head workspace.
++    const size_t scratch_budget = 32 * 1024 * 1024;
++    const int max_heads = q->ne[2] == k->ne[2]
++        ? int(std::min<int64_t>({q->ne[2], 8,
++            int64_t(std::max<size_t>(1, scratch_budget / (score_head_stride * sizeof(float))))})) : 1;
++    ggml_cuda_pool_alloc<float> scores(ctx.pool(), score_head_stride * max_heads);
 +    float scale;
 +    memcpy(&scale, dst->op_params, sizeof(float));
 +    const float zero = 0.0f, one = 1.0f;
 +    const int64_t head_ratio = q->ne[2] / k->ne[2];
 +    const int64_t batch_ratio = q->ne[3] / k->ne[3];
 +    for (int64_t batch = 0; batch < q->ne[3]; ++batch) {
-+        for (int64_t head = 0; head < q->ne[2]; ++head) {
++        for (int64_t head = 0; head < q->ne[2]; head += max_heads) {
++            const int heads = int(std::min<int64_t>(max_heads, q->ne[2] - head));
 +            const char * key_data = (const char *) k->data + (batch / batch_ratio) * k->nb[3] +
 +                (head / head_ratio) * k->nb[2];
 +            const char * value_data = (const char *) v->data + (batch / batch_ratio) * v->nb[3] +
 +                (head / head_ratio) * v->nb[2];
 +            const char * mask_data = mask ? (const char *) mask->data +
-+                (batch % mask->ne[3]) * mask->nb[3] + (head % mask->ne[2]) * mask->nb[2] : nullptr;
++                (batch % mask->ne[3]) * mask->nb[3] : nullptr;
 +            for (int64_t first = 0; first < q->ne[1]; first += tile) {
 +                const int queries = int(std::min<int64_t>(tile, q->ne[1] - first));
 +                const char * query_data = (const char *) q->data + batch * q->nb[3] + head * q->nb[2] + first * q->nb[1];
-+                CUBLAS_CHECK(cublasGemmEx(ctx.cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
-+                    keys, queries, dimensions, &scale, key_data, CUDA_R_32F, int(k->nb[1] / sizeof(float)),
-+                    query_data, CUDA_R_32F, int(q->nb[1] / sizeof(float)), &zero,
-+                    scores.get(), CUDA_R_32F, keys, CUBLAS_COMPUTE_32F_PEDANTIC, CUBLAS_GEMM_DEFAULT));
-+                sam_attention_softmax<<<queries, 256, 0, ctx.stream()>>>(scores.get(), mask_data,
-+                    keys, int(first), mask ? mask->nb[1] : 0);
++                if (heads == 1) {
++                    CUBLAS_CHECK(cublasGemmEx(ctx.cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
++                        keys, queries, dimensions, &scale, key_data, CUDA_R_32F, int(k->nb[1] / sizeof(float)),
++                        query_data, CUDA_R_32F, int(q->nb[1] / sizeof(float)), &zero,
++                        scores.get(), CUDA_R_32F, keys, CUBLAS_COMPUTE_32F_PEDANTIC, CUBLAS_GEMM_DEFAULT));
++                } else {
++                    CUBLAS_CHECK(cublasGemmStridedBatchedEx(ctx.cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
++                        keys, queries, dimensions, &scale, key_data, CUDA_R_32F, int(k->nb[1] / sizeof(float)), k->nb[2] / sizeof(float),
++                        query_data, CUDA_R_32F, int(q->nb[1] / sizeof(float)), q->nb[2] / sizeof(float), &zero,
++                        scores.get(), CUDA_R_32F, keys, score_head_stride, heads,
++                        CUBLAS_COMPUTE_32F_PEDANTIC, CUBLAS_GEMM_DEFAULT));
++                }
++                sam_attention_softmax<<<dim3(queries, heads), 256, 0, ctx.stream()>>>(scores.get(), mask_data,
++                    keys, int(first), mask ? mask->nb[1] : 0, int(head), mask ? int(mask->ne[2]) : 1,
++                    mask ? mask->nb[2] : 0, score_head_stride);
 +                CUDA_CHECK(cudaGetLastError());
-+                CUBLAS_CHECK(cublasGemmEx(ctx.cublas_handle(), CUBLAS_OP_N, CUBLAS_OP_N,
-+                    dimensions, queries, keys, &one, value_data, CUDA_R_32F, int(v->nb[1] / sizeof(float)),
-+                    scores.get(), CUDA_R_32F, keys, &zero, result.get(), CUDA_R_32F, dimensions,
-+                    CUBLAS_COMPUTE_32F_PEDANTIC, CUBLAS_GEMM_DEFAULT));
 +                char * output = (char *) dst->data + batch * dst->nb[3] + head * dst->nb[1] + first * dst->nb[2];
-+                sam_attention_output<<<(dimensions * queries + 255) / 256, 256, 0, ctx.stream()>>>(
-+                    result.get(), output, dimensions, queries, dst->nb[2]);
-+                CUDA_CHECK(cudaGetLastError());
++                if (heads == 1) {
++                    CUBLAS_CHECK(cublasGemmEx(ctx.cublas_handle(), CUBLAS_OP_N, CUBLAS_OP_N,
++                        dimensions, queries, keys, &one, value_data, CUDA_R_32F, int(v->nb[1] / sizeof(float)),
++                        scores.get(), CUDA_R_32F, keys, &zero, output, CUDA_R_32F, int(dst->nb[2] / sizeof(float)),
++                        CUBLAS_COMPUTE_32F_PEDANTIC, CUBLAS_GEMM_DEFAULT));
++                } else {
++                    CUBLAS_CHECK(cublasGemmStridedBatchedEx(ctx.cublas_handle(), CUBLAS_OP_N, CUBLAS_OP_N,
++                        dimensions, queries, keys, &one, value_data, CUDA_R_32F, int(v->nb[1] / sizeof(float)), v->nb[2] / sizeof(float),
++                        scores.get(), CUDA_R_32F, keys, score_head_stride, &zero,
++                        output, CUDA_R_32F, int(dst->nb[2] / sizeof(float)), dst->nb[1] / sizeof(float), heads,
++                        CUBLAS_COMPUTE_32F_PEDANTIC, CUBLAS_GEMM_DEFAULT));
++                }
 +            }
 +        }
 +    }
@@ -345,3 +375,247 @@
 +void ggml_cuda_sam_f32_attention(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 +
 +#endif // GGML_CUDA_SAM_PRECISE_CUH
+--- a/src/ggml-cuda/concat.cu
++++ b/src/ggml-cuda/concat.cu
+@@ -1,52 +1,63 @@
+ #include "concat.cuh"
+ 
+ #include <stdint.h>
++#include <algorithm>
+ 
+ // contiguous kernels
+ template <typename T, int dim>
+-static __global__ void __launch_bounds__(CUDA_CONCAT_BLOCK_SIZE) concat_cont(const T * x,
+-                                                                             const T * y,
+-                                                                             T *       dst,
++static __global__ void __launch_bounds__(CUDA_CONCAT_BLOCK_SIZE) concat_cont(const T * x_base,
++                                                                             const T * y_base,
++                                                                             T *       dst_base,
+                                                                              int64_t   ne00,
+                                                                              int64_t   ne01,
+                                                                              int64_t   ne02,
+                                                                              int64_t   ne0,
+                                                                              int64_t   ne1,
+-                                                                             int64_t   ne2) {
++                                                                             int64_t   ne2,
++                                                                             int64_t   ne3,
++                                                                             size_t    s03,
++                                                                             size_t    s13,
++                                                                             size_t    sd3) {
+     static_assert(dim >= 0 && dim <= 2, "dim must be in [0, 2]");
+ 
+     const int64_t n = ne0 * ne1 * ne2;
+ 
+     ggml_cuda_pdl_sync();
+-    for (int64_t i = (int64_t) blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (int64_t) blockDim.x * gridDim.x) {
+-        if constexpr (dim == 0) {
+-            const int64_t row = i / ne0;
+-            const int64_t i0  = i - row * ne0;
+-
+-            if (i0 < ne00) {
+-                dst[i] = x[row * ne00 + i0];
++    // Each grid row handles a separate plane; stride for grids beyond CUDA's y limit.
++    for (int64_t i3 = blockIdx.y; i3 < ne3; i3 += gridDim.y) {
++        const T * x = x_base + size_t(i3) * s03;
++        const T * y = y_base + size_t(i3) * s13;
++        T * dst = dst_base + size_t(i3) * sd3;
++        for (int64_t i = (int64_t) blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (int64_t) blockDim.x * gridDim.x) {
++            if constexpr (dim == 0) {
++                const int64_t row = i / ne0;
++                const int64_t i0  = i - row * ne0;
++
++                if (i0 < ne00) {
++                    dst[i] = x[row * ne00 + i0];
++                } else {
++                    dst[i] = y[row * (ne0 - ne00) + (i0 - ne00)];
++                }
++            } else if constexpr (dim == 1) {
++                const int64_t dst_plane  = ne0 * ne1;
++                const int64_t src0_plane = ne0 * ne01;
++                const int64_t src1_plane = dst_plane - src0_plane;
++                const int64_t i2         = i / dst_plane;
++                const int64_t i01        = i - i2 * dst_plane;
++
++                if (i01 < src0_plane) {
++                    dst[i] = x[i2 * src0_plane + i01];
++                } else {
++                    dst[i] = y[i2 * src1_plane + (i01 - src0_plane)];
++                }
+             } else {
+-                dst[i] = y[row * (ne0 - ne00) + (i0 - ne00)];
+-            }
+-        } else if constexpr (dim == 1) {
+-            const int64_t dst_plane  = ne0 * ne1;
+-            const int64_t src0_plane = ne0 * ne01;
+-            const int64_t src1_plane = dst_plane - src0_plane;
+-            const int64_t i2         = i / dst_plane;
+-            const int64_t i01        = i - i2 * dst_plane;
+-
+-            if (i01 < src0_plane) {
+-                dst[i] = x[i2 * src0_plane + i01];
+-            } else {
+-                dst[i] = y[i2 * src1_plane + (i01 - src0_plane)];
+-            }
+-        } else {
+-            const int64_t src0_size = ne0 * ne1 * ne02;
+-
+-            if (i < src0_size) {
+-                dst[i] = x[i];
+-            } else {
+-                dst[i] = y[i - src0_size];
++                const int64_t src0_size = ne0 * ne1 * ne02;
++
++                if (i < src0_size) {
++                    dst[i] = x[i];
++                } else {
++                    dst[i] = y[i - src0_size];
++                }
+             }
+         }
+     }
+@@ -62,21 +73,27 @@
+                              int64_t   ne0,
+                              int64_t   ne1,
+                              int64_t   ne2,
++                             int64_t   ne3,
++                             size_t    s03,
++                             size_t    s13,
++                             size_t    sd3,
+                              int       dim,
+                              cudaStream_t stream) {
+     const int64_t n          = ne0 * ne1 * ne2;
+     const int     num_blocks = (n + CUDA_CONCAT_BLOCK_SIZE - 1) / CUDA_CONCAT_BLOCK_SIZE;
+ 
++    const dim3 grid(num_blocks, static_cast<unsigned>(std::min<int64_t>(ne3, 65535)));
++
+     if (dim == 0) {
+-        const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(num_blocks, CUDA_CONCAT_BLOCK_SIZE, 0, stream);
+-        ggml_cuda_kernel_launch(concat_cont<T, 0>, launch_params, x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2);
++        const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(grid, CUDA_CONCAT_BLOCK_SIZE, 0, stream);
++        ggml_cuda_kernel_launch(concat_cont<T, 0>, launch_params, x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2, ne3, s03, s13, sd3);
+         return;
+     }
+     if (dim == 1) {
+-        concat_cont<T, 1><<<num_blocks, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2);
++        concat_cont<T, 1><<<grid, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2, ne3, s03, s13, sd3);
+         return;
+     }
+-    concat_cont<T, 2><<<num_blocks, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2);
++    concat_cont<T, 2><<<grid, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(x, y, dst, ne00, ne01, ne02, ne0, ne1, ne2, ne3, s03, s13, sd3);
+ }
+ 
+ // non-contiguous kernel (slow)
+@@ -146,14 +163,10 @@
+         const T * src1_d = (const T *) src1->data;
+         T *       dst_d  = (T *) dst->data;
+ 
+-        for (int64_t i3 = 0; i3 < dst->ne[3]; i3++) {
+-            concat_cont_cuda(
+-                    src0_d + i3*(src0->nb[3] / sizeof(T)),
+-                    src1_d + i3*(src1->nb[3] / sizeof(T)),
+-                    dst_d  + i3*( dst->nb[3] / sizeof(T)),
+-                    ggml_row_size(src0->type, src0->ne[0])/sizeof(T), src0->ne[1], src0->ne[2],
+-                    ggml_row_size(dst->type, dst->ne[0])/sizeof(T),  dst->ne[1],  dst->ne[2], dim, stream);
+-        }
++        concat_cont_cuda(src0_d, src1_d, dst_d,
++                ggml_row_size(src0->type, src0->ne[0])/sizeof(T), src0->ne[1], src0->ne[2],
++                ggml_row_size(dst->type, dst->ne[0])/sizeof(T), dst->ne[1], dst->ne[2],
++                dst->ne[3], src0->nb[3]/sizeof(T), src1->nb[3]/sizeof(T), dst->nb[3]/sizeof(T), dim, stream);
+     } else if (dim == 3 && ggml_is_contiguous(src0) && ggml_is_contiguous(src1)) {
+         const size_t size0 = ggml_nbytes(src0);
+         const size_t size1 = ggml_nbytes(src1);
+--- a/src/ggml-cuda/cpy.cu
++++ b/src/ggml-cuda/cpy.cu
+@@ -1,4 +1,5 @@
+ #include "cpy.cuh"
++#include <type_traits>
+ #include "dequantize.cuh"
+ #include "cpy-utils.cuh"
+ #if defined(GGML_USE_MUSA) && defined(GGML_MUSA_MUDNN_COPY)
+@@ -39,6 +40,26 @@
+ 
+     ggml_cuda_pdl_sync();
+     cpy_1(cx + x_offset, cdst + dst_offset);
++}
++
++// A contiguous destination only needs the source coordinates. Bounds keep
++// fastdiv's intermediate addition within uint32_t; byte strides stay 64-bit.
++template <typename src_t, typename dst_t>
++static __global__ void sam_cpy_contiguous_dst(const char * src, dst_t * dst, uint32_t ne,
++        uint3 ne0, uint3 ne01, uint3 ne012,
++        size_t nb0, size_t nb1, size_t nb2, size_t nb3) {
++    ggml_cuda_pdl_lc();
++    const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
++    if (i >= ne) return;
++    const uint32_t i3 = fastdiv(i, ne012);
++    const uint32_t r3 = i - i3 * ne012.z;
++    const uint32_t i2 = fastdiv(r3, ne01);
++    const uint32_t r2 = r3 - i2 * ne01.z;
++    const uint32_t i1 = fastdiv(r2, ne0);
++    const uint32_t i0 = r2 - i1 * ne0.z;
++    const size_t offset = size_t(i0)*nb0 + size_t(i1)*nb1 + size_t(i2)*nb2 + size_t(i3)*nb3;
++    ggml_cuda_pdl_sync();
++    dst[i] = ggml_cuda_cast<dst_t>(*reinterpret_cast<const src_t *>(src + offset));
+ }
+ 
+ template <typename T>
+@@ -209,6 +230,15 @@
+     const int64_t nb03, const int64_t ne10, const int64_t ne11, const int64_t ne12, const int64_t nb10, const int64_t nb11, const int64_t nb12, const int64_t nb13, cudaStream_t stream) {
+ 
+     const auto launch_scalar_generic = [&]() {
++        if (ne <= INT32_MAX && nb10 == sizeof(dst_t) && nb11 == ne10 * sizeof(dst_t) &&
++                nb12 == ne10 * ne11 * sizeof(dst_t) && nb13 == ne10 * ne11 * ne12 * sizeof(dst_t)) {
++            const ggml_cuda_kernel_launch_params params((ne + 255) / 256, 256, 0, stream);
++            ggml_cuda_kernel_launch(sam_cpy_contiguous_dst<src_t, dst_t>, params, cx,
++                reinterpret_cast<dst_t *>(cdst), uint32_t(ne), init_fastdiv_values(ne00),
++                init_fastdiv_values(ne00 * ne01), init_fastdiv_values(ne00 * ne01 * ne02),
++                size_t(nb00), size_t(nb01), size_t(nb02), size_t(nb03));
++            return;
++        }
+         const int64_t num_blocks = (ne + CUDA_CPY_BLOCK_SIZE - 1) / CUDA_CPY_BLOCK_SIZE;
+         GGML_ASSERT(num_blocks <= INT_MAX);
+         const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params((dim3)num_blocks, CUDA_CPY_BLOCK_SIZE, 0, stream);
+@@ -243,6 +273,43 @@
+                 cx, cdst, ne, ne00n, ne01n, ne02n, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
+         }
+     } else {
++        if constexpr (std::is_same<src_t, dst_t>::value) {
++            // Recognize two contiguous groups exchanged in physical storage.
++            // Remaining outer dimensions are independent dense matrices.
++            const int64_t dims[] = {ne00, ne01, ne02, ne / (ne00 * ne01 * ne02)};
++            const int64_t strides[] = {nb00, nb01, nb02, nb03};
++            const bool dense_dst = nb10 == sizeof(dst_t) && nb11 == ne10 * sizeof(dst_t) &&
++                nb12 == ne10 * ne11 * sizeof(dst_t) && nb13 == ne10 * ne11 * ne12 * sizeof(dst_t);
++            if (dense_dst) for (int split = 1; split < 4; ++split) for (int end = split + 1; end <= 4; ++end) {
++                int64_t a = 1, b = 1;
++                for (int d = 0; d < split; ++d) a *= dims[d];
++                for (int d = split; d < end; ++d) b *= dims[d];
++                const int64_t batches = ne / (a * b);
++                bool matches = true;
++                int64_t stride = b * sizeof(src_t);
++                for (int d = 0; d < split; ++d) {
++                    if (dims[d] > 1 && strides[d] != stride) matches = false;
++                    stride *= dims[d];
++                }
++                stride = sizeof(src_t);
++                for (int d = split; d < end; ++d) {
++                    if (dims[d] > 1 && strides[d] != stride) matches = false;
++                    stride *= dims[d];
++                }
++                stride = a * b * sizeof(src_t);
++                for (int d = end; d < 4; ++d) {
++                    if (dims[d] > 1 && strides[d] != stride) matches = false;
++                    stride *= dims[d];
++                }
++                const int64_t gx = (b + 31) / 32, gy = (a + 31) / 32, gz = (batches + 7) / 8;
++                if (!matches || a < 32 || b < 32 || gx > INT_MAX || gy > USHRT_MAX || gz > USHRT_MAX) continue;
++                const ggml_cuda_kernel_launch_params params(dim3(gx, gy, gz), dim3(32, 8, 1), 0, stream);
++                ggml_cuda_kernel_launch(cpy_scalar_transpose<dst_t>, params,
++                    cx, cdst, ne, a, b, batches, nb00, nb01, nb02, nb03,
++                    ne10, ne11, ne12, nb10, nb11, nb12, nb13);
++                return;
++            }
++        }
+         launch_scalar_generic();
+     }
+ }

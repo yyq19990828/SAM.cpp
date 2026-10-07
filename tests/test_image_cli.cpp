@@ -34,6 +34,8 @@ int main() {
                  {"--score-threshold", " 0.5"}, {"--score-threshold", "1e-999"},
                  {"--backend", "unknown"}, {"--cuda-device", "0"}, {"--backend", "cuda", "--cuda-device", "-1"},
                  {"--backend", "cuda", "--cuda-device", "1junk"}, {"--backend", "cuda", "--cuda-device", "2147483648"},
+                 {"--cuda-compute", "f16"}, {"--backend", "cpu", "--cuda-compute", "f32"},
+                 {"--backend", "cuda", "--cuda-compute", "tf32"},
                  {"--model", "other.gguf"}, {"--wat", "x"}, {"--threads"}}) {
             arguments = valid;
             arguments.insert(arguments.end(), suffix.begin(), suffix.end());
@@ -41,6 +43,12 @@ int main() {
             try { (void) parse(arguments); } catch (const std::invalid_argument&) { rejected = true; }
             require(rejected, "Invalid CLI arguments were accepted");
         }
+        arguments = valid;
+        arguments.insert(arguments.end(), {"--cuda-compute", "f16", "--backend", "cuda"});
+        require(parse(arguments).backend.cuda_compute == sam::CudaComputeMode::F16,
+                "CUDA compute mode was not preserved");
+        require(parse(valid).backend.cuda_compute == sam::CudaComputeMode::F32,
+                "CUDA default arithmetic must remain F32");
         for (const auto& index : {"0", "2"}) {
             arguments = valid;
             arguments.insert(arguments.end(), {"--cuda-device", index, "--backend", "cuda"});

@@ -246,9 +246,71 @@ struct ModelDefinition {
         return download(output, stats);
     }
 
+    // Shared builders keep fusion and detector intermediates on the device.
+    // Final diagnostic tensors remain owned host snapshots, as in staged execution.
+    Prediction predict_joint(GgmlRuntime& runtime, const ImageFeatures& image,
+                             const std::vector<std::int32_t>& ids, std::vector<float> text,
+                             RuntimeStats& stats) const {
+        const auto start = std::chrono::steady_clock::now();
+        const auto& hp = weights.hparams;
+        const int d = hp.neck_dim, h = hp.n_img_embd(), prompt_length = hp.text_ctx_len + 1;
+        auto prompt = prepare_prompt(image, ids, std::move(text));
+        GraphExecution execution(runtime, 65536, stats);
+        auto* ctx = execution.context();
+        auto* input = input_tensor(ctx, "joint_image", d, h * h);
+        auto* position = input_tensor(ctx, "joint_position", d, h * h);
+        auto* tokens = input_tensor(ctx, "joint_prompt", d, prompt_length);
+        auto* bias = input_tensor(ctx, "joint_bias", prompt_length);
+        auto* valid = input_tensor(ctx, "joint_valid", prompt_length);
+        auto* sine = input_tensor(ctx, "sine_dim_t", 1, 64);
+        auto* rpb = input_tensor(ctx, "rpb_coords", h);
+        auto* fusion = sam3_build_fenc_graph(ctx, weights, input, tokens, position, bias);
+        auto detection = sam3_build_ddec_graph(ctx, weights, fusion, position, tokens, sine, rpb, bias, valid);
+        ggml_tensor* neck[3] = {};
+        for (int i = 0; i < 3; ++i) {
+            const int size = h * (4 >> i);
+            neck[i] = input_tensor(ctx, ("joint_vision_" + std::to_string(i)).c_str(), d, size, size);
+        }
+        auto* objects = ggml_cont(ctx, ggml_view_2d(ctx, detection.queries, d, hp.ddec_num_queries,
+            detection.queries->nb[1], d * sizeof(float)));
+        auto* masks = sam3_build_seg_head_graph(ctx, weights, fusion, neck, objects, tokens, bias);
+        execution.output(fusion);
+        execution.output(detection.class_scores);
+        execution.output(detection.pred_boxes);
+        execution.output(detection.presence_score);
+        execution.output(masks);
+        execution.allocate();
+        upload(input, image.vision[2], stats);
+        upload(position, image.position, stats);
+        upload(tokens, prompt.tokens, stats);
+        upload(bias, prompt.attention_bias, stats);
+        upload(valid, prompt.validity, stats);
+        for (int i = 0; i < 3; ++i) if (neck[i]->buffer) upload(neck[i], image.vision[i], stats);
+        std::vector<float> sine_values(64), coordinates(h);
+        for (int i = 0; i < 64; ++i)
+            sine_values[i] = 2.0f * 3.14159265358979323846f / std::pow(10000.0f, 2.0f * i / 128.0f);
+        for (int i = 0; i < h; ++i) coordinates[i] = static_cast<float>(i) / h;
+        upload(sine, sine_values, stats);
+        upload(rpb, coordinates, stats);
+        initialize_detector_zero_inputs(ctx, stats);
+        execution.compute();
+        Prediction prediction;
+        prediction.text = std::move(prompt.text);
+        prediction.fusion = download(fusion, stats);
+        prediction.boxes = download(detection.pred_boxes, stats);
+        prediction.class_logits = download(detection.class_scores, stats);
+        prediction.presence_logit = download(detection.presence_score, stats).front();
+        prediction.mask_logits = download(masks, stats);
+        ++stats.inferences;
+        stats.inference_ms = elapsed_ms(start);
+        return prediction;
+    }
+
     Prediction predict(GgmlRuntime& runtime, const ImageFeatures& image,
                        const std::vector<std::int32_t>& ids, std::vector<float> text,
                        RuntimeStats& stats) const {
+        if (runtime.combine_graph_stages())
+            return predict_joint(runtime, image, ids, std::move(text), stats);
         const auto start = std::chrono::steady_clock::now();
         auto prompt = prepare_prompt(image, ids, std::move(text));
         Prediction prediction;

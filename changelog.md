@@ -8,6 +8,7 @@ No releases have been published.
 
 ### Added
 
+- Explicit CUDA F16 compute mode with F32 dense accumulation/output, separate arithmetic profiles, and final-output quality validation independent of weight storage.
 - CUDA backend selection with a visible-device index, device identity, CUDA node statistics and strict GPU compute placement. SAM 3 F32/F16 image, eight vision/full quantized image presets and F32/hybrid video have original-model qualification on Linux x86_64 RTX 4090.
 - Pinned GGML CUDA corrections for F32 dense/attention precision and native window operations, with required-GPU CTest checks.
 - CUDA native quantized image arithmetic with a distinct runtime profile, RHS Q8_1 staging and separate output-quality and tensor-diagnostic records.
@@ -22,7 +23,10 @@ No releases have been published.
 
 ### Changed
 
-- Reduce SAM 3 CUDA image and video latency with larger F32 attention query tiles, preserving original-model qualification and existing GGUF conversion receipts.
+- Focus routine performance tables on GPU and CPU/BLAS; retain native CPU measurements in the historical record and keep native CPU correctness coverage.
+- Reduce CUDA image/video latency with batched cuBLAS attention products, bounded query tiles and direct output assembly, preserving default numerical qualification and existing GGUF conversion receipts.
+- Batch CUDA concat launches across tensor planes; combine quantized-image prediction stages in default compute mode to reduce host transfers; use fused head-256 tracker memory attention in the opt-in F16 mode.
+- Accelerate CUDA layout copies with bounded source indexing and tiled transposes, preserving compute precision and existing tensor storage.
 - Runtime backend node counters count compute operations, excluding metadata-only views, reshapes, permutations and transposes.
 - Video conversion defaults to `visual-tracker-f32-v1` hybrid weights; image conversion requires an explicit precision. F16 video remains diagnostic.
 - CPU execution uses registered BLAS when available. Quantized weights remain compressed in memory while matrix operations use temporary F32 weights.
@@ -37,6 +41,7 @@ No releases have been published.
 
 ### Fixed
 
+- Bind CUDA validation and video benchmark receipts to their compute mode, and report the selected quantization tensor gate identity correctly.
 - Replace broken links to unavailable historical performance receipts with archive path records, preserving their original hashes.
 - Keep shared video workspaces within their serial memory budget when graph stages grow device and host arenas in opposite directions.
 - Preserve CUDA position-cache placement when preparing original-model reference sources.

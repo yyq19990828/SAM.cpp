@@ -206,10 +206,10 @@ void check_inventory() {
     }
 }
 
-void check_attention(sam::Backend backend) {
-    sam::internal::GgmlRuntime runtime({backend, 1}, true);
-    // Tails straddle both the 128-query tile and the complete-key boundary.
-    for (const int query_count : {1, 128, 129, 257}) {
+void check_attention(sam::Backend backend, sam::CudaComputeMode compute = sam::CudaComputeMode::F32) {
+    sam::internal::GgmlRuntime runtime({backend, 1, 0, compute}, true);
+    // Tails straddle both backend query tiles and the complete-key boundary.
+    for (const int query_count : {1, 128, 129, 257, 513}) {
         const int key_count = 131, channels = 256;
         const std::array<std::pair<int, int>, 6> batches{{{1, 1}, {2, 2}, {4, 4}, {8, 8}, {1, 8}, {8, 1}}};
         const auto case_count = query_count == 129 ? batches.size() : std::size_t(3);
@@ -222,7 +222,7 @@ void check_attention(sam::Backend backend) {
             auto* q = sam::internal::input_tensor(ctx, "queries", channels, query_count, query_batch);
             auto* k = sam::internal::input_tensor(ctx, "keys", channels, key_count, memory_batch);
             auto* v = sam::internal::input_tensor(ctx, "values", channels, key_count, memory_batch);
-            auto* output = sam::internal::sam3::tiled_memory_attention(ctx, q, k, v);
+            auto* output = sam::internal::sam3::tiled_memory_attention(ctx, q, k, v, runtime.attention_policy());
             graph.output(output);
             graph.allocate();
             std::vector<float> queries(channels * query_count * query_batch);
@@ -267,7 +267,8 @@ void check_attention(sam::Backend backend) {
                         expected += scores[key] * values[vi] / sum;
                     }
                     const auto oi = (b * query_count + query) * channels + c;
-                    require(std::abs(actual[oi] - expected) < 2e-6,
+                    const double tolerance = compute == sam::CudaComputeMode::F16 ? 2e-3 : 2e-6;
+                    require(std::isfinite(actual[oi]) && std::abs(actual[oi] - expected) < tolerance,
                             "Batched tiled attention mixed objects or changed full-key softmax");
                 }
             }
@@ -320,7 +321,7 @@ std::vector<float> run_memory_attention(const std::vector<float>& prompt_values,
     auto* key_frequencies = sam::internal::input_tensor(ctx, "memory_key_rope", 2, channels / 2, spatial_memory_tokens);
     auto* output = sam::internal::sam3::sam3_build_mem_attn_graph(
         ctx, model, current, current_position, prompt, prompt_position,
-        frequencies, key_frequencies, 1);
+        frequencies, key_frequencies, 1, runtime.attention_policy());
     graph.output(output);
     graph.allocate();
 
@@ -844,6 +845,7 @@ int main(int argc, char** argv) {
         check_deferred_resident_upload_lifecycle();
         check_preprocessing(); check_mask_resize(); check_inventory(); check_attention(backend); check_sam_cross_attention(backend);
         check_sam_cross_attention_batch(backend); check_deconv_batch(backend); check_memory_attention_batch(backend);
+        if (backend == sam::Backend::Cuda) check_attention(backend, sam::CudaComputeMode::F16);
         check_mask_decoder_batch(backend);
         check_memory_selection(); return 0;
     }

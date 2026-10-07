@@ -141,22 +141,26 @@ performance are recorded separately in the SAM milestone reports.
 
 `ggml-precise-cuda.patch` targets the same pinned GGML revision and retains its
 MIT license. CMake applies both patches to a verified build-local source copy.
-CUDA patch SHA-256: `e62f040cf9893f1eebdd8745f4d9a513d91befcbbe7330271bb61b41eb40c8b7`.
-Combined source-tree SHA-256: `25e659a3dfac0b16b5d7b455ee7e469b015573e22946aaa57f8a295c875e85c2`.
+CUDA patch SHA-256: `28b1260af845c338755d25214e336d697152ad01ceed5322fc6803834d9a76a9`.
+Combined source-tree SHA-256: `dec61501f3b23a3b68b6b59ae92b4b0ce0a5fd8b26ad3ba3004ce7e73c3ed135`.
 Unmodified archives, verified Metal-only archives and verified combined archives
 are accepted; caller-owned GGML targets are used directly.
 
 For NVIDIA CUDA, dense F32/F16-by-F32 matrix operations with explicit
 `GGML_PREC_F32` use cuBLAS pedantic F32 arithmetic. This bypasses reduced-precision
 custom matrix kernels and prevents `GGML_CUDA_CUBLAS_COMPUTE_TYPE` from overriding
-the explicit precision request. Default precision and quantized operands retain
-the upstream dispatch rules.
+the explicit precision request. An additional explicit F16 source-1 hint selects
+F16 dense operands with F32 accumulation and output. SAM exposes this as opt-in
+`CudaComputeMode::F16`; it does not follow the weight storage type automatically.
+Quantized operands retain the upstream packed-weight dispatch rules.
 
 Explicit F32 attention with F32 Q/K/V and equal head dimensions 32 or 64 uses
-pedantic F32 cuBLAS products and an F32 masked softmax. Scratch storage holds
-one head and at most 1024 queries at a time in GGML's CUDA pool. The larger tile
-reduces small cuBLAS calls; scratch grows with the key count and stays bounded
-independently of the total query count. Q/K/V may have
+pedantic F32 cuBLAS products and an F32 masked softmax. Up to eight heads share
+a strided-batched cuBLAS call and at most 1024 queries per tile. The head group
+is capped by a 32 MiB score budget, or one head when that head alone exceeds the
+budget; grouped-query attention keeps a single-head group. Products write directly
+to the output strides without a separate output-copy kernel. Scratch grows with
+the key count and stays bounded independently of the total query count. Q/K/V may have
 outer strides; masks support broadcast or per-head/per-batch F16 additive values.
 The complete mask/key range remains authoritative when sparse hints are present.
 Fully masked rows produce zero. Attention sinks, ALiBi, softcap and other head
@@ -167,10 +171,33 @@ Native window partition/restoration supports contiguous F32 inputs/outputs with
 one image batch. Kernels preserve channel/window order, pad edge windows with
 zero, crop restoration and guard tail threads using 64-bit indices.
 
+Contiguous-plane concat batches the fourth dimension into one kernel launch.
+The kernel preserves actual source/destination plane strides and loops over
+planes beyond the CUDA grid-y limit. It copies 1/2/4/8-byte elements and packed
+quantized blocks without arithmetic. The noncontiguous and dimension-3 paths
+retain upstream behavior; the CUDA regression compares every output byte across
+all axes, padded planes and more than 65,535 planes.
+
 The SAM CUDA driver checks required matrix and head-32/64 attention precision at
 initialization, including with caller-owned targets. Explicit CUDA graphs require
 every compute node on the selected device; CPU remains available for input copies.
-CUDA graph capture defaults to off pending separate validation. Arithmetic/layout
+The opt-in F16 compute mode uses the pinned fused CUDA attention for unmasked
+heads 64 and 256, including batched tracker memory attention. Masked attention and head 32 retain the precise path, preserving zero
+output for fully masked rows. Its startup matrix probe checks operand
+rounding and rejects F16 accumulator/output overflow. The CUDA driver also
+supplies a 512-query memory-attention tile and direct output assembly policy for default compute;
+CPU and Metal retain their existing policies. CUDA graph capture stays off. Arithmetic/layout
 checks on RTX 4090 and subsequent model results are recorded in the
-[CUDA implementation plan](../../docs/plans/20261006-215722-cuda-backend.md)
-and [CUDA profiling plan](../../docs/plans/20261007-015552-cuda-operator-profiling.md).
+[CUDA implementation plan](../../docs/plans/20261006-215722-cuda-backend.md),
+[CUDA profiling plan](../../docs/plans/20261007-015552-cuda-operator-profiling.md),
+[execution optimization plan](../../docs/plans/20261007-042706-cuda-execution-optimization.md),
+and [precision/dataflow plan](../../docs/plans/20261007-094949-cuda-precision-and-dataflow-optimization.md).
+
+Non-contiguous scalar copies into a dense destination use precomputed source
+index divisors when the element count fits `INT32_MAX`, retaining 64-bit byte
+strides. Exact dense transpositions of two contiguous dimension groups reuse
+the upstream tiled transpose kernel, including outer batches. Other layouts,
+large index ranges and grids outside the tiled kernel's limits retain generic
+copy dispatch. This changes data movement only, without changing arithmetic,
+weight formats or tensor representations. `tests/test_cuda_copy.cpp` checks
+logical order, raw same-type bits, conversions, padding and layout boundaries.

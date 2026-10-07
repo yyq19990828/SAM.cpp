@@ -71,7 +71,7 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
         }
         if (name != "--model" && name != "--image" && name != "--text" &&
             name != "--output" && name != "--backend" && name != "--threads" &&
-            name != "--cuda-device" &&
+            name != "--cuda-device" && name != "--cuda-compute" &&
             name != "--score-threshold" && (name != "--repeat" || !allow_repeat)) {
             throw std::invalid_argument("Unknown argument: " + name);
         }
@@ -91,6 +91,11 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
         else if (name == "--output") options.output = value;
         else if (name == "--threads") options.backend.threads = positive_integer(value, name);
         else if (name == "--cuda-device") options.backend.cuda_device = nonnegative_integer(value, name);
+        else if (name == "--cuda-compute") {
+            if (value == "f32") options.backend.cuda_compute = sam::CudaComputeMode::F32;
+            else if (value == "f16") options.backend.cuda_compute = sam::CudaComputeMode::F16;
+            else throw std::invalid_argument("--cuda-compute must be f32 or f16");
+        }
         else if (name == "--repeat") options.repeat = positive_integer(value, name);
         else if (name == "--backend") {
             if (value == "auto") options.backend.backend = sam::Backend::Auto;
@@ -111,6 +116,8 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
     }
     if (seen.count("--cuda-device") && options.backend.backend != sam::Backend::Cuda)
         throw std::invalid_argument("--cuda-device requires --backend cuda");
+    if (seen.count("--cuda-compute") && options.backend.backend != sam::Backend::Cuda)
+        throw std::invalid_argument("--cuda-compute requires --backend cuda");
     for (const char* name : {"--model", "--image", "--text", "--output"}) {
         if (!seen.count(name)) {
             throw std::invalid_argument(std::string("Required argument: ") + name);

@@ -121,6 +121,24 @@ Backend node counters exclude metadata-only view/reshape/permutation/transpose o
 Quantized CUDA uses native packed-weight kernels and reports a distinct arithmetic
 profile; model qualification is separate from CPU and Metal.
 
+The driver also owns the opt-in F16 compute policy and memory-attention execution
+policy. A node-configuration hook selects reduced dense operands and supported
+fused attention without model-side device branches. Shared tracking graphs consume
+the driver's query tile, output assembly and fused-memory-attention policy.
+CUDA F16 uses fused single-head 256-dimensional memory attention with the object
+axis preserved as its batch axis. The default CUDA mode uses bounded query tiles.
+CPU/Metal retain their existing policies. Arithmetic profiles distinguish compute mode from storage and keep
+qualification receipts from mixing different numerical contracts.
+
+The driver separately selects graph-stage grouping. Quantized CUDA image models
+in default compute mode join the existing fusion, detector and mask builders in
+one prediction graph. Fusion and query features flow directly between these
+stages; required result and diagnostic tensors are still downloaded into owned
+host values. Dense models and F16 compute retain staged prediction. This policy
+adds no cross-session mutable cache and keeps weight storage independent of
+compute precision. The [dataflow plan](plans/20261007-094949-cuda-precision-and-dataflow-optimization.md)
+records the measured selection and its workspace cost.
+
 Adding another platform requires a real driver, supported-driver selection,
 public configuration, device-aware statistics and matching hardware validation.
 The pinned [GGML backend registry](https://github.com/ggml-org/ggml/blob/353b63b439f27ab2cc19dac97ab1681ba6d2d084/src/ggml-backend-reg.cpp)

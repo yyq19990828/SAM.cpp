@@ -9,11 +9,13 @@
 namespace sam {
 
 enum class Backend { Auto, Cpu, Metal, Cuda };
+enum class CudaComputeMode { F32, F16 };
 
 struct BackendOptions {
     Backend backend = Backend::Auto;
     int threads = 4;
     int cuda_device = 0; // Index among devices visible to the CUDA registry.
+    CudaComputeMode cuda_compute = CudaComputeMode::F32; // Opt-in reduced inputs; storage is unchanged.
 };
 
 struct ModelInfo {
@@ -26,7 +28,7 @@ struct ModelInfo {
     std::string task;
     std::string profile;
     std::string storage_profile; // Versioned weight policy, separate from the temporal profile.
-    std::string arithmetic_profile; // Empty for legacy profiles; names the quantized runtime arithmetic contract.
+    std::string arithmetic_profile; // Runtime arithmetic contract, separate from weight storage; empty for legacy F32 math.
     std::vector<std::string> quantization_modules; // Populated only by schema-4 modular image profiles.
     std::string device_name;
     int cuda_device = -1; // Resolved visible CUDA index; -1 on other backends.

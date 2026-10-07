@@ -1100,6 +1100,14 @@ class ToolChecks(unittest.TestCase):
             self.assertEqual(cuda()["timings"], valid["timings"])
             with self.assertRaisesRegex(ValueError, "CUDA device"):
                 benchmark_video.analyze_run(root, 1, "f16", "cuda", 2, 2, cuda_device=1)
+            manifest["arithmetic_profile"] = "ggml-cuda-f16-v1"
+            write_json(root / "manifest.json", manifest)
+            with self.assertRaisesRegex(ValueError, "arithmetic profile"):
+                cuda()
+            self.assertEqual(benchmark_video.analyze_run(root, 1, "f16", "cuda", 2, 2,
+                                                        cuda_compute="f16")["timings"], valid["timings"])
+            manifest["arithmetic_profile"] = ""
+            write_json(root / "manifest.json", manifest)
             path = root / "trace/000040-stats.json"; sample = read_json(path)
             for counter in ("cpu_nodes", "metal_nodes", "blas_nodes"):
                 sample["runtime"][counter] = 1; write_json(path, sample)
@@ -1149,7 +1157,8 @@ class ToolChecks(unittest.TestCase):
                               "objects": [{"id": identifier, "score": 0.9, "box": [0, 0, 0, 0], "mask": mask}]}
                     (target / "results.json").write_text(json.dumps(record))
                     trace = {"frame_index": frame, "groups": [], "births": [{"id": identifier}] if frame == 0 else [], "removed": [],
-                             "propagation": [{"id": identifier, "mask_index": 2, "pointer_index": 2}] if frame else []}
+                             "propagation": [{"id": identifier, "mask_index": 2, "pointer_index": 2,
+                                              "iou": [0.99, 0.7, 0.9, 0.8]}] if frame else []}
                     (directory / "trace" / f"{frame:06d}.json").write_text(json.dumps(trace))
                     (directory / "trace" / f"{frame:06d}-stats.json").write_text(json.dumps(stats))
                     tensors = directory / "tensors" / f"{frame:06d}"; tensors.mkdir(parents=True)
@@ -1196,6 +1205,54 @@ class ToolChecks(unittest.TestCase):
             self.assertTrue(compare_case(reference, actual, case, "f32", "cuda", gates, 8)["passed"])
             with self.assertRaisesRegex(ValueError, "selected-GPU"):
                 compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_device=1)
+            manifest["arithmetic_profile"] = "ggml-cuda-f16-v1"
+            (actual / "manifest.json").write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "arithmetic profile"):
+                compare_case(reference, actual, case, "f32", "cuda", gates, 8)
+            tensor_directory = actual / "tensors/000001"
+            tensor_index = read_json(tensor_directory / "tensors.json")
+            tensor_index["tensors"]["object.9.pointer"] = dump_array(
+                tensor_directory, "pointer", np.asarray([5, 6], dtype=np.float32))
+            (tensor_directory / "tensors.json").write_text(json.dumps(tensor_index))
+            fast = compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_compute="f16")
+            self.assertTrue(fast["passed"])
+            self.assertFalse(fast["tensor_fidelity_passed"])
+            # Final-quality mode permits another internally consistent candidate,
+            # while retaining identity, selection-rule and finite-value checks.
+            trace["propagation"][0].update(mask_index=1, pointer_index=1, iou=[0.99, 0.95, 0.9, 0.8])
+            trace_path.write_text(json.dumps(trace))
+            fast = compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_compute="f16")
+            self.assertTrue(fast["passed"])
+            self.assertFalse(fast["internal_candidate_equivalence_passed"])
+            self.assertEqual(len(fast["internal_candidate_diagnostics"]), 1)
+            trace["propagation"][0]["pointer_index"] = 2
+            trace_path.write_text(json.dumps(trace))
+            self.assertFalse(compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_compute="f16")["passed"])
+            trace["propagation"][0]["pointer_index"] = 4
+            trace_path.write_text(json.dumps(trace))
+            with self.assertRaisesRegex(ValueError, "candidate scores/indices"):
+                compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_compute="f16")
+            trace["propagation"][0]["pointer_index"] = 1
+            trace["propagation"][0]["iou"][1] = float("nan")
+            trace_path.write_text(json.dumps(trace))
+            with self.assertRaisesRegex(ValueError, "non-finite"):
+                compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_compute="f16")
+            trace["propagation"][0]["iou"][1] = 0.95
+            trace["propagation"].append(dict(trace["propagation"][0]))
+            trace_path.write_text(json.dumps(trace))
+            self.assertFalse(compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_compute="f16")["passed"])
+            trace["propagation"].pop()
+            trace_path.write_text(json.dumps(trace))
+            changed["objects"][0]["score"] = 0.8
+            path.write_text(json.dumps(changed))
+            self.assertFalse(compare_case(reference, actual, case, "f32", "cuda", gates, 8, cuda_compute="f16")["passed"])
+            changed["objects"][0]["score"] = 0.9
+            path.write_text(json.dumps(changed))
+            manifest["arithmetic_profile"] = ""
+            (actual / "manifest.json").write_text(json.dumps(manifest))
+            tensor_index["tensors"]["object.9.pointer"] = dump_array(
+                tensor_directory, "pointer", np.asarray([1, 2], dtype=np.float32))
+            (tensor_directory / "tensors.json").write_text(json.dumps(tensor_index))
             sample = dict(manifest["stats"])
             sample["runtime"] = {"cuda_nodes": 20, "cpu_nodes": 1, "metal_nodes": 0}
             (actual / "trace/000001-stats.json").write_text(json.dumps(sample))

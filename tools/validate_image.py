@@ -57,6 +57,8 @@ SAM_PATCHED_GGML_BUILD_COMMIT = f"{SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT}-{sha256
 CPU_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-weights-f32-v1"
 METAL_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-native-v1"
 CUDA_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-cuda-native-v1"
+CUDA_F16_ARITHMETIC_PROFILE = "ggml-cuda-f16-v1"
+CUDA_F16_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-cuda-f16-v1"
 QUANTIZED_PRECISIONS = frozenset({"q8_0", "q6_k", "q5_k", "q4_k"})
 _EXPECTED_PRECISION_NAMES = {"q8_0", "q6_k", "q5_k", "q4_k"}
 QUANTIZATION_MODULES = tuple(GGUF_QUANTIZATION_MODULES)
@@ -254,9 +256,15 @@ def quantization_release_eligibility(selection, model, reference, passed):
                                          and model.get("profile_status") != "diagnostic")}
 
 
-def allowed_runtime_arithmetic_profiles(backend, allow_historical_cpu_native=False):
+def validate_cuda_compute_mode(backend, cuda_compute):
+    if cuda_compute not in ("f32", "f16") or (cuda_compute == "f16" and backend != "cuda"):
+        raise ValueError("CUDA compute must be f32 or explicit CUDA f16")
+
+
+def allowed_runtime_arithmetic_profiles(backend, allow_historical_cpu_native=False, cuda_compute="f32"):
+    validate_cuda_compute_mode(backend, cuda_compute)
     if backend == "cuda":
-        return {CUDA_QUANTIZED_ARITHMETIC_PROFILE}
+        return {CUDA_F16_QUANTIZED_ARITHMETIC_PROFILE if cuda_compute == "f16" else CUDA_QUANTIZED_ARITHMETIC_PROFILE}
     if backend == "metal":
         return {METAL_QUANTIZED_ARITHMETIC_PROFILE}
     if backend == "cpu":
@@ -267,10 +275,10 @@ def allowed_runtime_arithmetic_profiles(backend, allow_historical_cpu_native=Fal
     raise ValueError(f"unsupported quantized backend: {backend}")
 
 
-def runtime_arithmetic_profiles_valid(backend, profiles, allow_historical_cpu_native=False):
+def runtime_arithmetic_profiles_valid(backend, profiles, allow_historical_cpu_native=False, cuda_compute="f32"):
     observed = set(profiles)
     return (len(observed) == 1
-            and observed.issubset(allowed_runtime_arithmetic_profiles(backend, allow_historical_cpu_native)))
+            and observed.issubset(allowed_runtime_arithmetic_profiles(backend, allow_historical_cpu_native, cuda_compute)))
 
 
 def validate_existing_validation_profile(receipt, backend, model, reference_manifest_sha256, selection):
@@ -511,9 +519,11 @@ def read_results(directory, scores, case, require_hash):
 
 
 def compare_case(reference_directory, actual_directory, case, precision, backend=None, model=None,
-                 allow_historical_cpu_native=False, cuda_device=0):
+                 allow_historical_cpu_native=False, cuda_device=0, cuda_compute="f32"):
     import numpy as np
 
+    validate_cuda_compute_mode(backend, cuda_compute)
+    fast_compute = cuda_compute == "f16"
     quantized = precision in QUANTIZED_PRECISIONS
     if quantized:
         selected_storage_profile = ((model or {}).get("storage_profile") if model is not None
@@ -528,6 +538,7 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
         selected_storage_profile = ""
         tensor_profile = tensor_gates = output_profile = output_gates = output_selection = None
     gate_precision = "f16" if precision == "hybrid" else precision
+    output_gate_precision = "f16" if fast_compute else gate_precision
     reference_index = read_tensor_index(reference_directory)
     actual_index = read_tensor_index(actual_directory, require_hash=False)
     if reference_index["token_ids"] != actual_index["token_ids"]:
@@ -557,10 +568,10 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
             output_passed = True
         errors[name] = {**metrics, "passed": tensor_passed,
                         **({"tensor_fidelity_passed": tensor_passed,
-                           "output_quality_passed": output_passed} if quantized else {})}
+                           "output_quality_passed": output_passed} if quantized or fast_compute else {})}
         if not tensor_passed:
             tensor_failures.append(f"{name}: tensor fidelity tolerance exceeded")
-        if quantized and not output_passed:
+        if (quantized or fast_compute) and not output_passed:
             output_failures.append(f"{name}: preprocessing output-quality limit exceeded")
     reference_scores = query_scores(reference_tensors)
     actual_scores = query_scores(actual_tensors)
@@ -582,7 +593,7 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
     if quantized:
         expected_storage_profile = selected_storage_profile
         allowed_arithmetic_profiles = allowed_runtime_arithmetic_profiles(
-            backend or actual_result.get("backend"), allow_historical_cpu_native)
+            backend or actual_result.get("backend"), allow_historical_cpu_native, cuda_compute)
         runtime_arithmetic_profile = actual_result.get("arithmetic_profile", "")
         if runtime_arithmetic_profile not in allowed_arithmetic_profiles:
             output_failures.append("C++ result arithmetic profile is unsupported for this backend/receipt type")
@@ -590,6 +601,8 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
         expected_storage_profile = ((model or {}).get("storage_profile", "") if model is not None
                                     else "visual-tracker-f32-v1" if precision == "hybrid" else "")
         runtime_arithmetic_profile = (model or {}).get("arithmetic_profile", "") if model is not None else ""
+        if fast_compute:
+            runtime_arithmetic_profile = CUDA_F16_ARITHMETIC_PROFILE
     if actual_result.get("precision") != precision:
         if quantized:
             output_failures.append("C++ result precision differs from the converted model")
@@ -644,7 +657,7 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
             score_error = abs(actual["score"] - reference["score"])
             box_error = np.abs(np.asarray(actual["box"]) - np.asarray(reference["box"]))
             box_fraction = float(np.max(box_error / np.asarray([width, height, width, height])))
-            mask_iou_min = output_profile["mask_iou_min"] if quantized else GATES[f"mask_iou_{gate_precision}"]
+            mask_iou_min = output_profile["mask_iou_min"] if quantized else GATES[f"mask_iou_{output_gate_precision}"]
             score_max = output_profile["score_absolute_error_max"] if quantized else GATES["score_max_abs"]
             box_max = output_profile["box_dimension_fraction_max"] if quantized else GATES["box_dimension_fraction"]
             passed = iou >= mask_iou_min and score_error <= score_max and box_fraction <= box_max
@@ -659,7 +672,7 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
                  "actual_score": float(actual_scores[query]), "reference_selected": query in reference_detections,
                  "actual_selected": query in actual_detections}
                 for query in range(200) if threshold_low < reference_scores[query] < threshold_high]
-    if quantized:
+    if quantized or fast_compute:
         adjacent_queries = {item["query_index"] for item in adjacent}
         selection_changes = sorted(query for query in range(200)
                                    if query not in adjacent_queries
@@ -681,10 +694,16 @@ def compare_case(reference_directory, actual_directory, case, precision, backend
                "result_structure_valid": actual_results_valid,
                "gate_set": output_gates["gate_set"],
                "gates_sha256": output_selection["gates_sha256"],
-               "tensor_fidelity_gate_set": gates["gate_set"],
+               "tensor_fidelity_gate_set": tensor_gates["gate_set"],
                "tensor_fidelity_gates_sha256": selection["gates_sha256"],
                "runtime_arithmetic_profile": runtime_arithmetic_profile,
                **({"quantization_modules": selected_modules} if selection["family"] in ("full", "custom") else {})} if quantized else {})}
+    if fast_compute:
+        result.update(cuda_compute=cuda_compute, runtime_arithmetic_profile=runtime_arithmetic_profile,
+                      output_quality_passed=not output_failures, tensor_fidelity_passed=not tensor_failures,
+                      output_quality_failures=output_failures, tensor_fidelity_failures=tensor_failures,
+                      tensor_fidelity_is_release_gate=False,
+                      output_gate_precision="quantized-profile" if quantized else "f16")
     return result
 
 
@@ -1034,6 +1053,8 @@ def validate_diagnostic_case_descriptor(diagnostic_case, frozen_case, original_c
 def validate(args):
     from sam3_artifacts import freeze_run_artifacts, verify_run_artifacts, freeze_output_files, verify_output_files
 
+    cuda_compute = getattr(args, "cuda_compute", None) or "f32"
+    validate_cuda_compute_mode(args.backend, cuda_compute)
     precision, reference, model = check_provenance(
         args.model, args.reference, args.cases, args.allow_supplementary,
         getattr(args, "allow_custom_quantization", False))
@@ -1055,6 +1076,8 @@ def validate(args):
         diagnostic_reference, diagnostic_cases = check_dequantized_reference(
             diagnostic_path, args.model, model, args.reference, args.cases, precision)
     existing_root = Path(args.existing_output).resolve() if getattr(args, "existing_output", None) else None
+    if existing_root is not None and cuda_compute != "f32":
+        raise ValueError("CUDA F16 compute acceptance requires a fresh run, not existing-output regrading")
     previous_report, previous_cases, previous_run_integrity = None, {}, None
     if existing_root is not None:
         if not quantized:
@@ -1104,10 +1127,14 @@ def validate(args):
               "gates": GATES, "cases": []}
     if args.backend == "cuda":
         report["cuda_device"] = getattr(args, "cuda_device", None) or 0
+        report["cuda_compute"] = cuda_compute
+    if cuda_compute == "f16":
+        report.update(acceptance_mode="cuda-f16-output-quality-v1", tensor_fidelity_is_release_gate=False,
+                      output_gate_precision="quantized-profile" if quantized else "f16")
     if quantized:
         from collections import Counter
 
-        allowed_profiles = allowed_runtime_arithmetic_profiles(args.backend, existing_root is not None)
+        allowed_profiles = allowed_runtime_arithmetic_profiles(args.backend, existing_root is not None, cuda_compute)
         report.update({"gate_set": output_gates["gate_set"],
                        "gates_sha256": output_selection["gates_sha256"],
                        "gates": output_gates,
@@ -1167,6 +1194,7 @@ def validate(args):
                            "--score-threshold", "0.5", "--output", str(actual_directory)]
                 if args.backend == "cuda":
                     command.extend(["--cuda-device", str(getattr(args, "cuda_device", None) or 0)])
+                    command.extend(["--cuda-compute", cuda_compute])
                 verify_run_artifacts(artifacts)
                 print(f"Validating {case['id']} ({args.backend}, {precision})", flush=True)
                 with (output / f"{case['id']}.log").open("w") as log:
@@ -1180,7 +1208,7 @@ def validate(args):
                 raise ValueError("retained C++ output changed during diagnostic comparison")
             metrics = compare_case(directory, actual_directory, case, precision, args.backend, model,
                                    allow_historical_cpu_native=existing_root is not None,
-                                   cuda_device=getattr(args, "cuda_device", None) or 0)
+                                   cuda_device=getattr(args, "cuda_device", None) or 0, cuda_compute=cuda_compute)
             if diagnostic_cases is not None:
                 diagnostic_case = diagnostic_cases[case["id"]]
                 diagnostic_directory = artifact_path(diagnostic_path, diagnostic_case["directory"])
@@ -1202,7 +1230,7 @@ def validate(args):
                 verify_run_artifacts(artifacts)
         except (OSError, ValueError, RuntimeError, KeyError, subprocess.TimeoutExpired) as error:
             metrics = {"id": case["id"], "passed": False, "failures": [str(error)]}
-            if quantized:
+            if quantized or cuda_compute == "f16":
                 metrics.update(output_quality_passed=False, tensor_fidelity_passed=False,
                                output_quality_failures=[str(error)],
                                tensor_fidelity_failures=["tensor fidelity could not be fully evaluated after validation error"])
@@ -1222,7 +1250,7 @@ def validate(args):
         allow_historical_cpu_native = existing_root is not None and args.backend == "cpu"
         report["runtime_arithmetic_profiles_observed"] = observed_runtime_profiles
         report["runtime_arithmetic_profile_valid"] = runtime_arithmetic_profiles_valid(
-            args.backend, observed_runtime_profiles, allow_historical_cpu_native)
+            args.backend, observed_runtime_profiles, allow_historical_cpu_native, cuda_compute)
         report["runtime_arithmetic_profile"] = observed_runtime_profiles[0] if len(observed_runtime_profiles) == 1 else None
         report["passed"] = report["output_quality_passed"] and report["runtime_arithmetic_profile_valid"]
         eligibility = quantization_release_eligibility(selection, model, reference, report["passed"])
@@ -1233,6 +1261,11 @@ def validate(args):
                 report["reference_eligible_for_milestone"] = reference["eligible_for_milestone"]
     else:
         report["passed"] = complete_cases and all(case["passed"] for case in report["cases"])
+        if cuda_compute == "f16":
+            report.update(output_quality_passed=report["passed"],
+                          tensor_fidelity_passed=complete_cases and all(
+                              case.get("tensor_fidelity_passed") is True for case in report["cases"]),
+                          runtime_arithmetic_profile=CUDA_F16_ARITHMETIC_PROFILE)
     if diagnostic_cases is not None:
         report["weight_compression_output_diagnostic_passed"] = (
             len(report["cases"]) == len(diagnostic_cases)
@@ -1253,6 +1286,7 @@ def main():
     parser.add_argument("--reference", required=True, type=Path)
     parser.add_argument("--backend", required=True, choices=("cpu", "metal", "cuda"))
     parser.add_argument("--cuda-device", type=int, help="Index among CUDA-visible devices (default: 0)")
+    parser.add_argument("--cuda-compute", choices=("f32", "f16"), help="CUDA arithmetic; f16 uses final-output quality gates")
     parser.add_argument("--cases", type=Path, default=Path(__file__).resolve().parents[1] / "tests/data/sam3-image-cases.json")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--timeout-seconds", type=float, default=600)
@@ -1268,6 +1302,8 @@ def main():
     args = parser.parse_args()
     if args.cuda_device is not None and (args.backend != "cuda" or args.cuda_device < 0):
         parser.error("--cuda-device requires backend cuda and a nonnegative index")
+    if args.cuda_compute is not None and args.backend != "cuda":
+        parser.error("--cuda-compute requires backend cuda")
     if args.threads <= 0 or args.timeout_seconds <= 0 or not math.isfinite(args.timeout_seconds):
         parser.error("thread count and timeout must be positive")
     try:

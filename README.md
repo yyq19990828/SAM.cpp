@@ -80,6 +80,22 @@ CUDA rejects unsupported operators and CPU compute fallback. Model information
 and CLI JSON include `device_name` and `cuda_device`; `cuda_nodes` reports actual
 scheduled compute work.
 
+CUDA defaults to `--cuda-compute f32`: F16 weight storage alone does not enable
+F16 matrix arithmetic. Select `--cuda-compute f16` for reduced dense inputs with
+F32 accumulation/output and fused reduced-input attention. In C++, set
+`BackendOptions::cuda_compute = sam::CudaComputeMode::F16` with an explicit CUDA
+backend. Weight files and video state formats stay the same. The runtime reports
+`ggml-cuda-f16-v1`, or `ggml-quantized-cuda-f16-v1` for quantized weights.
+This mode is qualified by final segmentation/tracking quality; intermediate
+tensors are diagnostic. See [precision details](MODEL_ZOO.md#precision-contract)
+and [validation](docs/validation.md).
+
+CUDA also selects execution strategies by storage and compute mode: quantized
+image models in default compute mode combine prediction stages to reduce host
+transfers, while F16 compute uses fused tracker memory attention. All modes share
+batched concat launches. These strategies require no additional command-line
+flags; measured latency and memory are in [the benchmarks](BENCHMARK.md).
+
 Metal shaders are embedded and compiled at runtime. CPU builds can use a
 registered GGML BLAS backend; add `-DGGML_BLAS=OFF` for native CPU execution.
 Apple Accelerate manages its own SGEMM threads. For comparable CPU timing,

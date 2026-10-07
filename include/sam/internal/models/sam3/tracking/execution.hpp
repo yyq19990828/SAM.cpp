@@ -1054,7 +1054,7 @@ private:
             }
         }
         auto* conditioned = sam3_build_mem_attn_graph(ctx, weights, current, current_position, memory,
-            memory_position, rope, key_rope, pointers * 4);
+            memory_position, rope, key_rope, pointers * 4, model_.runtime->attention_policy());
         conditioned_ = conditioned;
 
         auto* conditioned_spatial = ggml_reshape_4d(ctx, conditioned, 256, 72, 72, batch);
@@ -1368,7 +1368,7 @@ private:
         auto* rope = input_tensor(ctx, "probe_rope", 2, 128, 5184);
         auto* key_rope = input_tensor(ctx, "probe_key_rope", 2, 128, spatial * 5184);
         auto* output = sam3_build_mem_attn_graph(ctx, model_.definition.weights, current, current_position,
-                                                  memory, position, rope, key_rope, pointers * 4);
+                                                  memory, position, rope, key_rope, pointers * 4, model_.runtime->attention_policy());
         graph.output(output);
         graph_build_ms_ += elapsed_ms(build_start);
         return probe_actual_workspace(graph);
@@ -1488,7 +1488,7 @@ private:
                 }
             }
             conditioned_ = sam3_build_mem_attn_graph(ctx, model_.definition.weights, current, current_position,
-                memory, memory_position, rope, key_rope, pointer_count * 4);
+                memory, memory_position, rope, key_rope, pointer_count * 4, model_.runtime->attention_policy());
             graph.output(conditioned_);
             propagation_memory_ = memory;
             graph_build_ms_ += elapsed_ms(graph_start);

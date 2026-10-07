@@ -22,6 +22,16 @@ math attention，关闭 TF32；视频保留 F16 输入与 BF16 feature/memory �
 验收时使用 CUDA 构建并传入 `--backend cuda --cuda-device 0`；设备序号相对
 于 `CUDA_VISIBLE_DEVICES` 的可见设备列表。
 
+验收显式低精度 CUDA 计算时，给 `validate_image.py` 和 `validate_video.py`
+传入 `--cuda-compute f16`。工具要求新运行及匹配的算术 profile；dense 模型使用
+既有 F16 最终输出门限，量化模型沿用既有量化输出门限。预处理、token ID、
+张量有限值、检测选择、视频 ID／生命周期及状态边界仍必须通过，中间张量保真度
+单独记录。默认 F32 验收继续执行原有张量门限。`benchmark_video.py` 必须使用
+相同计算模式及对应的通过凭据。
+F16 计算允许内部 mask/pointer 候选编号与参考不同，并记录这些差异；候选分数
+有限值、编号范围、按 IoU 正确选择、mask/pointer 配对和传播对象身份仍必须
+通过。默认 F32 仍要求与参考相同的候选编号。
+
 ## 图像对照
 
 在仓库根目录运行：

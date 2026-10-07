@@ -82,7 +82,8 @@ int main(int argc, char** argv) {
         const auto options = sam_example::parse_options(pointers.size(), pointers.data(), false);
         if (options.help) {
             std::cout << "Usage: sam_video --model FILE --frames PNG_DIRECTORY --text PROMPT --output NEW_DIR\n"
-                         "  [--backend auto|cpu|metal|cuda] [--cuda-device N] [--threads N] [--max-objects 8]\n"
+                         "  [--backend auto|cpu|metal|cuda] [--cuda-device N] [--cuda-compute f32|f16]\n"
+                         "  [--threads N] [--max-objects 8]\n"
                          "  [--dump-tensors | --dump-all-tensors]\n"
                          "Frames must be contiguous numeric PNG files (000000.png onward).\n";
             return 0;
@@ -115,6 +116,7 @@ int main(int argc, char** argv) {
                      << ",\"model\":" << sam_example::json_string(options.model.string())
                      << ",\"precision\":" << sam_example::json_string(model.info().precision)
                      << ",\"storage_profile\":" << sam_example::json_string(model.info().storage_profile)
+                     << ",\"arithmetic_profile\":" << sam_example::json_string(model.info().arithmetic_profile)
                      << ",\"backend\":" << sam_example::json_string(sam_example::backend_name(model.backend()))
                      << ",\"device_name\":" << sam_example::json_string(model.info().device_name)
                      << ",\"cuda_device\":" << model.info().cuda_device

@@ -318,6 +318,9 @@ void test_images() {
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cpu, 0}); }, "zero CPU threads were accepted");
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({static_cast<sam::Backend>(99), 4}); }, "unknown backend was accepted");
     sam::internal::validate_backend_options({sam::Backend::Cuda, 4, 2});
+    sam::internal::validate_backend_options({sam::Backend::Cuda, 4, 0, sam::CudaComputeMode::F16});
+    rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cpu, 4, 0, sam::CudaComputeMode::F16}); }, "CUDA F16 compute was accepted for CPU");
+    rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cuda, 4, 0, static_cast<sam::CudaComputeMode>(99)}); }, "unknown CUDA compute mode was accepted");
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cuda, 4, -1}); }, "negative CUDA device was accepted");
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cpu, 4, 1}); }, "CUDA device index was accepted for CPU");
 }

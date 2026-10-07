@@ -24,6 +24,7 @@ from sam3_artifacts import (artifact_path, freeze_output_files, freeze_run_artif
                            verify_run_artifacts, write_json)
 from sam3_gguf import HYBRID_PROFILE
 from validate_video import check_provenance, read_objects
+from validate_image import CUDA_F16_ARITHMETIC_PROFILE, validate_cuda_compute_mode
 
 FRAME_COUNT = 64
 WARMUP = 16
@@ -58,10 +59,13 @@ def encoding_timings(samples):
             "scope": "image includes ViT/necks/geometry; detector pipeline includes prompt/fusion/detection/masks. Host transfers/allocation included; not GPU-only kernel time."}
 
 
-def analyze_run(directory, expected_objects, precision, backend, width, height, cuda_device=0):
+def analyze_run(directory, expected_objects, precision, backend, width, height, cuda_device=0, cuda_compute="f32"):
     """Reject incomplete/wrong workloads before computing a benchmark summary."""
     directory = Path(directory)
     manifest = read_json(directory / "manifest.json")
+    validate_cuda_compute_mode(backend, cuda_compute)
+    if manifest.get("arithmetic_profile", "") != (CUDA_F16_ARITHMETIC_PROFILE if cuda_compute == "f16" else ""):
+        raise ValueError("benchmark arithmetic profile differs from the requested compute mode")
     profile = HYBRID_PROFILE if precision == "hybrid" else ""
     if (manifest.get("complete") is not True or manifest.get("task") != "text_video"
             or manifest.get("frame_count") != FRAME_COUNT or manifest.get("threads") != 4
@@ -227,6 +231,8 @@ def validate_qualification_records(qualification, expected_objects):
 
 
 def run(args):
+    cuda_compute = getattr(args, "cuda_compute", None) or "f32"
+    validate_cuda_compute_mode(args.backend, cuda_compute)
     if sys.platform not in ("darwin", "linux"):
         raise ValueError("video process timing requires macOS time -l or Linux GNU time")
     precision, reference, _ = check_provenance(args.model, args.reference)
@@ -248,6 +254,11 @@ def run(args):
                        for case in accepted_cases)):
         raise ValueError("a passing current full original-reference validation is required for this exact cell")
     cuda_device = getattr(args, "cuda_device", None) or 0
+    if accepted.get("cuda_compute", "f32") != cuda_compute:
+        raise ValueError("full acceptance used a different CUDA compute mode")
+    if cuda_compute == "f16" and (accepted.get("runtime_arithmetic_profile") != CUDA_F16_ARITHMETIC_PROFILE
+                                  or accepted.get("output_quality_passed") is not True):
+        raise ValueError("CUDA F16 benchmark requires passing final-output quality acceptance")
     if args.backend == "cuda" and accepted.get("cuda_device") != cuda_device:
         raise ValueError("full numerical acceptance used a different CUDA device")
     verify_run_artifacts(accepted["run_artifact_sha256"])
@@ -292,14 +303,20 @@ def run(args):
                "--text", "truck", "--backend", args.backend, "--threads", "4", "--max-objects", "8", "--output", str(actual)]
     if args.backend == "cuda":
         command.extend(["--cuda-device", str(cuda_device)])
+        command.extend(["--cuda-compute", cuda_compute])
     report = {"schema_version": 1, "complete": False, "passed": False, "kind": "m2-video-performance-64-16-48",
-              "numerical_acceptance": "separate passing full original-reference receipt", "backend": args.backend,
+              "numerical_acceptance": ("separate passing full original-reference final-output quality receipt"
+                                       if cuda_compute == "f16" else "separate passing full original-reference receipt"),
+              "backend": args.backend,
               "precision": precision, "storage_profile": HYBRID_PROFILE if precision == "hybrid" else "",
               "model_sha256": expected_model, "checkpoint_sha256": reference["checkpoint"]["sha256"],
               "workload": args.workload, "expected_objects": workload["expected_objects"], "frame_count": FRAME_COUNT,
               "warmup_frames": WARMUP, "measured_frames": FRAME_COUNT-WARMUP, "threads": 4, "command": command,
               "run_artifact_sha256": artifacts, "source_sha256": source_hashes, "input_sha256": inputs,
               "conditions_before": conditions(), "failures": []}
+    if args.backend == "cuda":
+        report.update(cuda_compute=cuda_compute,
+                      arithmetic_profile=CUDA_F16_ARITHMETIC_PROFILE if cuda_compute == "f16" else "")
     write_json(args.output / "benchmark.json", report)
     process, rss_samples, rss_errors, cuda_samples, cuda_errors = None, [], [], [], []
     first_output_observed = None
@@ -323,6 +340,17 @@ def run(args):
                         rss_log.write(json.dumps(sample) + "\n"); rss_log.flush()
                         if args.backend == "cuda":
                             try:
+                                if sys.platform == "linux" and "loader" not in report:
+                                    maps = Path(f"/proc/{sample['pid']}/maps").read_text()
+                                    loaded = {line.split(maxsplit=5)[5] for line in maps.splitlines()
+                                              if len(line.split(maxsplit=5)) == 6 and "/libggml-cuda.so" in line}
+                                    if loaded:
+                                        expected_libraries = {str(Path(path).resolve()): digest for path, digest in artifacts.items()}
+                                        if any(path not in expected_libraries or sha256_file(path) != expected_libraries[path]
+                                               for path in loaded):
+                                            raise RuntimeError("loaded CUDA library differs from the qualified build")
+                                        (args.output / "loader.maps").write_text(maps)
+                                        report["loader"] = {"pid": sample["pid"], "cuda_libraries": sorted(loaded)}
                                 devices = current_cuda_memory(sample["pid"])
                                 if devices:
                                     cuda_samples.append({"elapsed_seconds": elapsed, "devices": devices,
@@ -339,11 +367,13 @@ def run(args):
                     pass
             if process.returncode:
                 raise RuntimeError(f"sam_video/time exited {process.returncode}; see sam_video.log")
+        if args.backend == "cuda" and sys.platform == "linux" and "loader" not in report:
+            raise RuntimeError("video benchmark lacks actual CUDA loader evidence")
         verify_run_artifacts(artifacts); verify_run_artifacts(inputs); verify_run_artifacts(source_hashes)
         outputs = freeze_output_files(actual)
         report["output_sha256"] = outputs
         write_json(args.output / "benchmark.json", report)
-        report.update(analyze_run(actual, workload["expected_objects"], precision, args.backend, fixture["width"], fixture["height"], cuda_device))
+        report.update(analyze_run(actual, workload["expected_objects"], precision, args.backend, fixture["width"], fixture["height"], cuda_device, cuda_compute))
         log_text = (args.output / "sam_video.log").read_text()
         report["process"] = process_timing(log_text, sys.platform)
         report["first_output"]["observed_elapsed_seconds"] = first_output_observed
@@ -387,12 +417,15 @@ def main():
         parser.add_argument("--" + name, required=True, type=Path)
     parser.add_argument("--workload", required=True, choices=("one-object", "four-object"))
     parser.add_argument("--backend", required=True, choices=("cpu", "metal", "cuda"))
+    parser.add_argument("--cuda-compute", choices=("f32", "f16"), help="Must match the original-reference acceptance receipt")
     parser.add_argument("--cuda-device", type=int, help="Index among CUDA-visible devices (default: 0)")
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--timeout-seconds", type=float, default=14400)
     args = parser.parse_args()
     if args.cuda_device is not None and (args.backend != "cuda" or args.cuda_device < 0):
         parser.error("--cuda-device requires backend cuda and a nonnegative index")
+    if args.cuda_compute is not None and args.backend != "cuda":
+        parser.error("--cuda-compute requires backend cuda")
     if args.threads != 4 or not math.isfinite(args.timeout_seconds) or args.timeout_seconds <= 0:
         parser.error("standard M2 cells require four threads and a positive finite timeout")
     try:
