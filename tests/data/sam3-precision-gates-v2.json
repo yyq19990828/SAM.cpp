@@ -1,0 +1,61 @@
+{
+  "schema_version": 2,
+  "gate_set": "sam3-precision-acceptance-v2",
+  "status": "frozen-before-v2-model-evaluation",
+  "source_plan": "docs/plans/20261007-200954-precision-acceptance-gates-v2.md",
+  "units": "All probabilities, drops and rates are fractions on 0-1, not percentage points",
+  "common": {
+    "score_threshold": 0.5,
+    "high_confidence_min": 0.6,
+    "gray_interval": [0.4, 0.6],
+    "matching_iou_min": 0.5,
+    "protected_score_min": 0.9,
+    "protected_area_min": 1024,
+    "protected_gt_iou_min": 0.5,
+    "protected_misses_max": 0,
+    "high_reference_objects_min": 1000,
+    "evaluation_images_min": 1024,
+    "ranked_max_detections": 100,
+    "unmatched_budget_fraction": 0.5,
+    "negative_count_budget_multiplier": 2.0,
+    "area_ap_budget_multiplier": 2.0,
+    "area_images_min": 50,
+    "area_instances_min": 200,
+    "category_positive_pairs_min": 20,
+    "category_instances_min": 50,
+    "category_ap_budget_floor": 0.01,
+    "bootstrap_repetitions": 2000,
+    "bootstrap_seed": 20261007,
+    "bootstrap_quantile": 0.95,
+    "bootstrap_method": "higher"
+  },
+  "profiles": {
+    "f32": {"ap_drop_max": 0.001, "miou_drop_max": 0.001, "mask_iou_min": 0.98, "score_error_max": 0.02, "box_fraction_max": 0.01, "bad_object_rate_max": 0.0, "new_negative_rate_max": 0.0},
+    "f16": {"ap_drop_max": 0.0025, "miou_drop_max": 0.002, "mask_iou_min": 0.95, "score_error_max": 0.02, "box_fraction_max": 0.01, "bad_object_rate_max": 0.005, "new_negative_rate_max": 0.001},
+    "bf16": {"ap_drop_max": 0.0025, "miou_drop_max": 0.002, "mask_iou_min": 0.95, "score_error_max": 0.02, "box_fraction_max": 0.01, "bad_object_rate_max": 0.005, "new_negative_rate_max": 0.001},
+    "q8_0": {"ap_drop_max": 0.005, "miou_drop_max": 0.0025, "mask_iou_min": 0.96, "score_error_max": 0.02, "box_fraction_max": 0.01, "bad_object_rate_max": 0.005, "new_negative_rate_max": 0.002},
+    "q6_k": {"ap_drop_max": 0.01, "miou_drop_max": 0.005, "mask_iou_min": 0.94, "score_error_max": 0.03, "box_fraction_max": 0.015, "bad_object_rate_max": 0.01, "new_negative_rate_max": 0.003},
+    "q5_k": {"ap_drop_max": 0.015, "miou_drop_max": 0.0075, "mask_iou_min": 0.92, "score_error_max": 0.04, "box_fraction_max": 0.02, "bad_object_rate_max": 0.015, "new_negative_rate_max": 0.004},
+    "q4_k": {"ap_drop_max": 0.02, "miou_drop_max": 0.01, "mask_iou_min": 0.90, "score_error_max": 0.05, "box_fraction_max": 0.03, "bad_object_rate_max": 0.02, "new_negative_rate_max": 0.005},
+    "w8a8": {"ap_drop_max": 0.01, "miou_drop_max": 0.005, "mask_iou_min": 0.94, "score_error_max": 0.03, "box_fraction_max": 0.015, "bad_object_rate_max": 0.01, "new_negative_rate_max": 0.003},
+    "fp8": {"ap_drop_max": 0.01, "miou_drop_max": 0.005, "mask_iou_min": 0.94, "score_error_max": 0.03, "box_fraction_max": 0.015, "bad_object_rate_max": 0.01, "new_negative_rate_max": 0.003}
+  },
+  "cache_profiles": {
+    "f16": {"ap_drop_max": 0.001, "miou_drop_max": 0.0005, "mask_iou_min": 0.99, "score_error_max": 0.005, "box_fraction_max": 0.002, "bad_object_rate_max": 0.0025},
+    "mixed-q8_0": {"ap_drop_max": 0.0025, "miou_drop_max": 0.001, "mask_iou_min": 0.98, "score_error_max": 0.01, "box_fraction_max": 0.005, "bad_object_rate_max": 0.005},
+    "all-q8_0": {"ap_drop_max": 0.0025, "miou_drop_max": 0.001, "mask_iou_min": 0.98, "score_error_max": 0.01, "box_fraction_max": 0.005, "bad_object_rate_max": 0.005}
+  },
+  "performance": {
+    "cases_min": 8,
+    "process_pairs_min": 3,
+    "warmups_min": 5,
+    "iterations_min": 20,
+    "case_p95_ratio_max": 1.05,
+    "labels": {
+      "latency": {"p50_ratio_max": 0.90, "p95_ratio_max": 1.03, "gpu_peak_ratio_max": 1.03, "rss_peak_ratio_max": 1.05},
+      "gpu-memory": {"p50_ratio_max": 1.03, "p95_ratio_max": 1.03, "gpu_peak_ratio_max": 0.85, "rss_peak_ratio_max": 1.05},
+      "latency-and-gpu-memory": {"p50_ratio_max": 0.90, "p95_ratio_max": 1.03, "gpu_peak_ratio_max": 0.90, "rss_peak_ratio_max": 1.05},
+      "host-memory": {"p50_ratio_max": 1.03, "p95_ratio_max": 1.03, "gpu_peak_ratio_max": 1.03, "rss_peak_ratio_max": 0.85}
+    }
+  }
+}

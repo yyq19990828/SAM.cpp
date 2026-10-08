@@ -26,6 +26,12 @@ from test_calibration import CalibrationChecks
 from test_runtime_quantization import RuntimeQuantizationChecks
 from test_cache_quantization import CacheQuantizationChecks
 from test_coco_screening import CocoScreeningChecks
+from test_precision_acceptance import PrecisionAcceptanceChecks
+from test_coco_acceptance import CocoAcceptanceChecks
+from test_precision_dataset import PrecisionDatasetChecks
+from test_precision_artifacts import PrecisionArtifactChecks
+from test_precision_performance import PrecisionPerformanceChecks
+from test_precision_regression import PrecisionRegressionChecks
 from validate_image import GATES, check_provenance, mask_iou, read_results, tensor_error
 
 

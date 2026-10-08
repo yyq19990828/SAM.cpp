@@ -14,6 +14,14 @@ if(SAM_BUILD_EXAMPLES)
     target_link_libraries(sam_profile_graph PRIVATE sam::sam sam_image_io)
     set_target_properties(sam_profile_graph PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+    add_executable(sam_precision_image_probe ../tools/precision_image_probe.cpp)
+    target_link_libraries(sam_precision_image_probe PRIVATE sam::sam sam_image_io)
+    set_target_properties(sam_precision_image_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+    add_executable(sam_precision_benchmark_probe ../tools/precision_benchmark_probe.cpp)
+    target_link_libraries(sam_precision_benchmark_probe PRIVATE sam::sam sam_image_io)
+    set_target_properties(sam_precision_benchmark_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
     add_executable(sam_quantize_rows ../tools/quantize_rows.cpp)
     target_compile_features(sam_quantize_rows PRIVATE cxx_std_17)
     target_compile_definitions(sam_quantize_rows PRIVATE

@@ -41,6 +41,8 @@ ctest --test-dir build --output-on-failure
 
 Document backend options and integration in `README.md`. Check whitespace with `git diff --check`.
 
+After every completed build/validation cycle, clean up unneeded intermediate files in `build/` and `models/`, including download caches, temporary test environments, obsolete compiler intermediates and duplicate generated outputs. Preserve original checkpoints, usable GGUF models and conversion manifests, the current verified build, and required validation evidence. Keep retained evidence immutable; regenerate tensor dumps in fresh output directories. Treat routine cleanup as part of verification, without a separate cleanup plan or report.
+
 ## Coding Style
 
 Use four spaces, `snake_case` files/functions/variables, and `PascalCase` types. Prefer stdlib/GGML and share graphs across backends. Preserve imported conventions. No formatter/linter is configured.

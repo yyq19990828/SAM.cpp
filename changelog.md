@@ -8,6 +8,7 @@ No releases have been published.
 
 ### Added
 
+- Experimental v2 precision acceptance tools with separate quality budgets, one-to-one object matching, ranked COCO mask AP, paired confidence bounds, independent data splits and frozen performance comparisons. Native F16 codec bit patterns and the seven fixed image cases have separate checks. Results distinguish failure, insufficient evidence and untested configurations; existing model support and v1 receipts retain their original scope.
 - Experimental image-feature cache tools and typed host storage, with native GGML F16/Q8_0 codec checks and a mixed Q8_0 recipe that preserves the F32 detection feature. Public model loading continues to use the existing cache precision.
 - Original-model COCO screening for calibrated vision linears, with separate weight/activation ablations, frozen per-object gates, prompted mask AP, positive-mask mIoU and negative-prompt counts. These tools do not qualify a runtime W8A8 profile.
 - Opt-in CUDA linear quantization probes with independently checked INT8 arithmetic, calibrated channel scaling, explicit temporary-memory accounting, and separate GGML comparisons. FP8 probes remain diagnostic and require their numerical gates to pass.
@@ -47,6 +48,7 @@ No releases have been published.
 
 ### Fixed
 
+- Install the pinned COCO dependency in Quick checks so mask and precision acceptance tests can run in CI.
 - Preserve the original Linear bias operation in numerical reparameterization studies; add explicit mixed-layer selection and exactly representable channel-scale experiments without changing runtime defaults.
 - Bind CUDA validation and video benchmark receipts to their compute mode, and report the selected quantization tensor gate identity correctly.
 - Replace broken links to unavailable historical performance receipts with archive path records, preserving their original hashes.

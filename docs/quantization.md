@@ -105,6 +105,22 @@ show actual outputs and mask differences at a threshold of 0.2 for every
 configuration. They offer a direct comparison alongside full-corpus and
 application-dataset validation.
 
+The experimental [v2 acceptance plan](plans/20261007-200954-precision-acceptance-gates-v2.md)
+adds separate F32/F16/Q8/Q6/Q5/Q4 quality budgets, ranked COCO mask AP, image-level
+confidence bounds and one-to-one object matching. Cache compression must pass both
+the complete recipe's quality budget and its incremental budget. These results
+have their own version and do not replace the fixed-corpus qualifications above.
+`tools/export_precision_outputs.py` and `tools/evaluate_precision.py` provide the
+ranked evaluation path; `tools/freeze_precision_campaign.py` freezes candidates
+before independent evaluation. Latency and memory benefits are measured separately
+by `tools/benchmark_precision.py`. `tools/verify_precision_f16.py` checks native
+F16 codec bit patterns; `tools/validate_precision_regression.py` applies zero-tail
+spatial gates to the seven fixed cases alongside the existing validator.
+These v2 Python native runners currently require Linux for executable-library
+and process-memory inspection; their Metal host integration is not implemented.
+BF16/W8A8/FP8 entries in the policy are research
+targets, not additional supported inference modes.
+
 The broader `image-linear-*` family also quantizes text-encoder linear weights
 and remains diagnostic. These schema-3 profiles are image-only; quantized video
 is not supported by them.

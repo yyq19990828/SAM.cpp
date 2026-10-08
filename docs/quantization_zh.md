@@ -64,6 +64,19 @@ RTX 4090 CUDA 上也已通过七 case 原始模型输出质量验收。这一结
 
 固定验收的检出阈值为 0.5，检查高置信对象是否遗漏和低置信 query 是否新增检出，阈值附近的变化单独报告。[可视化样例](visual-examples_zh.md)按 0.2 阈值展示所有版本的真实输出和掩码差异；它提供直接对照，不能代替完整语料或应用数据集验证。
 
+实验性的 [v2 验收方案](plans/20261007-200954-precision-acceptance-gates-v2.md)为
+F32/F16/Q8/Q6/Q5/Q4 分别设置质量预算，使用 ranked COCO mask AP、图像级置信界和
+对象一对一匹配。缓存压缩同时执行完整配置总预算和缓存增量预算。v2 单独记录结果，
+不改写上述固定语料的原有验收结论。
+`tools/export_precision_outputs.py` 和 `tools/evaluate_precision.py` 提供 ranked
+评估入口；`tools/freeze_precision_campaign.py` 在独立评估前冻结候选。
+`tools/benchmark_precision.py` 分开测量延迟和内存收益。
+`tools/verify_precision_f16.py` 检查原生 F16 编解码的位模式；
+`tools/validate_precision_regression.py` 在原有验证器之外，对七个固定用例执行
+零尾部额度的对象匹配检查。这些 v2 Python 原生运行工具当前依赖 Linux 的动态库
+与进程内存检查接口，尚未实现 Metal 主机接入。策略中 BF16/W8A8/FP8
+的门槛属于研究目标，不代表新增了这些运行时精度支持。
+
 范围更广的 `image-linear-*` family 也会量化文本编码器线性权重，目前仅用于诊断。这些 schema 3 profile 只用于图像；它们不支持量化视频。
 旧的 `image-linear-*` 不等同于 schema 4 的全模块预设，前者不覆盖融合与解码线性权重。
 
