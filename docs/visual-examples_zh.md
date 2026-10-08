@@ -239,10 +239,10 @@ build/cpu/examples/sam_image \
   --backend cpu --output outputs/truck-q8-threshold-02
 ```
 
-已有参考验证输出时，可用 `tools/render_image_comparison.py` 从真实掩码生成同样的对照图。该工具要求带校验记录的参考与比较目录，检查图片、结果和掩码身份，拒绝覆盖输出。各目录必须使用相同阈值和参考；一次只比较一个后端。
+已有参考验证输出时，可用 `tools/visualization/render_image_comparison.py` 从真实掩码生成同样的对照图。该工具要求带校验记录的参考与比较目录，检查图片、结果和掩码身份，拒绝覆盖输出。各目录必须使用相同阈值和参考；一次只比较一个后端。
 
 ```sh
-.venv-reference/bin/python tools/render_image_comparison.py \
+.venv-reference/bin/python tools/visualization/render_image_comparison.py \
   --reference models/reference/sam3-f32 \
   --comparison F32=build/image-validation-f32 \
   --comparison Q8_0=build/image-validation-q8 \

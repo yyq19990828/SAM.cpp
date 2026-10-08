@@ -303,3 +303,23 @@ CUDA probes ON 探针 45/45、共享构建 17/17、Python 145 通过、文档 70
 改动私有跟踪实现只重编译库与内部测试并重链接应用，不重编译未变化应用对象。未验证：Metal
 （无匹配硬件）与 CPU 完整 216 帧视频（吞吐）；逐模块 `.hpp/.cpp` 去内联未执行，实现仍由库
 实现 TU 从 `src/` 头文件编译进库。C 继承 `f14ab3a`。
+
+### C：工具目录与可安装 SDK
+
+状态：完成。本节点以单个可独立保留的本地提交结束
+（`refactor: group tools and deliver an installable SDK package`，哈希见 worker 完成报告）。
+证据目录 `build/structure-c-evidence-v1/`（`index.json`）。目录迁移：`examples/` 拆为
+`apps/{image,video}/`、`support/image_io/`、`third_party/stb/`；`tools/` 按
+convert/quantize/validation/benchmark/visualization/maintenance 分组，旧扁平入口保留薄转发；
+`tests/` 按 api/models/runtime/ggml/integration/tools/data 分组；`${build}/examples/` 命令与
+探针路径不变。构建：`SAM_BUILD_EXAMPLES` 只控制两个 CLI，新增 `SAM_BUILD_TOOLS`
+（standalone ON/embedded OFF），`SAM_BUILD_CUDA_PROBES` 只控制 CUDA 探针；新增
+`SAM_ENABLE_INSTALL` 标准安装导出，static/shared、add_subdirectory/find_package、移动前缀均
+验证，SAM 准备的 GGML 随包交付，caller-owned 构建树 target 明确拒绝安装，可解析的
+caller-owned 包复用通过。实测：CPU Release 17/17、CUDA probes OFF 30/30、CUDA probes ON
+探针全部构建与 CTest 30/30（线性探针回归 45/45）、共享 17/17（公共符号 28、内部符号 0）、
+SDK-only 与 examples OFF/tools ON 构建、源码 consumer static/shared 各 2/2、安装 consumer
+static/shared/CUDA 与移动前缀通过、Python 145 通过、文档 70 份通过；真实树源码身份与归档
+223/223（嵌套工具篡改可检出，离线校验通过），冻结 `build/precision-final-v2/exports/f16`
+137 归档源只读校验通过。未验证：Metal（无匹配硬件）、CPU 完整 216 帧视频（吞吐）以及官方
+参考数值/性能套件（属节点 D）。D 继承本提交。

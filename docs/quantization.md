@@ -110,11 +110,11 @@ adds separate F32/F16/Q8/Q6/Q5/Q4 quality budgets, ranked COCO mask AP, image-le
 confidence bounds and one-to-one object matching. Cache compression must pass both
 the complete recipe's quality budget and its incremental budget. These results
 have their own version and do not replace the fixed-corpus qualifications above.
-`tools/export_precision_outputs.py` and `tools/evaluate_precision.py` provide the
-ranked evaluation path; `tools/freeze_precision_campaign.py` freezes candidates
+`tools/validation/export_precision_outputs.py` and `tools/validation/evaluate_precision.py` provide the
+ranked evaluation path; `tools/maintenance/freeze_precision_campaign.py` freezes candidates
 before independent evaluation. Latency and memory benefits are measured separately
-by `tools/benchmark_precision.py`. `tools/verify_precision_f16.py` checks native
-F16 codec bit patterns; `tools/validate_precision_regression.py` applies zero-tail
+by `tools/benchmark/benchmark_precision.py`. `tools/validation/verify_precision_f16.py` checks native
+F16 codec bit patterns; `tools/validation/validate_precision_regression.py` applies zero-tail
 spatial gates to the seven fixed cases alongside the existing validator.
 These v2 Python native runners currently require Linux for executable-library
 and process-memory inspection; their Metal host integration is not implemented.
@@ -143,7 +143,7 @@ python3.12 -m venv .venv-reference
 .venv-reference/bin/python -m pip install -r tools/requirements.lock
 sam3_weights_dir=/absolute/path/to/sam3
 
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision q8_0 \
   --storage-profile image-vision-linear-q8_0-v1 \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
@@ -160,7 +160,7 @@ cmake -S . -B build/quant-cpu \
   -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF -DSAM_BUILD_EXAMPLES=ON
 cmake --build build/quant-cpu --target sam_quantize_rows --parallel
 
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision q6_k \
   --storage-profile image-vision-linear-q6_k-v1 \
   --quantizer "$PWD/build/quant-cpu/examples/sam_quantize_rows" \
@@ -181,7 +181,7 @@ For the full preset, use `--storage-profile image-full-linear-q6_k-v1` instead.
 To quantize text and decoder components only:
 
 ```sh
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision q6_k --quantize-modules text,decoder \
   --quantizer "$PWD/build/quant-cpu/examples/sam_quantize_rows" \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
@@ -195,7 +195,7 @@ each tensor's module, actual storage type and quantization or floating-point
 retention reason. Loaded schema-4 models report the selected components through
 `ModelInfo::quantization_modules`.
 
-Use `tools/validate_image.py --allow-custom-quantization` for a separate
+Use `tools/validation/validate_image.py --allow-custom-quantization` for a separate
 reference comparison of custom combinations; its report remains diagnostic.
 See [model verification](validation.md) for the comparison workflow.
 

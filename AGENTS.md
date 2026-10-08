@@ -9,13 +9,17 @@ Compiled C++17 inference library for multiple SAM variants and platforms. SAM 3 
 - `src/contracts/`: private task contracts; `src/common/`: backend-independent input validation; `src/models/<family>/`: model adapters/graphs and video responsibilities. These private paths are not installed and are consumed through the non-installed `sam_private` test support target.
 - `src/runtime/ggml/`: shared execution with `backends/` device drivers; model graphs consume it and the runtime does not include model headers. See [architecture](docs/architecture.md).
 - `src/io/gguf_reader.hpp`: bounded common GGUF reading; model-specific metadata and tensor contracts follow [GGUF schema](docs/gguf.md).
-- `tools/`: converters; `examples/`: CLI applications.
-- `tests/`: checks; `tests/data/`: redistributable fixtures.
+- `apps/image/`, `apps/video/`: the `sam_image` and `sam_video` commands (`SAM_BUILD_EXAMPLES`); `support/image_io/`: non-installed decoding support shared by apps, probes and tests; `third_party/stb/`: vendored decoding headers with their original licenses and guards.
+- `tools/` grouped by purpose: `convert/`, `quantize/`, `validation/`, `benchmark/`, `visualization/`, `maintenance/` (`SAM_BUILD_TOOLS`, plus CUDA probes under `SAM_BUILD_CUDA_PROBES`). Historical flat entry points remain as forwarding modules.
+- `tests/` grouped by owner: `api/`, `models/`, `runtime/ggml/`, `integration/` (`consumer/`, `install_consumer/`), `tools/` Python suites and `tests/data/` fixtures.
+- `cmake/install.cmake`: standard install/export rules; `SAM_ENABLE_INSTALL` (standalone default) installs public headers, the library and a relocatable `find_package(sam CONFIG)` package.
 - Ignore `models/` checkpoints and `build/` output.
 
 ## Compiled Library Architecture
 
 The `sam::sam` target is a real library, static by default and shared when the parent project sets `BUILD_SHARED_LIBS`. Public headers expose declarations only; wrapper definitions compile in `src/api/`, the model factory compiles in `src/model_factory.cpp`, and GGML include paths plus implementation macros stay private. Internal tests, private header checks and experimental probes use the non-installed `sam_private` target; do not expose private paths through `sam::sam` or re-inline public wrapper definitions. GGML remains a compiled dependency; weights stay external. Hosts/examples handle decoding.
+
+Standalone builds default `SAM_BUILD_TESTS`, `SAM_BUILD_EXAMPLES` and `SAM_BUILD_TOOLS` on and `SAM_BUILD_CUDA_PROBES` off; embedded builds default them off. `SAM_BUILD_EXAMPLES` owns only the two CLI applications, `SAM_BUILD_TOOLS` owns the standalone tools and `SAM_BUILD_CUDA_PROBES` owns the CUDA-only probes. Tests request the support target they need explicitly. `SAM_ENABLE_INSTALL` adds the standard export of public headers, the library and a relocatable `find_package(sam CONFIG)` package; private implementation, tests and tools are never installed.
 
 Allow justified abstractions for future backends/models, even with one implementation; document extension scenarios and maintenance costs.
 

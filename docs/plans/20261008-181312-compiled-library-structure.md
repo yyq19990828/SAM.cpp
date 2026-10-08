@@ -528,3 +528,62 @@ TU（`src/model_factory.cpp`、`src/api/*.cpp`）编译进 `sam`，公共 target
 
 交接 C：从 `f14ab3a` 继续。`src/` 已全部纳入来源身份与归档；旧→新路径映射见 changelog 与
 `tools/check_docs.py`；apps/support/tools 目录尚未迁移。
+
+### 2026-10-08 节点 C 实施结果（工具目录与可安装 SDK）
+
+实施基线：继承节点 B 最终提交 `f14ab3a`；本节点以单个可独立保留的本地提交结束
+（`refactor: group tools and deliver an installable SDK package`，哈希见 Orca 完成报告）。
+公共 API、所有权与会话语义、GGUF schema、权重、tokenizer、精度边界、缓存与计算顺序未变；
+未实现新模型、语言绑定或量化优化，未改动 runtime/backend 数值路径。
+
+**目录与构建边界**：
+
+- `examples/` 拆分为 `apps/image/`、`apps/video/`（两个 CLI）、`support/image_io/`（apps、探针、
+  tests 共用的解码实现，不安装）与 `third_party/stb/`（vendor 头原样移动，保留 STB guards 与
+  许可说明）；`sam_image`、`sam_video` 及全部探针的 `${build}/examples/` 产物路径保持不变。
+- `tools/` 按 convert、quantize、validation、benchmark、visualization、maintenance 分组；
+  原 `tools/*.py` 扁平入口保留为薄转发（脚本执行与导入语义等价，导入返回分组实现模块）。
+  `sam3_tensor_schema.json` 随 convert 分组，`requirements*.lock` 留在 tools 根。
+- `tests/` 按 api、models、runtime/ggml、integration、tools、data 分组；Python 测试移入
+  `tests/tools/`，`tools/test_tools.py` 继续作为兼容执行入口，`-m tests.tools.test_*` 为规范入口。
+- `SAM_BUILD_EXAMPLES` 只控制两个 CLI；新增 `SAM_BUILD_TOOLS`（standalone ON、embedded OFF）
+  控制独立工具；`SAM_BUILD_CUDA_PROBES` 只控制 CUDA 探针；tests 显式链接 `sam_image_io`。
+- 新增 `SAM_ENABLE_INSTALL`（standalone ON）：`install(TARGETS)`/`install(EXPORT)` 生成可重定位的
+  `find_package(sam CONFIG)` 包（config + version）；static/shared 均验证。SAM 准备的固定 GGML
+  随包安装并导出为 plain imported targets；caller-owned GGML 需由可解析的包提供，构建树 target
+  在安装配置时明确报错。安装共享库设置 `$ORIGIN`/`@loader_path` 定位同目录 GGML；`sam::sam`
+  的静态最终链接依赖完整传递；私有头、tests、tools、support 不进入安装集；库设置 PIC。
+
+**来源身份与归档**：`source_snapshot()`/`archive_sources()` 递归覆盖 `tools/**`（分组实现、
+转发入口、schema、lock）、`apps/`、`support/`、`third_party/stb/*.h`、`tests/**`
+（py/hpp/json/txt/inc/cmake/CMakeLists）与 `cmake/**`（含新增 `.in`）；归档目录与后缀白名单同步。
+真实树 223 项全部纳入并归档；嵌套工具变更可检出；归档在活动源码缺失时仍可校验，篡改可被拒绝；
+冻结 `build/precision-final-v2/exports/f16` 的 137 个归档源只读校验通过且时间戳未变。
+
+**实测结果**（证据 `build/structure-c-evidence-v1/`，索引 `index.json`）：
+
+| 检查 | 配置/命令 | 结果 |
+| --- | --- | --- |
+| CPU Release | `build/structure-cpu-c`；`GGML_METAL=OFF GGML_CUDA=OFF GGML_BLAS=OFF` | 构建 0；CTest 17/17 |
+| CUDA probes OFF | `build/structure-cuda-c`；`GGML_CUDA=ON SAM_REQUIRE_CUDA_TESTS=ON`、arch 89 | 构建 0；CTest 30/30 |
+| CUDA probes ON | `build/structure-cuda-probes-c`；`SAM_BUILD_CUDA_PROBES=ON` | 5 个探针全部构建；CTest 30/30；线性探针回归 45/45 |
+| 共享构建 | `build/structure-shared-c`；`BUILD_SHARED_LIBS=ON` | 构建 0；CTest 17/17；`nm -D` 公共符号 28、`sam::internal` 0 |
+| SDK-only | `build/sdk-c`；TESTS/EXAMPLES/TOOLS=OFF、CPU-only | 构建 0；未编译 STB、image_io、Python 或 tests |
+| examples OFF / tools ON | `build/tools-c` | CLI 不存在；4 个工具构建于 `${build}/examples/` |
+| 源码 consumer | `build/consumer-{static,shared}-c`，caller-owned GGML | 各 2/2 |
+| 安装 consumer | `tests/install_consumer` 复制到隔离目录后构建 | static、shared、CUDA 各通过 |
+| 移动安装前缀 | `prefix` → `prefix-moved` 后重配 consumer | static/shared 均通过 |
+| 安装拒绝 | 构建树 GGML + `SAM_ENABLE_INSTALL=ON` | 配置失败并给出明确原因 |
+| caller-owned 包复用 | 已安装 ggml 包 + `SAM_ENABLE_INSTALL=ON`，安装为独立前缀后消费 | 通过；config 含 `find_dependency(ggml CONFIG)` |
+| 安装集审计 | prefix 清单与 package 文件 | 仅公共头、库、CMake package、许可；无私有头或源码路径 |
+| Python | `.venv-reference/bin/python -B tools/test_tools.py` | 145 通过 |
+| 旧工具入口 | `tools/<name>.py` 转发脚本、导入身份与 `-m tools.<group>.<name>` | 通过；check_docs 与 25/25 模块测试等价 |
+| 身份与归档 | 真实树 `source_snapshot()`/`archive_sources()` | 223/223；篡改检出；离线校验通过 |
+| 冻结归档 | `build/precision-final-v2/exports/f16` | 137 归档源只读校验通过、未写入 |
+| 文档/空白 | `tools/maintenance/check_docs.py`、`git diff --check` | 70 份文档通过、无空白问题 |
+
+未验证：Metal（无匹配硬件）；CPU 完整 216 帧视频套件（沿用 A/B 的 16 帧 `negative` 固定回归
+结论）；节点 C 未重跑官方参考图像/视频数值套件与性能对比（属节点 D）。
+
+交接 D：从本节点提交继续。安装/消费命令、证据目录、固定输入清单及未运行项见上；数值门槛沿用
+A/B 清单，不重新挑选样本。

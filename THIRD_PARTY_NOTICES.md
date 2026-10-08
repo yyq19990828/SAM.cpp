@@ -42,7 +42,7 @@ The package's MIT license is retained in
 
 ## stb Image Codecs
 
-`examples/stb/stb_image.h` and `examples/stb/stb_image_write.h` are copied unchanged
+`third_party/stb/stb_image.h` and `third_party/stb/stb_image_write.h` are copied unchanged
 from the pinned `PABannier/sam3.cpp` revision above. Sean Barrett and the stb
 contributors offer these files under either the MIT license or the public-domain
 Unlicense; their complete license and attribution notices remain in each header.

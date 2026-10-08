@@ -6,8 +6,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(SAM_STANDALONE ON)
 endif()
 option(SAM_BUILD_TESTS "Build SAM contract and integration checks" ${SAM_STANDALONE})
-option(SAM_BUILD_EXAMPLES "Build the SAM image command-line example" ${SAM_STANDALONE})
+option(SAM_BUILD_EXAMPLES "Build the sam_image and sam_video command-line applications" ${SAM_STANDALONE})
+option(SAM_BUILD_TOOLS "Build the standalone conversion, validation and profiling tools" ${SAM_STANDALONE})
 option(SAM_BUILD_CUDA_PROBES "Build experimental CUDA quantization probes" OFF)
+option(SAM_ENABLE_INSTALL "Generate install rules for the sam package" ${SAM_STANDALONE})
 set(SAM_REFERENCE_DIR "" CACHE PATH "Optional official reference bundle directory")
 
 # SAM is static by default and follows an explicit parent BUILD_SHARED_LIBS.
@@ -34,10 +36,22 @@ endif()
 
 add_subdirectory(src)
 
-if(SAM_BUILD_EXAMPLES OR SAM_BUILD_TESTS OR SAM_BUILD_CUDA_PROBES)
-    add_subdirectory(examples)
+# Decoding support is only needed by the CLI applications, the probes and the
+# internal tests. The SDK build does not compile STB or any host image code.
+if(SAM_BUILD_EXAMPLES OR SAM_BUILD_TESTS OR SAM_BUILD_TOOLS OR SAM_BUILD_CUDA_PROBES)
+    add_subdirectory(support/image_io)
+endif()
+if(SAM_BUILD_EXAMPLES)
+    add_subdirectory(apps)
+endif()
+if(SAM_BUILD_TOOLS OR SAM_BUILD_CUDA_PROBES)
+    add_subdirectory(tools)
 endif()
 if(SAM_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(SAM_ENABLE_INSTALL)
+    include(cmake/install.cmake)
 endif()

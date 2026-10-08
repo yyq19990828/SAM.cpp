@@ -38,6 +38,47 @@ file's architecture and task metadata; unsupported combinations fail clearly.
 Each session delegates to that adapter and owns task state without putting
 model-specific constants into the public facade.
 
+## Repository layout
+
+```text
+include/sam/          installed public API (declarations and value types)
+src/api/              compiled public wrappers
+src/model_factory.cpp explicit adapter selection
+src/contracts/        private task contracts
+src/common/           backend-independent input validation
+src/io/               bounded GGUF container reading
+src/models/sam3/      SAM 3 schema, graphs, image and video sessions
+src/runtime/ggml/     execution resources, graphs, workspace, backends
+apps/{image,video}/   sam_image and sam_video (SAM_BUILD_EXAMPLES)
+support/image_io/     decoding support for apps, probes and tests (not installed)
+third_party/stb/      vendored decoding headers with their original licenses
+tools/convert/        checkpoint conversion and model schema
+tools/quantize/       calibration, runtime quantization and cache tools
+tools/validation/     reference export, validation and acceptance tools
+tools/benchmark/      timing, linear probes and graph profiling
+tools/visualization/  comparison image rendering
+tools/maintenance/    documentation, archive and campaign upkeep
+tests/{api,models,runtime/ggml,integration,tools,data}/
+cmake/                pinned GGML preparation, patches and install/export
+```
+
+Standalone builds default `SAM_BUILD_TESTS`, `SAM_BUILD_EXAMPLES` and
+`SAM_BUILD_TOOLS` on and `SAM_BUILD_CUDA_PROBES` off; embedded builds default
+them off. The CLI applications keep their historical `${build}/examples/`
+executable paths, and the tools do too, so existing scripts keep working. The
+flat `tools/<name>.py` modules from earlier revisions remain as forwarding
+entry points: scripts and imports keep resolving, while the implementation
+lives in exactly one grouped module. Python test suites live in `tests/tools/`
+and are launched through `tools/test_tools.py`.
+
+`SAM_ENABLE_INSTALL` (standalone default) adds standard CMake install/export
+rules for the public headers, the compiled library and a relocatable
+`find_package(sam CONFIG)` package. SAM-prepared GGML is installed with the
+package and exported as plain imported targets; a caller-owned GGML must be
+resolvable through its own CMake package or install configuration fails with an
+explicit error. Private implementation, tests, tools and decoding support are
+never installed.
+
 The `internal` namespace marks implementation code that is not a compatibility
 promise or public extension API. Project-owned headers use unique path-derived
 include guards, remain self-contained, and define non-template free functions

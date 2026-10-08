@@ -45,16 +45,16 @@ required. Default F32 still requires the reference candidate numbers.
 Run from the repository root:
 
 ```sh
-.venv-reference/bin/python tools/prepare_reference_source.py \
+.venv-reference/bin/python tools/validation/prepare_reference_source.py \
   --source "$SAM3_SOURCE_DIR" --output build/reference-runtime/sam3-cpu
-.venv-reference/bin/python tools/export_reference.py \
+.venv-reference/bin/python tools/validation/export_reference.py \
   --sam3-source "$SAM3_SOURCE_DIR" \
   --sam3-runtime-source build/reference-runtime/sam3-cpu \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
   --cases tests/data/sam3-image-cases.json --device cpu \
   --output models/reference/sam3-f32
-.venv-reference/bin/python tools/validate_image.py \
+.venv-reference/bin/python tools/validation/validate_image.py \
   --build-dir build/cpu --model models/sam3-f32.gguf \
   --reference models/reference/sam3-f32 --backend cpu \
   --output build/image-validation
@@ -83,17 +83,17 @@ Use a full video GGUF. The supplied sequence generator and validator exercise
 motion, entering objects, occlusion, hotstart, and negative prompts.
 
 ```sh
-.venv-reference/bin/python tools/generate_video_cases.py \
+.venv-reference/bin/python tools/benchmark/generate_video_cases.py \
   --input-root models/fixtures --output models/video-cases
-.venv-reference/bin/python tools/prepare_reference_source.py --task video \
+.venv-reference/bin/python tools/validation/prepare_reference_source.py --task video \
   --source "$SAM3_SOURCE_DIR" --output build/reference-runtime/sam3-video-cpu
-.venv-reference/bin/python tools/export_video_reference.py \
+.venv-reference/bin/python tools/validation/export_video_reference.py \
   --sam3-source "$SAM3_SOURCE_DIR" \
   --sam3-runtime-source build/reference-runtime/sam3-video-cpu \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
   --frames models/video-cases --output models/reference/sam3-video
-.venv-reference/bin/python tools/validate_video.py \
+.venv-reference/bin/python tools/validation/validate_video.py \
   --build-dir build/metal --model models/sam3-video-hybrid-v1.gguf \
   --reference models/reference/sam3-video --backend metal --threads 4 \
   --output build/video-validation
@@ -110,7 +110,7 @@ cmake -S . -B build/cpu -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF
 cmake --build build/cpu --parallel
 ctest --test-dir build/cpu --output-on-failure
 .venv-reference/bin/python tools/test_tools.py
-python3 tools/check_docs.py
+python3 tools/maintenance/check_docs.py
 git diff --check
 ```
 
@@ -119,8 +119,8 @@ Ordinary CTest is weight-free. Reference tests can be enabled with
 reference environment's `Python3_EXECUTABLE`, after exporting the full corpus.
 
 For image timing, use `sam_image --repeat 5`; it measures full-image calls and
-cache hits separately. `tools/generate_video_benchmark.py`,
-`tools/qualify_video_benchmark.py`, and `tools/benchmark_video.py` provide video
+cache hits separately. `tools/benchmark/generate_video_benchmark.py`,
+`tools/benchmark/qualify_video_benchmark.py`, and `tools/benchmark/benchmark_video.py` provide video
 workload generation, original-model qualification, and timing. Inspect each
 script's `--help` before running it. Keep timing separate from tensor exports
 and other model work. [Performance](../BENCHMARK.md) explains the reported metrics.

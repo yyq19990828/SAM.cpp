@@ -37,16 +37,16 @@ F16 计算允许内部 mask/pointer 候选编号与参考不同，并记录这�
 在仓库根目录运行：
 
 ```sh
-.venv-reference/bin/python tools/prepare_reference_source.py \
+.venv-reference/bin/python tools/validation/prepare_reference_source.py \
   --source "$SAM3_SOURCE_DIR" --output build/reference-runtime/sam3-cpu
-.venv-reference/bin/python tools/export_reference.py \
+.venv-reference/bin/python tools/validation/export_reference.py \
   --sam3-source "$SAM3_SOURCE_DIR" \
   --sam3-runtime-source build/reference-runtime/sam3-cpu \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
   --cases tests/data/sam3-image-cases.json --device cpu \
   --output models/reference/sam3-f32
-.venv-reference/bin/python tools/validate_image.py \
+.venv-reference/bin/python tools/validation/validate_image.py \
   --build-dir build/cpu --model models/sam3-f32.gguf \
   --reference models/reference/sam3-f32 --backend cpu \
   --output build/image-validation
@@ -69,17 +69,17 @@ F16 计算允许内部 mask/pointer 候选编号与参考不同，并记录这�
 热启动和负提示。
 
 ```sh
-.venv-reference/bin/python tools/generate_video_cases.py \
+.venv-reference/bin/python tools/benchmark/generate_video_cases.py \
   --input-root models/fixtures --output models/video-cases
-.venv-reference/bin/python tools/prepare_reference_source.py --task video \
+.venv-reference/bin/python tools/validation/prepare_reference_source.py --task video \
   --source "$SAM3_SOURCE_DIR" --output build/reference-runtime/sam3-video-cpu
-.venv-reference/bin/python tools/export_video_reference.py \
+.venv-reference/bin/python tools/validation/export_video_reference.py \
   --sam3-source "$SAM3_SOURCE_DIR" \
   --sam3-runtime-source build/reference-runtime/sam3-video-cpu \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
   --frames models/video-cases --output models/reference/sam3-video
-.venv-reference/bin/python tools/validate_video.py \
+.venv-reference/bin/python tools/validation/validate_video.py \
   --build-dir build/metal --model models/sam3-video-hybrid-v1.gguf \
   --reference models/reference/sam3-video --backend metal --threads 4 \
   --output build/video-validation
@@ -95,7 +95,7 @@ cmake -S . -B build/cpu -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF
 cmake --build build/cpu --parallel
 ctest --test-dir build/cpu --output-on-failure
 .venv-reference/bin/python tools/test_tools.py
-python3 tools/check_docs.py
+python3 tools/maintenance/check_docs.py
 git diff --check
 ```
 
@@ -104,8 +104,8 @@ git diff --check
 来启用参考测试。
 
 图像计时使用 `sam_image --repeat 5`，完整图像调用与缓存命中分开统计。
-`tools/generate_video_benchmark.py`、`tools/qualify_video_benchmark.py` 和
-`tools/benchmark_video.py` 分别负责视频样例生成、原模型资格检查和计时，执行前阅读
+`tools/benchmark/generate_video_benchmark.py`、`tools/benchmark/qualify_video_benchmark.py` 和
+`tools/benchmark/benchmark_video.py` 分别负责视频样例生成、原模型资格检查和计时，执行前阅读
 各脚本的 `--help`。计时与张量导出、其他模型计算分开，指标含义见[性能说明](../BENCHMARK_zh.md)。
 
 权重、私有媒体和生成结果不进入 Git。具体实验过程、验收门槛、失败排查和批次证据

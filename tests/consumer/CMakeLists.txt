@@ -40,7 +40,7 @@ add_executable(sam_consumer main.cpp)
 target_link_libraries(sam_consumer PRIVATE sam::sam)
 
 # One public API from two translation units against the real library.
-add_executable(sam_consumer_two_tu ../test_two_tu_main.cpp ../two_tu_other.cpp)
+add_executable(sam_consumer_two_tu ../api/test_two_tu_main.cpp ../api/two_tu_other.cpp)
 target_link_libraries(sam_consumer_two_tu PRIVATE sam::sam)
 
 enable_testing()

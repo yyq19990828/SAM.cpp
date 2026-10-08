@@ -68,11 +68,11 @@ RTX 4090 CUDA 上也已通过七 case 原始模型输出质量验收。这一结
 F32/F16/Q8/Q6/Q5/Q4 分别设置质量预算，使用 ranked COCO mask AP、图像级置信界和
 对象一对一匹配。缓存压缩同时执行完整配置总预算和缓存增量预算。v2 单独记录结果，
 不改写上述固定语料的原有验收结论。
-`tools/export_precision_outputs.py` 和 `tools/evaluate_precision.py` 提供 ranked
-评估入口；`tools/freeze_precision_campaign.py` 在独立评估前冻结候选。
-`tools/benchmark_precision.py` 分开测量延迟和内存收益。
-`tools/verify_precision_f16.py` 检查原生 F16 编解码的位模式；
-`tools/validate_precision_regression.py` 在原有验证器之外，对七个固定用例执行
+`tools/validation/export_precision_outputs.py` 和 `tools/validation/evaluate_precision.py` 提供 ranked
+评估入口；`tools/maintenance/freeze_precision_campaign.py` 在独立评估前冻结候选。
+`tools/benchmark/benchmark_precision.py` 分开测量延迟和内存收益。
+`tools/validation/verify_precision_f16.py` 检查原生 F16 编解码的位模式；
+`tools/validation/validate_precision_regression.py` 在原有验证器之外，对七个固定用例执行
 零尾部额度的对象匹配检查。这些 v2 Python 原生运行工具当前依赖 Linux 的动态库
 与进程内存检查接口，尚未实现 Metal 主机接入。策略中 BF16/W8A8/FP8
 的门槛属于研究目标，不代表新增了这些运行时精度支持。
@@ -91,7 +91,7 @@ python3.12 -m venv .venv-reference
 .venv-reference/bin/python -m pip install -r tools/requirements.lock
 sam3_weights_dir=/absolute/path/to/sam3
 
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision q8_0 \
   --storage-profile image-vision-linear-q8_0-v1 \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
@@ -106,7 +106,7 @@ cmake -S . -B build/quant-cpu \
   -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF -DSAM_BUILD_EXAMPLES=ON
 cmake --build build/quant-cpu --target sam_quantize_rows --parallel
 
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision q6_k \
   --storage-profile image-vision-linear-q6_k-v1 \
   --quantizer "$PWD/build/quant-cpu/examples/sam_quantize_rows" \
@@ -121,7 +121,7 @@ cmake --build build/quant-cpu --target sam_quantize_rows --parallel
 转换全模块预设时，改用 `--storage-profile image-full-linear-q6_k-v1`。只量化文本与解码部分的自定义示例如下：
 
 ```sh
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision q6_k --quantize-modules text,decoder \
   --quantizer "$PWD/build/quant-cpu/examples/sam_quantize_rows" \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
@@ -131,7 +131,7 @@ cmake --build build/quant-cpu --target sam_quantize_rows --parallel
 
 模块名区分大小写，重复或未知模块会报错；命令行可以调整模块顺序，文件中会保存为规范顺序。旁置 manifest 列出每个张量所属模块、实际存储类型和量化或保留浮点的原因。加载后的 schema 4 模型通过 `ModelInfo::quantization_modules` 报告选择。
 
-自定义组合可用 `tools/validate_image.py --allow-custom-quantization` 做单独的参考对照，报告会保持诊断标识。对照方法见[模型验证](validation_zh.md)。
+自定义组合可用 `tools/validation/validate_image.py --allow-custom-quantization` 做单独的参考对照，报告会保持诊断标识。对照方法见[模型验证](validation_zh.md)。
 
 ## 运行推理
 

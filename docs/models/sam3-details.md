@@ -78,13 +78,13 @@ Image conversion requires an explicit precision. F32 stores all image weights
 in FP32; F16 is a mixed-F16 format with selected weights retained in FP32.
 
 ```sh
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision f32 \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
   --output models/sam3-f32.gguf
 
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision f16 \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
@@ -97,19 +97,19 @@ storage contract explicit. Use F32 or hybrid for application integration;
 F16 video is available for diagnostics only.
 
 ```sh
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task video --precision f32 \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
   --output models/sam3-video-f32.gguf
 
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task video --precision f16 \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
   --output models/sam3-video-f16.gguf
 
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task video --precision hybrid \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
   --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
@@ -147,7 +147,7 @@ sam3_quantizer="$PWD/build/quant-cpu/examples/sam_quantize_rows"
 Convert Q8_0 without the helper:
 
 ```sh
-.venv-reference/bin/python tools/convert_sam3.py \
+.venv-reference/bin/python tools/convert/convert_sam3.py \
   --task image --precision q8_0 \
   --storage-profile image-vision-linear-q8_0-v1 \
   --checkpoint "$sam3_weights_dir/sam3.pt" \
@@ -159,7 +159,7 @@ Convert the K profiles with the absolute helper path:
 
 ```sh
 for precision in q6_k q5_k q4_k; do
-  .venv-reference/bin/python tools/convert_sam3.py \
+  .venv-reference/bin/python tools/convert/convert_sam3.py \
     --task image --precision "$precision" \
     --storage-profile "image-vision-linear-${precision}-v1" \
     --quantizer "$sam3_quantizer" \

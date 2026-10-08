@@ -239,10 +239,10 @@ build/cpu/examples/sam_image \
   --backend cpu --output outputs/truck-q8-threshold-02
 ```
 
-For existing reference-validation outputs, `tools/render_image_comparison.py` renders comparison panels from actual masks. It requires reference and comparison bundles with validation receipts, verifies input, result and mask identity, and refuses to overwrite an output. Bundles must use the same threshold and reference; compare one backend per invocation.
+For existing reference-validation outputs, `tools/visualization/render_image_comparison.py` renders comparison panels from actual masks. It requires reference and comparison bundles with validation receipts, verifies input, result and mask identity, and refuses to overwrite an output. Bundles must use the same threshold and reference; compare one backend per invocation.
 
 ```sh
-.venv-reference/bin/python tools/render_image_comparison.py \
+.venv-reference/bin/python tools/visualization/render_image_comparison.py \
   --reference models/reference/sam3-f32 \
   --comparison F32=build/image-validation-f32 \
   --comparison Q8_0=build/image-validation-q8 \

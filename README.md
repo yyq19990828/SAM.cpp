@@ -104,16 +104,28 @@ registered GGML BLAS backend; add `-DGGML_BLAS=OFF` for native CPU execution.
 Apple Accelerate manages its own SGEMM threads. For comparable CPU timing,
 set `VECLIB_MAXIMUM_THREADS` before starting the process.
 
-`SAM_BUILD_TESTS` and `SAM_BUILD_EXAMPLES` default to `ON` for standalone builds
-and `OFF` when embedded. Ordinary tests do not require checkpoints.
-`SAM_BUILD_CUDA_PROBES` defaults to `OFF`; enabling it with `GGML_CUDA=ON` builds
-standalone experimental linear and feature-cache quantization tools. Their checks
-and scope are documented in the [kernel plan](docs/plans/20261007-155334-cuda-w8a8-fp8-kernel-prototypes.md)
+`SAM_BUILD_TESTS`, `SAM_BUILD_EXAMPLES` and `SAM_BUILD_TOOLS` default to `ON`
+for standalone builds and `OFF` when embedded. The two CLI applications are
+built by `SAM_BUILD_EXAMPLES`; standalone conversion, validation and profiling
+tools are built by `SAM_BUILD_TOOLS`; internal tests request the support target
+they need explicitly. `SAM_BUILD_CUDA_PROBES` defaults to `OFF`; enabling it
+with `GGML_CUDA=ON` builds standalone experimental linear and feature-cache
+quantization tools. Their checks and scope are documented in the
+[kernel plan](docs/plans/20261007-155334-cuda-w8a8-fp8-kernel-prototypes.md)
 and [cache plan](docs/plans/20261007-181154-typed-image-cache-runtime.md).
 To reuse a local GGML checkout, set
 `-DFETCHCONTENT_SOURCE_DIR_GGML=/absolute/path/to/pinned/ggml`.
 Use the pinned GGML 0.25.3 revision and [required patches](cmake/patches/README.md).
 Other GGML revisions are not a compatibility guarantee.
+
+`SAM_ENABLE_INSTALL` defaults to `ON` for standalone builds and adds standard
+install rules; embedded builds can opt in when the GGML dependency is
+package-resolvable. `cmake --install build/cpu --prefix /opt/sam` installs the
+public headers, the compiled library, a relocatable CMake package and the
+licenses. SAM-prepared GGML is installed next to it; a caller-owned GGML must be
+importable through its own package config, otherwise install configuration
+fails with an explicit message instead of producing a package that cannot be
+consumed.
 
 ## Integrate into an application
 
@@ -132,6 +144,27 @@ consumers. Internal tests and experimental probes use the non-installed
 `sam_private` support target, which is not part of the application interface. A
 parent-provided `ggml` target must expose the compatible API and required
 precision behavior. Applications handle decoding and provide RGB pixels.
+
+Installed packages use the same target without the source checkout:
+
+```sh
+cmake -S . -B build/cpu -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF
+cmake --build build/cpu --parallel
+cmake --install build/cpu --prefix /opt/sam
+```
+
+```cmake
+find_package(sam CONFIG REQUIRED)
+target_link_libraries(my_application PRIVATE sam::sam)
+```
+
+The install tree contains only the public headers, the library, the CMake
+package, the bundled GGML libraries and the license notices. Static and shared
+SAM libraries are both supported; installed shared libraries locate their GGML
+siblings through an `$ORIGIN` run path, so no environment variable is needed.
+The package is relocatable: move the prefix and point `CMAKE_PREFIX_PATH` at the
+new location. Private implementation headers, tests, tools and image decoding
+support are never installed.
 
 ```cpp
 #include <sam/sam.hpp>
@@ -262,7 +295,7 @@ model file contracts. Experimental results and implementation history live in
 
 ```sh
 .venv-reference/bin/python tools/test_tools.py
-python3 tools/check_docs.py
+python3 tools/maintenance/check_docs.py
 git diff --check
 ```
 

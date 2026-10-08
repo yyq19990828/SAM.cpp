@@ -87,7 +87,7 @@ existing 32-token behavior; the token-ID API remains available.
 ## Tensor data and loading
 
 The 1,133 names and normalized GGML-order dimensions are defined by
-[`sam3_tensor_schema.json`](../tools/sam3_tensor_schema.json) and validated against
+[`sam3_tensor_schema.json`](../tools/convert/sam3_tensor_schema.json) and validated against
 the registered image graph. Missing, unknown or incompatible tensors fail before
 backend weight allocation. GGUF directory offsets address one contiguous,
 32-byte-padded tensor blob in directory order. Dimension counts are canonical:
@@ -216,7 +216,7 @@ The converter selects this profile with `--task video`; the default remains
 `--task image`. Schema 2 requires `sam.schema_version=2` and
 `sam.task=text_video`. It retains every identity, tokenizer and image parameter
 above, and includes the 1,133 image tensors plus 331 tracker/neck tensors:
-exactly 1,464 canonical entries from `tools/sam3_tensor_schema.json`. The
+exactly 1,464 canonical entries from `tools/convert/sam3_tensor_schema.json`. The
 pooled-text/training tensor is excluded. A schema-1-only reader does not
 implement the schema-2 task contract.
 

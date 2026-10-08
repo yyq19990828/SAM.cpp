@@ -18,23 +18,30 @@ endif()
 add_library(sam::sam ALIAS sam)
 target_compile_features(sam PUBLIC cxx_std_17)
 
+# Static SAM objects stay usable inside a caller-owned shared library.
+set_target_properties(sam PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 generate_export_header(sam
     BASE_NAME sam
     EXPORT_MACRO_NAME SAM_API
     EXPORT_FILE_NAME "${CMAKE_CURRENT_BINARY_DIR}/generated/sam/export.hpp")
+set(SAM_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(SAM_GENERATED_INCLUDE_DIR "${SAM_GENERATED_INCLUDE_DIR}" PARENT_SCOPE)
 
 # Public includes only: standard library, public value types and the generated
 # export header. GGML include directories and implementation macros stay
-# PRIVATE so consumers do not compile against the private stack.
+# PRIVATE so consumers do not compile against the private stack. The namespaced
+# ggml::ggml link is recorded as a static final-link dependency and resolves in
+# the installed package through find_dependency(ggml).
 target_include_directories(sam
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
+        $<BUILD_INTERFACE:${SAM_GENERATED_INCLUDE_DIR}>
         $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(sam PRIVATE ggml)
+target_link_libraries(sam PRIVATE ${SAM_GGML_LINK_TARGET})
 add_dependencies(sam sam_ggml_api_check)
 
 if(SAM_BUILD_SHARED_LIBS)
@@ -53,4 +60,4 @@ target_include_directories(sam_private INTERFACE
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>)
 target_compile_features(sam_private INTERFACE cxx_std_17)
-target_link_libraries(sam_private INTERFACE sam::sam ggml)
+target_link_libraries(sam_private INTERFACE sam::sam ${SAM_GGML_LINK_TARGET})

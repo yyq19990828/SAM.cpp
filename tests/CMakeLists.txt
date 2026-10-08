@@ -1,30 +1,32 @@
-add_executable(test_contracts test_contracts.cpp)
-target_link_libraries(test_contracts PRIVATE sam_private)
+add_executable(test_contracts api/test_contracts.cpp)
+target_link_libraries(test_contracts PRIVATE sam_private sam_image_io)
 add_test(NAME sam_contracts COMMAND test_contracts)
 
-add_executable(test_quantization test_quantization.cpp)
+add_executable(test_quantization runtime/ggml/test_quantization.cpp)
 target_link_libraries(test_quantization PRIVATE sam_private)
 add_test(NAME sam_quantization COMMAND test_quantization)
 
 # One public API used from two translation units must link against the real
 # library and fail identically in both.
-add_executable(test_two_tu test_two_tu_main.cpp two_tu_other.cpp)
+add_executable(test_two_tu api/test_two_tu_main.cpp api/two_tu_other.cpp)
 target_link_libraries(test_two_tu PRIVATE sam::sam)
 add_test(NAME sam_two_tu COMMAND test_two_tu)
 
 # Public headers are checked with only the public sam::sam include set: they
-# must not need GGML or private implementation headers. Private headers are
-# checked separately through the non-installed sam_private support target.
-# Every header starts its own translation unit and is included twice.
+# must not need GGML or private implementation headers. Private headers from
+# src/, tools/ and tests/ are checked separately through the non-installed
+# sam_private support target. The support decoding headers are checked through
+# their own target; vendored third_party headers keep their upstream guards.
 file(GLOB sam_public_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/sam/*.hpp")
-# Private implementation and runtime headers live under src/; they are checked
-# through the non-installed sam_private support target.
-file(GLOB_RECURSE sam_internal_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/*.hpp")
-file(GLOB example_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*.hpp")
-set(sam_checked_headers ${sam_public_headers} ${sam_internal_headers} ${example_headers})
+file(GLOB_RECURSE sam_internal_headers CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/src/*.hpp"
+    "${PROJECT_SOURCE_DIR}/tools/*.hpp"
+    "${PROJECT_SOURCE_DIR}/tests/*.hpp")
+file(GLOB sam_support_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/support/*/*.hpp")
+set(sam_checked_headers ${sam_public_headers} ${sam_internal_headers} ${sam_support_headers})
 set(public_header_sources)
 set(internal_header_sources)
-set(example_header_sources)
+set(support_header_sources)
 set(header_guards)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/header_checks")
 foreach(header IN LISTS sam_checked_headers)
@@ -45,72 +47,72 @@ foreach(header IN LISTS sam_checked_headers)
     string(REPLACE "/" "_" source_name "${relative_header}")
     if(header IN_LIST sam_public_headers)
         set(category public)
-    elseif(header IN_LIST sam_internal_headers)
-        set(category internal)
+    elseif(header IN_LIST sam_support_headers)
+        set(category support)
     else()
-        set(category examples)
+        set(category internal)
     endif()
     set(source "${CMAKE_CURRENT_BINARY_DIR}/header_checks/${category}/${source_name}.cpp")
     file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/header_checks/${category}")
     file(CONFIGURE OUTPUT "${source}" CONTENT "#include \"${header}\"\n#include \"${header}\"\n")
     if(category STREQUAL "public")
         list(APPEND public_header_sources "${source}")
-    elseif(category STREQUAL "internal")
-        list(APPEND internal_header_sources "${source}")
+    elseif(category STREQUAL "support")
+        list(APPEND support_header_sources "${source}")
     else()
-        list(APPEND example_header_sources "${source}")
+        list(APPEND internal_header_sources "${source}")
     endif()
 endforeach()
 add_library(sam_public_header_checks OBJECT ${public_header_sources})
 target_link_libraries(sam_public_header_checks PRIVATE sam::sam)
 add_library(sam_internal_header_checks OBJECT ${internal_header_sources})
 target_link_libraries(sam_internal_header_checks PRIVATE sam_private)
-add_library(sam_example_header_checks OBJECT ${example_header_sources})
-target_link_libraries(sam_example_header_checks PRIVATE sam::sam sam_image_io)
+add_library(sam_support_header_checks OBJECT ${support_header_sources})
+target_link_libraries(sam_support_header_checks PRIVATE sam_image_io sam::sam)
 
 # No GGML target or include directory: shared value types and the task
 # contract must stand alone without the compiled execution stack.
-add_executable(test_task_contract test_task_contract.cpp)
+add_executable(test_task_contract api/test_task_contract.cpp)
 target_compile_features(test_task_contract PRIVATE cxx_std_17)
 target_include_directories(test_task_contract PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME sam_task_contract COMMAND test_task_contract)
 
-add_executable(test_graph test_graph.cpp)
+add_executable(test_graph runtime/ggml/test_graph.cpp)
 target_link_libraries(test_graph PRIVATE sam_private)
 add_test(NAME sam_graph COMMAND test_graph)
 
-add_executable(test_rope test_rope.cpp)
+add_executable(test_rope runtime/ggml/test_rope.cpp)
 target_link_libraries(test_rope PRIVATE sam_private)
 add_test(NAME sam_rope COMMAND test_rope cpu)
 if(GGML_METAL)
     add_test(NAME sam_rope_metal COMMAND test_rope metal)
 endif()
 
-add_executable(test_graph_workspace test_graph_workspace.cpp)
+add_executable(test_graph_workspace runtime/ggml/test_graph_workspace.cpp)
 target_link_libraries(test_graph_workspace PRIVATE sam_private)
 add_test(NAME sam_graph_workspace COMMAND test_graph_workspace)
 
-add_executable(test_graph_profile test_graph_profile.cpp)
+add_executable(test_graph_profile runtime/ggml/test_graph_profile.cpp)
 target_link_libraries(test_graph_profile PRIVATE sam_private)
 add_test(NAME sam_graph_profile COMMAND test_graph_profile)
 
-add_executable(test_host_tensor test_host_tensor.cpp)
+add_executable(test_host_tensor runtime/ggml/test_host_tensor.cpp)
 target_link_libraries(test_host_tensor PRIVATE sam_private)
 add_test(NAME sam_host_tensor COMMAND test_host_tensor)
 
-add_executable(test_precision_output test_precision_output.cpp)
+add_executable(test_precision_output runtime/ggml/test_precision_output.cpp)
 target_link_libraries(test_precision_output PRIVATE sam_private)
 add_test(NAME sam_precision_output COMMAND test_precision_output)
 
-add_executable(test_backend test_backend.cpp)
+add_executable(test_backend runtime/ggml/test_backend.cpp)
 target_link_libraries(test_backend PRIVATE sam_private)
 add_test(NAME sam_backend COMMAND test_backend)
 
-add_executable(test_precision test_precision.cpp)
+add_executable(test_precision runtime/ggml/test_precision.cpp)
 target_link_libraries(test_precision PRIVATE sam_private)
 add_test(NAME sam_precision COMMAND test_precision)
 
-add_executable(test_window test_window.cpp)
+add_executable(test_window runtime/ggml/test_window.cpp)
 target_link_libraries(test_window PRIVATE sam_private)
 add_test(NAME sam_window COMMAND test_window)
 
@@ -119,13 +121,13 @@ if(SAM_REQUIRE_CUDA_TESTS AND NOT TARGET ggml-cuda)
     message(FATAL_ERROR "SAM_REQUIRE_CUDA_TESTS requires the ggml-cuda target")
 endif()
 if(TARGET ggml-cuda)
-    add_executable(test_cuda_copy test_cuda_copy.cpp)
+    add_executable(test_cuda_copy runtime/ggml/test_cuda_copy.cpp)
     target_link_libraries(test_cuda_copy PRIVATE sam_private)
     add_test(NAME sam_cuda_copy COMMAND test_cuda_copy)
-    add_executable(test_cuda_concat test_cuda_concat.cpp)
+    add_executable(test_cuda_concat runtime/ggml/test_cuda_concat.cpp)
     target_link_libraries(test_cuda_concat PRIVATE sam_private)
     add_test(NAME sam_cuda_concat COMMAND test_cuda_concat)
-    add_executable(test_cuda_numerics test_cuda_numerics.cpp)
+    add_executable(test_cuda_numerics runtime/ggml/test_cuda_numerics.cpp)
     target_link_libraries(test_cuda_numerics PRIVATE sam_private)
     add_test(NAME sam_cuda_numerics COMMAND test_cuda_numerics)
     if(NOT SAM_REQUIRE_CUDA_TESTS)
@@ -146,7 +148,7 @@ if(TARGET ggml-cuda)
     endif()
 endif()
 
-add_executable(test_tracking test_tracking.cpp)
+add_executable(test_tracking models/test_tracking.cpp)
 target_link_libraries(test_tracking PRIVATE sam_private)
 target_compile_definitions(test_tracking PRIVATE SAM_VIDEO_INVENTORY="${CMAKE_CURRENT_SOURCE_DIR}/data/sam3-video-tensor-inventory.txt")
 target_compile_definitions(test_tracking PRIVATE SAM_MEMORY_GOLDENS="${CMAKE_CURRENT_SOURCE_DIR}/data/video_memory_selection_goldens.txt")
@@ -158,7 +160,7 @@ if(TARGET ggml-cuda)
     endif()
 endif()
 
-add_executable(test_video test_video.cpp)
+add_executable(test_video models/test_video.cpp)
 target_link_libraries(test_video PRIVATE sam_private)
 add_test(NAME sam_video_behavior COMMAND test_video)
 
@@ -167,29 +169,29 @@ if(patched_ggml_source)
         COMMAND ${CMAKE_COMMAND}
             -DSAM_GGML_SOURCE_DIR=${ggml_SOURCE_DIR}
             -DSAM_TEST_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/test_prepare_ggml.cmake)
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_prepare_ggml.cmake)
 endif()
 
-add_executable(test_image_cli test_image_cli.cpp)
+add_executable(test_image_cli models/test_image_cli.cpp)
 target_link_libraries(test_image_cli PRIVATE sam::sam sam_image_io)
 add_test(NAME sam_image_cli COMMAND test_image_cli)
 
-add_executable(test_image test_image.cpp)
+add_executable(test_image models/test_image.cpp)
 target_link_libraries(test_image PRIVATE sam::sam sam_image_io)
 set_target_properties(test_image PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Real-checkpoint session checks are manually invoked; ordinary CTest never
 # downloads or loads external weights.
-add_executable(test_session test_session.cpp)
+add_executable(test_session models/test_session.cpp)
 target_link_libraries(test_session PRIVATE sam::sam sam_image_io)
 set_target_properties(test_session PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-add_executable(test_video_session test_video_session.cpp)
+add_executable(test_video_session models/test_video_session.cpp)
 target_link_libraries(test_video_session PRIVATE sam::sam sam_image_io)
 set_target_properties(test_video_session PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
 # Optional real-weight 64+64 interleaving; default CTest remains weight-free.
-add_executable(test_video_long_session test_video_long_session.cpp)
+add_executable(test_video_long_session models/test_video_long_session.cpp)
 target_link_libraries(test_video_long_session PRIVATE sam::sam sam_image_io)
 set_target_properties(test_video_long_session PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 set(SAM_VIDEO_LONG_SESSION_ARGS "" CACHE STRING "Optional MODEL;ENTRY_64_DIR;NEGATIVE_IMAGE;BACKEND;THREADS;NEW_DIR")
@@ -209,7 +211,7 @@ if(SAM_REFERENCE_DIR)
     endif()
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
     add_test(NAME sam_official_reference
-        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/validate_image.py
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tools/validation/validate_image.py
             --build-dir ${PROJECT_BINARY_DIR}
             --model ${SAM_REFERENCE_MODEL}
             --reference ${SAM_REFERENCE_DIR}

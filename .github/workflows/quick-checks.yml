@@ -29,5 +29,5 @@ jobs:
         run: |
           ctest --test-dir build/ci --output-on-failure
           python tools/test_tools.py
-          python tools/check_docs.py
+          python tools/maintenance/check_docs.py
           git diff --check
