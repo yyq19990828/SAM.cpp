@@ -1,0 +1,385 @@
+# 编译库架构、模型扩展与 C/Python 接口计划
+
+创建时间：2026-10-08 18:13:12 Asia/Shanghai。
+状态：已规划，实施尚未开始。本次提交仅新增计划文档。
+源码基线：`54b1df74669ff3e4be5c75b9399bc588cade4ae0`（main）。
+
+## 目标与范围
+
+将 SAM.cpp 从 SAM 层 header-only 交付迁移为默认编译库，建立公共 API、任务契约、模型实现、组合流程和 GGML 设备后端的依赖边界。保持现有 C++ 调用方式，并为 SAM 3.1、GroundingDINO + SAM、DART 及后续 C/Python 接口提供明确的接入位置。
+
+GPU 开发分支正在另一台服务器上基于 GGML 增加 CUDA 等设备支持。本计划按上述 main 基线编写，未检查该分支；迁移安排保留后端路径的独立调整窗口，不将已有开发工作视为已合并或已通过硬件验收。
+
+本轮结构迁移包括编译边界、私有代码组织、工具/测试归属和 SDK 安装消费。新模型算法移植、GPU 算子实现和语言绑定分别按后续能力增量交付；模型文件格式、现有数值契约及会话并发语义不在结构迁移中变更。
+
+## 1. 推荐方向与成功标准
+
+采用轻量公共头文件、私有编译实现和独立工具目录。对外继续提供一个 `sam::sam` target；内部按照模型语义、执行资源、任务会话和工具用途组织。
+
+完成后应满足：
+
+- 现有应用继续使用 `Model`、`ImageSession`、`VideoSession`；新能力通过检测、提示分割和组合流程接口接入，不要求调用方理解内部图与设备资源。
+- 单独包含任一公共头文件时不需要 GGML 头文件，也不解析模型计算图。
+- 修改 SAM 3 跟踪实现会重编译对应库实现，不触发未修改的应用源码重新编译；静态链接应用仍需重新链接。
+- 增加模型主要修改 `src/models/<family>/` 和模型工厂；增加 GGML 设备主要修改 `src/runtime/ggml/backends/`，不复制模型图。
+- CLI、转换工具和测试有各自清楚的构建入口，不由 examples 间接承担它们的依赖。
+- 现有模型文件、缓存行为、会话生命周期、后端选择和数值验收门槛保持不变。
+
+当前最小可行方案是只将模型加载入口移到一个 `.cpp`，先形成编译边界。推荐完整方案在此基础上继续划分职责，主要收益是限制修改影响范围，并降低大型跟踪文件的维护风险。
+
+这次调整会涉及超过 8 个文件，覆盖现有 43 个库头文件中的多数，以及构建、测试和说明文档，属于中等规模结构重构。
+
+## 2. 当前需要解决的具体问题
+
+| 现状 | 影响 | 调整 |
+| --- | --- | --- |
+| 公共 `model.hpp` 包含 SAM 3 实现，该实现同时包含图像和跟踪会话 | API 与具体模型发生编译耦合 | 创建具体模型的代码移到库内部工厂 |
+| `include/sam/internal/` 是全部实现的分发目录 | 公共接口和私有实现的安装、依赖边界不清楚 | 私有文件移到 `src/`，公共安装集单独列出 |
+| `tracking/execution.hpp` 约 1,670 行，包含图形状、缓存、传输、预算和执行 | 修改某一种职责时需要理解整套执行状态 | 保留一个执行协调器，按真实职责提取内部实现 |
+| `examples/CMakeLists.txt` 构建 CLI、图像 IO 库和量化工具；开启测试也会进入 examples | 测试和工具依赖关系绕行 | CLI 移到 apps，工具归 tools，共用 IO 放在 support |
+| consumer 测试明确要求 `INTERFACE_LIBRARY` | 测试锁定旧交付形式 | 改为验证公共头隔离、真实链接和已安装包消费 |
+| tools 平铺转换、验证、基准、可视化和归档脚本 | 使用入口和内部辅助模块难以区分 | 按用途分组，暂留旧脚本作为兼容入口 |
+
+仓库现有 `AGENTS.md` 的“Header-Only Architecture”要求与新方向冲突。建议在编译库迁移的同一提交中更新该规则、README 和对应 consumer 断言；本计划采用编译库方向，现有规则在实施该批次前继续描述当前源码状态。
+
+## 3. 建议目录
+
+以下是目标规划结构，不表示已经创建这些源码文件。标注“规划”的模块对应已确定的产品路线；在其实现提交中创建，不用空目录假装能力已经存在。
+
+```text
+SAM.cpp/
+├── include/sam/                 # 仅安装和承诺兼容的公共接口
+│   ├── sam.hpp
+│   ├── types.hpp
+│   ├── model.hpp
+│   ├── image_session.hpp
+│   ├── video_session.hpp
+│   ├── detection_session.hpp   # 规划：纯检测任务
+│   ├── prompt_session.hpp      # 规划：点/框提示分割
+│   ├── pipelines/              # 规划：组合流程的公共入口
+│   ├── c_api.h                 # 规划：C ABI，纯 C 可包含
+│   └── export.hpp              # 构建时生成的符号导出定义
+├── src/
+│   ├── CMakeLists.txt
+│   ├── model_factory.cpp       # 已实现模型的显式组装入口
+│   ├── api/                    # 公共类的方法定义和句柄管理
+│   │   ├── model.cpp
+│   │   ├── image_session.cpp
+│   │   └── video_session.cpp
+│   ├── contracts/              # 私有任务契约，不包含具体模型或 GGML
+│   │   ├── model.hpp
+│   │   ├── text_image.hpp
+│   │   └── text_video.hpp
+│   ├── common/
+│   │   └── input_validation.hpp
+│   ├── io/
+│   │   ├── gguf_reader.hpp
+│   │   └── gguf_reader.cpp
+│   ├── models/
+│   │   ├── sam3/
+│   │   │   ├── model.hpp / model.cpp
+│   │   │   ├── weights.hpp / weights.cpp
+│   │   │   ├── state.hpp
+│   │   │   ├── tokenizer.hpp / tokenizer.cpp
+│   │   │   ├── image_ops.hpp / image_ops.cpp
+│   │   │   ├── graphs/         # 架构、张量和各阶段 GGML 图
+│   │   │   ├── image/          # 图像会话、阶段执行、结果处理
+│   │   │   └── video/          # 视频会话、时序策略和跟踪执行
+│   │   ├── sam3_1/             # 规划：独立 schema、图和 Object Multiplex 状态
+│   │   └── grounding_dino/     # 规划：文本检测模型
+│   ├── pipelines/              # 规划：模型/阶段的组合，不拥有基础算子
+│   │   ├── grounded_sam/
+│   │   └── dart/
+│   └── runtime/
+│       └── ggml/
+│           ├── resources.hpp / resources.cpp
+│           ├── runtime.hpp / runtime.cpp
+│           ├── graph.hpp / graph.cpp
+│           ├── workspace.hpp / workspace.cpp
+│           └── backends/
+│               ├── backend.hpp
+│               ├── cpu.cpp
+│               ├── metal.cpp
+│               └── cuda.cpp   # 规划：接入服务器上的 GPU 分支
+├── bindings/                   # 随语言接口阶段交付
+│   ├── c/                      # C ABI 实现，编译进同一个 sam 库
+│   └── python/                 # Python 包、pybind11 模块、NumPy 转换
+├── apps/
+│   ├── image/                  # 现有 sam_image 命令
+│   └── video/                  # 现有 sam_video 命令
+├── examples/                   # 只依赖公开 SDK 的最小使用示例
+├── support/
+│   └── image_io/               # CLI/测试共用的解码实现，不安装进 SDK
+├── tools/
+│   ├── convert/                # 模型转换和模型 schema
+│   ├── quantize/               # 含 quantize_rows.cpp
+│   ├── validation/             # 参考导出、图像/视频比较和验收
+│   ├── benchmark/              # 测量、统计和性能资格检查
+│   ├── visualization/          # 比较图生成
+│   └── maintenance/            # 文档检查、归档等维护工具
+├── tests/
+│   ├── api/                    # 对外行为与生命周期
+│   ├── models/                 # 按 sam3、sam3_1、grounding_dino 分组
+│   ├── pipelines/              # 组合流程的坐标、类别、缓存和输出契约
+│   ├── bindings/               # C/Python 与 C++ 的一致性和所有权
+│   ├── runtime/ggml/           # 后端、精度、调度和 workspace
+│   ├── integration/            # CLI、源码集成、安装包消费、双 TU
+│   ├── tools/                  # Python 工具测试
+│   └── data/                   # 现有固定 fixtures 和数值门槛
+├── cmake/                      # GGML 固定版本、补丁、安装和 package 配置
+├── third_party/stb/             # 从 examples/stb 移入，保留许可与原始 guards
+├── docs/
+│   ├── architecture.md
+│   ├── models/
+│   ├── plans/                  # 保持历史计划和历史路径叙述
+│   └── validation-baselines/   # 保持既有验收记录
+└── licenses/
+```
+
+目录内的 `.hpp/.cpp` 成对形式是职责归属建议，不要求机械地为每个旧头生成两个文件。模板、小值类型和适合内联的小函数可以留在私有头文件；计算图构建、加载和较大执行逻辑编译进库。
+
+`types.hpp` 当前只有约 107 行，先保留一个文件。只有在输入、结果或配置显著扩展时，才按明确的 API 概念拆分。
+
+## 4. 依赖规则
+
+箭头表示实现依赖，不是数据复制方向。
+
+```text
+C++ app / CLI     C application      Python application
+      |               |                    |
+      |           C ABI shim          pybind11 binding
+      +---------------+--------------------+
+                      |
+           public C++ task/pipeline API
+                      |
+              model_factory.cpp
+                      |
+       model adapters and pipeline assembly
+                      |
+        family-specific graph / execution
+                      |
+                runtime/ggml
+                      |
+      GGML CPU / Metal / GPU branch backend
+
+Shared leaves:
+  include/sam/types.hpp   values, no runtime dependency
+  src/contracts/         task interfaces, no concrete models or GGML
+  src/common/            backend-independent validation
+
+Weight path:
+  model_factory -> io/gguf_reader -> GGML GGUF C API
+  model adapter -> family-specific schema and tensor checks
+```
+
+具体约束：
+
+1. 公共头只依赖标准库、公共值类型以及前置声明。构造、析构和涉及完整私有类型的定义放在 `.cpp`，尤其注意 `unique_ptr` 的不完整类型要求。保留现有复制/移动语义。
+2. `contracts/` 按文本检测、文本分割、点/框分割、视频跟踪划分任务；当前先迁移已经实现的契约，其余随对应能力加入。不增加一个带许多空方法的万能模型接口。
+3. `model_factory.cpp` 是显式组装点。只有它需要知道有哪些模型实现；使用明确分支或不可变表，不使用全局可变注册器和静态初始化注册，避免静态链接裁剪掉模型注册代码。
+4. 模型代码拥有 tokenizer、形状、张量名称、归一化、精度语义、时序策略和后处理。运行时拥有设备发现、资源分配、图调度、传输和执行统计。
+5. 模型规定的 F16/BF16 边界属于模型语义；设备上如何存储、执行及验证兼容性属于后端职责。不能为了目录整齐把这些数值规则全部下沉。
+6. GGUF reader 只做通用容器读取、范围检查和有限元数据访问。它仍依赖 GGML 的 GGUF API，不宣称引擎无关；各模型继续负责自己的 schema 验证。
+7. runtime 不包含模型的头文件；support、apps、tools 不成为 sam 库的依赖。
+8. 公共头安装集不包含 `src/`。内部测试通过专用测试 target 获取私有包含路径，应用不能靠公共 target 顺便获得它们。
+
+## 5. SAM 3 内部如何拆分
+
+模型目录的重点是把“模型结构”和“执行某次任务”分开。
+
+| 目录/文件 | 所有职责 |
+| --- | --- |
+| model / weights | 模型加载、schema、张量绑定、模型信息和任务创建 |
+| state.hpp | 同一模型共享的权重、必要资源和现有执行锁 |
+| graphs/ | vision、text_encoder、prompt_encoder、fusion_encoder、detector、mask_decoder，以及跟踪 memory/attention 图构建 |
+| image/session | 单次图像任务入口、图像与提示缓存、输入校验、结果处理 |
+| image/execution | 调用图像各阶段并维护当前执行统计 |
+| video/session | 帧顺序、固定提示/尺寸、hotstart、结果排队、reset |
+| video/policy | 对象关联、ID 生命周期、记忆选择和可见性规则 |
+| video/execution | 跟踪执行的协调器，拥有下述资源并保持原有调用顺序 |
+| video/graph_cache | 图形状 key、缓存槽和图 metadata 生命周期 |
+| video/memory_payload | memory/pointer 输入打包及模型规定的位置编码准备 |
+| video/frame_storage | 当前帧特征驻留、上传与释放 |
+| video/workspace_policy | workspace 探测、批次拆分和串行路径选择 |
+
+这几个视频实现单元用明确的状态引用和返回值协作，保持现有 `TrackerExecution` 作为协调者。不能为了拆文件把每个方法都变成一个抽象接口。
+
+先完成位置迁移，再逐个提取这些职责；每次提取都保留原有公式、张量布局、分支顺序和精度边界，避免同时进行算法优化。
+
+资源所有权保持：模型持有共享权重；session 持有提示、图像或时序状态；跟踪执行器持有图缓存和 workspace；帧资源按现有帧边界释放。继续保留同一模型不同 session 的执行串行化，不在此次结构重构中改变并发模型。
+
+## 6. 模型、平台和引擎如何扩展
+
+三者是不同维度：
+
+| 扩展类型 | 归属 | 需要验证的内容 |
+| --- | --- | --- |
+| SAM 3.1 | `src/models/sam3_1/`，登记到模型工厂 | 独立 checkpoint schema、图、对象桶、共享记忆与视频行为 |
+| GPU 开发分支 | 按已确定的 GGML 路线进入 `src/runtime/ggml/backends/` | 设备初始化、算子覆盖、精度、传输、回退策略和实际硬件结果 |
+| GroundingDINO + SAM | 检测器属于 models；流程属于 `src/pipelines/grounded_sam/` | 两套权重、坐标转换、类别/短语、提示分割能力及生命周期 |
+| DART | `src/pipelines/dart/`，使用明确的 SAM 3 内部阶段接口 | 检测阶段复用、类别缓存、多类别执行和检测输出；首版采用原始 SAM 3 backbone |
+| ONNX Runtime / TensorRT 等其他引擎 | 单独的执行实现及对应模型适配 | 各引擎模型表示、算子和数值，不能把它们当作 GGML 的普通设备 |
+| C / Python 接口 | `bindings/c/`、`bindings/python/` | 所有权、错误传递、线程和 ABI，调用 SDK 而不是复制推理代码 |
+
+以上是已知路线的扩展位置，不是本次已交付的新能力；不创建空目录、空类或未经实现的后端枚举。SAM 2/2.1 可沿同一模型目录约定接入，但不属于本计划的优先模型范围。
+
+GPU 分支采用 GGML 设备扩展，因此本轮不用增加通用 engine 抽象层。CPU、Metal、CUDA 共用模型图，后端负责设备和执行政策；模型图所用算子是否在各设备上可用、精度是否满足要求仍需逐项验证。
+
+方案最容易失效的假设转为：SAM 3 与 SAM 3.1 的组件能够直接共享。对此采用独立 adapter，只有经过数值与形状验证的模块才提取复用，确保复用不成立时不推翻整体结构。如果以后真正引入 TensorRT/ONNX Runtime，再在私有模型执行边界增加对应实现，不把它们硬塞进 GGML 的设备驱动目录。
+
+### 6.1 三条模型路线的具体边界
+
+**SAM 3.1：模型实现独立，复用经过验证的组件。** 官方发布说明明确其 Object Multiplex 按固定容量的对象桶联合处理，具有新的 checkpoint 和共享记忆路径。因此 `sam3_1/video/` 自己拥有桶分配、对象插入/移除、共享记忆及结果映射；不通过继承 SAM 3 的现有 VideoSession 强行复用状态机。只有图形状、精度和语义一致、已有双模型测试的算子或模块，才提取到 `models/common/`；不先移动整套 SAM 3 图再假定兼容。桶边界测试使用实际配置容量 K 的 K-1、K、K+1，并验证跨桶对象 ID 稳定性。
+
+**GroundingDINO + SAM：两个模型，一个组合流程。** `models/grounding_dino/` 输出文本相关的框、分数和短语；具备 box-prompt 能力的 SAM adapter 接收这些框并输出 masks。pipeline 只负责调用、过滤、坐标与结果关联，各模型保留自己的 resize、normalize 和 tokenizer。pipeline 边界统一使用原图像素 XYXY 坐标，输入分割模型前再做该模型要求的变换。
+
+这里有一个需要明确补齐的功能缺口：当前 SAM.cpp 对外只有文本分割会话，尚不能仅靠目录移动得到可组合的 box-prompt segmentation 接口。首版建议先在现有 SAM 3 adapter 补齐并验证框提示能力，再接入 GroundingDINO；这不等同于已经兼容原始 SAM 1 的 Grounded-SAM 实现，参考输出应来自所选分割模型的官方实现。不同分割器以后通过同一个任务契约替换。
+
+**DART：检测任务独立，重用 SAM 3 的真实计算阶段。** 首版在 `pipelines/dart/` 管理类别列表、文本特征缓存、多类别执行和检测后处理，复用 SAM 3 的 vision、text、fusion 和 detector 阶段，跳过 mask decoder。不要通过完整分割后丢弃 mask 来实现检测。现有权重加载器也需要按任务维护经过验证的必需张量集合，不能随意忽略缺失张量；阶段一可以仍加载完整 SAM 3 权重，但结果必须明确它只省去了 mask 计算，并未证明减少全部权重占用。
+
+DART 上游还包含学生 backbone 和 TensorRT 等路线；本方案明确只先实现原始 SAM 3 backbone 路径。若引入学生模型，应在 `models/` 增加对应图和权重契约，不能把新 backbone 藏在普通 pipeline 配置里。
+
+### 6.2 公共任务与数据契约
+
+现有 `ImageSession` 和 `VideoSession` 保留现有语义，不在同一个 session 加入所有模型才能理解的方法。新增能力使用专用接口，并由已加载 adapter 报告支持的任务。
+
+| 任务契约 | 首批使用者 | 输出 |
+| --- | --- | --- |
+| 文本图像分割 | 现有 SAM 3 | 现有 boxes、scores、masks |
+| 文本/类别检测 | GroundingDINO、DART | boxes、scores、label/class_id；没有强制 mask |
+| 点/框提示分割 | 用于 Grounded SAM 的分割 adapter | 与提示/对象对应的 masks 与质量信息 |
+| 视频跟踪 | SAM 3、SAM 3.1 各自的实现 | frame index、稳定 object ID、boxes、masks |
+
+当前 `Detection` 含有 Mask，保持该类型兼容；纯检测新增独立结果类型，而不是约定“空 mask 表示这是另一个任务”。共享 Box、ImageView 等值类型，不共享模型隐藏状态。
+
+模型支持某任务、二进制编译了某设备、当前机器找到设备、该组合经过数值验证，是不同信息。API 的能力查询只能反映已经实现的能力和运行时可用性，发布支持矩阵另行记录硬件验收证据。
+
+### 6.3 C/Python 绑定路线
+
+推荐保持 C++ SDK 为核心公开实现，C ABI 和 Python 都调用这一套 SDK。Python 优先用 pybind11 绑定 C++ API，避免每个新模型的实验接口都必须先冻结为长期 C ABI；不维护 Python 版推理逻辑。C 的稳定子集按已经验收的任务增加。
+
+- **C ABI**：公开 `include/sam/c_api.h`，实现位于 `bindings/c/` 并编译进同一个 sam 库。使用 opaque model/session/result handles、固定宽度整数与指针/长度数据，不暴露 STL、GGML 或 C++ 类。创建/释放配对，库分配的结果由库释放；结果视图有效期绑定到 result handle。使用状态码和明确的错误信息，所有 C++ 异常在 C 边界转换。结构体包含大小/版本信息用于增量扩展，提供 ABI 版本查询。
+- **Python**：`bindings/python/` 放包代码、pybind11 模块、类型提示和测试，入口使用可识别的独立包名 `sam_cpp`，避免与官方研究包混淆。首版接受 RGB、uint8、HWC NumPy 数组；显式检查 dtype/shape/stride，不隐式把 float 图像按 uint8 截断。默认返回独立拥有内存的 NumPy 结果，先确保生命周期正确，再按测量添加受控零拷贝视图。
+- **线程**：纯 C++ 推理期间可以释放 GIL；释放前完成 Python 对象检查并保留输入所有者，释放期间不访问 Python 对象。保留 session 不允许并发调用的契约，Python 包装器为每个 session 提供非阻塞的 in-use 防护；重入立即报错，防止释放 GIL 后两个线程同时修改一个 session。输入数组在调用期间不得由其他线程修改。
+- **验证体验**：提供最小 image、video、detection Python 示例和 notebook，能够在 Python 里调用已移植的 C++ 模型并与官方结果对比。Python 绑定不意味着未经移植的任意新 PyTorch 网络能自动由 C++ 执行；新图、权重转换和数值验证仍是模型接入工作。
+- **依赖边界**：Python/pybind11/NumPy 只属于绑定与参考工具环境，纯 C/C++ SDK 构建不需要它们。PyTorch 放在参考验证依赖中，不作为 Python 推理包的默认依赖。
+
+当绑定阶段开始时增加独立的 `SAM_BUILD_PYTHON`（默认关闭）；C 接口实现作为核心 SDK 的公共符号集交付，不另造一份推理库。Python wheel 验收需要在没有源码树、没有开发编译环境的干净环境中运行，并检查随包共享库的依赖定位。
+
+## 7. 构建与交付
+
+- 对外只有一个稳定的 `sam::sam` target。内部目录首先用 `target_sources` 组织同一编译库；确有编译隔离需要时才增加私有 OBJECT target，不要求用户逐一链接内部库。
+- 独立构建在父工程未指定时默认静态库；允许 `BUILD_SHARED_LIBS` 选择动态库，服从父工程已设定的值。动态库通过生成的 export 定义标注公共符号，避免导出所有模型内部符号。
+- 保留 `add_subdirectory` 集成方式；完成安装导出后支持 `find_package(sam CONFIG REQUIRED)`，继续使用同一个 `sam::sam` target。
+- 公开 API 不暴露 GGML 类型，GGML 编译包含路径和实现宏保持私有。静态库的最终链接仍需要 GGML，必须由导出的 CMake target 正确传递，不能把 PRIVATE 误解成没有最终链接依赖。
+- 固定的 GGML revision、精度补丁、源树指纹和 caller-owned target 复用逻辑继续保留。一个进程不加载两份冲突的 GGML runtime。
+- 由 SAM 准备 GGML 时，安装包同时正确提供其依赖 target/二进制；复用外部 GGML 时，安装包要求依赖的包配置可被解析。若外部 target 不可导出，配置 SAM 安装时明确报告，不产生看似可安装但无法消费的包。
+- 共享库验收包括动态依赖可定位、导出符号和卸载生命周期；源码兼容不等于跨编译器的 C++ ABI 兼容，不承诺后者。
+- 保留现有 `SAM_BUILD_TESTS`、`SAM_BUILD_EXAMPLES` 的 standalone/embedded 默认行为和 `GGML_METAL`、`GGML_BLAS` 配置。迁移期间 `SAM_BUILD_EXAMPLES` 继续构建原有两个 CLI，保持脚本行为。
+- CUDA 分支接入时沿用对应固定版本 GGML 的 `GGML_CUDA` 构建能力，SAM 层只补上已经实现的设备选择、可用性检查和执行策略，不另造一套容易与 GGML 状态分离的 CUDA 开关。CPU-only 构建不应要求 CUDA toolkit。
+- 新增一个 `SAM_BUILD_TOOLS` 开关，将量化可执行程序与 examples 分离，默认沿用 standalone 开启、embedded 关闭。暂不增加模型、视频或任意后端插件开关。
+- 工具整理期间保留旧 Python 命令入口和现有 CLI 输出路径；兼容入口只转发到新实现，不保存两份逻辑。权重、GGUF schema 和模型下载流程不因目录调整改变。
+
+安装导出使用 CMake 现有的 `install(TARGETS)`、`install(EXPORT)` 和 package config 机制，不自定义包发现器。
+
+## 8. 分批迁移，每一批都能独立保留
+
+### 第一批：建立编译边界
+
+将公共类的实现与模型工厂移入 `src/`，私有模型头暂时留在原位置。将 `sam` 从 INTERFACE 改成真实编译库，保留公共头路径和调用签名。更新 header-only 指令及测试假设。
+
+这一批特别保留 runtime 和 backend 文件的原路径、命名与行为，让服务器上的 GPU 分支继续按原路径开发；不与 CUDA 内核、精度策略或调度优化混在同一提交中。
+
+验收：现有例子与 consumer 能编译链接；公共头无需 GGML 即可独立解析；双 TU 链接通过；现有 CPU/Metal 行为检查与选定数值基线通过。
+
+独立价值：调用方获得真实编译隔离，即使后续目录整理不进行也能长期使用。
+
+### 第二批：整理私有实现与测试归属
+
+迁移 `internal` 到上述 `src` 目录，保留 `sam::internal` 命名空间以控制修改范围。先做机械移动，再按独立提交提取视频执行职责。内部 tests 获得私有 test target，SDK 消费者不获得这些路径。
+
+runtime 的路径迁移放到单独提交：优先在 GPU 分支接入后执行。如果 GPU 工作届时仍未完成，先迁移 API、契约、模型和测试，runtime 暂留旧路径；编译隔离仍然成立。交接时提供旧路径到新路径的映射，避免两边同时大规模改名。
+
+验收：全部既有契约、图、后端、量化、跟踪、workspace 和工具检查通过；相同模型/输入/后端对比图像及视频结果；实际权重 session 生命周期与长视频检查通过。
+
+独立价值：库自身更容易修改和定位问题，不依赖工具目录迁移。
+
+### 第三批：整理工具与交付目录
+
+迁移 apps、support、tools、third_party 与 tests；保留命令兼容入口。补全静态/动态安装导出、干净 consumer 测试和架构说明。新增一份与实际目录一致的开发者导航文档。
+
+验收：只构建 SDK 不带入图像解码库、STB、Python 和测试依赖；examples 关闭时工具仍可独立构建；源码集成与安装消费都能运行；移动安装前缀后 consumer 仍能找到包；旧工具入口的实质结果保持一致。
+
+这三批均不改 GGUF schema，不迁移用户模型或其他数据。回退对应代码和构建提交即可，不触碰现有数据。历史计划和不可变验收记录保持原样。
+
+### 结构落地后的能力增量
+
+后续每条能力以可独立发布的增量交付，不要求三个新路线和两种绑定全部完成才使用新结构。
+
+1. **DART 基线**：先暴露检测阶段、独立检测结果和类别缓存，在完整 SAM 3 权重上验证原始 backbone 的检测流程。先证明输出，再考虑精简权重、学生 backbone 或新的精度方案。
+2. **SAM 3.1**：独立 adapter 与转换 schema，接入 Object Multiplex；保留 SAM 3 回归套件，逐项验证可复用模块。
+3. **Grounded SAM**：先验收 GroundingDINO 文本检测和分割 adapter 的框提示任务，再组合并验证坐标、标签、多框、空检测和输出映射。不能把“创建 pipeline 类”视为已经接入两个模型。
+4. **C/Python**：按照上述绑定契约交付已有任务的稳定接口、NumPy 结果和安装包。为了新模型验证，允许先为已验收的 SAM 3 发布最小 Python 包，不必等三条新模型路线全部完成；新增任务再扩展绑定。
+
+此顺序是按当前实现复用成本给出的建议，不要求各模型同时发布；实际发布顺序在各能力实现计划中记录。具体模型算法移植属于后续各自的实现计划，本文件确定其结构归属、接口边界和验收责任。
+
+## 9. 验证与交接要求
+
+实施时以本文件作为总计划，在下方实施记录中追加实际范围、环境与结果；新模型和绑定的专项实现另建带时间戳的计划并回链本文件。计划存在不代表重构已经完成或通过验收。
+
+基础 CPU 检查命令沿用当前入口：
+
+```sh
+cmake -S . -B build/structure-cpu -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF -DGGML_BLAS=OFF
+cmake --build build/structure-cpu --parallel
+ctest --test-dir build/structure-cpu --output-on-failure
+python3 tools/check_docs.py
+git diff --check
+```
+
+Python 数值工具测试继续使用仓库指定的隔离参考环境执行 `tools/test_tools.py`；不假设系统 Python 已安装参考依赖。
+
+完成安装配置后分别构建 `BUILD_SHARED_LIBS=OFF` 和 `ON` 的安装产物，再用仅依赖 `find_package(sam CONFIG REQUIRED)` 的 consumer 测试实际加载。consumer 不可访问源码目录或内部 include 目录。
+
+验收覆盖：
+
+| 类别 | 必须覆盖 |
+| --- | --- |
+| 正常路径 | 图像加载、文本/token 提示、视频顺序输入、模型复用与 session 生命周期 |
+| 错误路径 | 不存在/损坏/不兼容的模型、不可用显式后端、无效图像尺寸/stride、无效 token、视频帧乱序 |
+| 边界 | 空检测、重复提示缓存、阈值变化、新图像缓存失效、reset、最后一帧结果排空、多对象与长序列状态 |
+| 数值 | 固定权重和输入的 tensor、框、分数、mask、视频 ID/关联；原门槛不放宽 |
+| 构建 | 公共头独立/重复包含、双 TU、静态/动态、源码/安装消费、内部依赖不泄漏 |
+| GPU 分支接入 | CPU-only 不依赖 CUDA toolkit；显式 CUDA 请求失败时不静默改后端；匹配硬件上检验算子、精度、传输和设备统计 |
+| 新任务 | DART 的检测结果和类别缓存；Grounded SAM 的坐标映射/空框/多框；SAM 3.1 的对象桶边界、增删与 ID 连续性 |
+| 语言绑定 | C 纯 C 编译器消费、错误/释放协议；Python dtype/stride、结果生命周期、session 并发防护、与 C++ 相同输入输出；干净环境 wheel 安装 |
+| 性能 | 相同硬件/编译选项下的完整图像与视频时延、峰值内存、构建时间；不把调用方编译提速当推理提速 |
+
+纯文件迁移和入口外置优先要求相同环境下输出完全相同。如果仅因为翻译单元变化出现数值差异，必须定位优化或执行差异，并按既有数值门槛单独记录差异与验收结论，不能直接以“重构正常波动”解释。
+
+本次规划只核实了源码结构、既有测试入口和构建约定，未运行新的模型验收。CPU/Metal 实机、原始 checkpoint 和已接受参考样本是实施验收前置条件；缺少条件时只能报告完成了对应结构或构建检查，不能宣布该平台数值通过。仓库现有 CI 配置也不等于本次已在这些平台执行。
+
+结构重构本身不需要新的账户、服务或 API key。若实施环境尚无原始模型，下载使用既有授权与凭据流程；GGML 网络不可用时可复用已核验的本地固定版本，不能自动改用未经核验的版本。
+
+## 10. 参考与取舍
+
+- [SAM.cpp 当前架构](https://github.com/yyq19990828/SAM.cpp/blob/54b1df74669ff3e4be5c75b9399bc588cade4ae0/docs/architecture.md)：保留现有任务、模型、后端边界与数值契约。
+- [公共模型入口](https://github.com/yyq19990828/SAM.cpp/blob/54b1df74669ff3e4be5c75b9399bc588cade4ae0/include/sam/model.hpp)：当前具体模型实现被公共头引入的位置。
+- [现有 consumer 约束](https://github.com/yyq19990828/SAM.cpp/blob/54b1df74669ff3e4be5c75b9399bc588cade4ae0/tests/consumer/CMakeLists.txt)：迁移时需同步更新 header-only 假设。
+- [llama.cpp 源码构建](https://github.com/ggml-org/llama.cpp/blob/master/src/CMakeLists.txt)：参考其公共 include、私有源文件和独立模型实现编译到库的组织机制，不照搬其更复杂的模型管理系统。
+- [whisper.cpp 源码构建](https://github.com/ggml-org/whisper.cpp/blob/master/src/CMakeLists.txt)：参考其编译库和可选平台实现各自拥有依赖的方式，不照搬公开 include 路径范围。
+- [CMake 安装与导出指南](https://cmake.org/cmake/help/latest/guide/importing-exporting/index.html)：采用标准的可重定位 package/target 导出机制。
+- [SAM 3.1 官方发布说明](https://github.com/facebookresearch/sam3/blob/main/RELEASE_SAM3p1.md)：Object Multiplex 与新 checkpoint 是独立状态/图契约的依据。
+- [Grounded SAM 官方示例](https://github.com/IDEA-Research/Grounded-Segment-Anything/blob/main/grounded_sam_demo.py)：检测框转换后传入 SAM，支持将模型与组合流程分开的设计。
+- [DART](https://github.com/mkturkcan/DART) 与 [encoder-decoder 导出实现](https://github.com/mkturkcan/DART/blob/main/sam3/trt/export_enc_dec.py)：原始 SAM 3、多类别检测、文本缓存和学生 backbone 属于不同的可选范围。
+- [pybind11 NumPy 接口](https://pybind11.readthedocs.io/en/stable/advanced/pycpp/numpy.html) 与 [GIL 说明](https://pybind11.readthedocs.io/en/stable/advanced/misc.html)：使用现成的数组绑定与 GIL 管理机制。
+
+不推荐在本轮同时建立动态插件系统、通用张量 IR 或两套完整的 header-only/compiled 分发模式。这些方案会引入注册、版本或配置组合成本，而当前边界问题通过私有编译实现就能解决。
+
+## 11. 实施记录
+
+- 2026-10-08：完成 main 基线的结构评估、目标目录、模块契约、GPU 分支协调方式、分批迁移和验收要求；以计划文档入库。
+- 本次未迁移源码，未修改现有 header-only 构建、AGENTS.md、GGUF schema 或模型行为。
+- 文档检查：新增计划的本地链接、代码块闭合及差异空白检查通过；现有双语测量表一致性检查通过。
+- 全量 `tools/check_docs.py` 未通过：既有 `docs/plans/20261004-214547-latest-complete-model-performance-records.md` 引用了当前检出缺少的 `build/rope-optimization/20261004/native-image-qualification-summary-v1.json`。已确认该计划与 HEAD 内容一致，失败不由新增文档引入；本次不修改历史验收记录。
+- 各实现批次须追加涉及提交、执行环境、检查结果和未验证的模型/后端组合，不以计划中列出的检查代替实际结果。
