@@ -473,3 +473,57 @@ GGML runtime。公共库的动态导出符号只含 `SAM_API` 标记的包装器
 交接 B：从本节点本地提交继续（提交信息 `refactor: build sam as a compiled library with private tests and src identity`）。
 `src/` 已纳入 `source_snapshot()`/`archive_sources()`；私有文件迁移后保持每批同步覆盖。基线与迁移后证据
 路径、编译选项与固定输入清单见上，后继节点沿用，不重新挑选有利样本；不修改旧冻结证据。
+
+### 2026-10-08 节点 B 实施结果（私有实现迁移与视频职责拆分）
+
+实施基线：继承节点 A 提交 `cc83042`；本节点结束于 `f14ab3a`。公共 API、GGUF schema、权重、
+tokenizer、精度边界、缓存与执行顺序未变；未迁移 apps/tools（属节点 C）。
+
+**机械迁移与路径映射**（各为可独立保留的本地提交）：
+
+- `5393294`：`include/sam/internal/` 的契约、校验、GGUF reader 与 SAM 3 模型移入 `src/`；
+  `model_interface.hpp` 拆为 `src/contracts/{model,text_image,text_video}.hpp`，
+  `input_validation.hpp` → `src/common/`，`gguf_reader.hpp` → `src/io/`，
+  `models/sam3/tracking/` → `src/models/sam3/video/`；路径派生 guards 全部更新。
+- `f14ab3a`：runtime 单独提交，`include/sam/internal/runtime/ggml{,.hpp}` 与 CPU/Metal/CUDA
+  驱动移入 `src/runtime/ggml/`；聚合头 `ggml.hpp` 改用 src 根路径引用。runtime 不包含模型头。
+- `872a829`：历史计划链接通过 `tools/check_docs.py` 的显式旧→新映射解析，历史文档不改写；
+  该映射同时作为本节点的路径对照表。
+
+**视频职责提取**（每个提交单独跑 CPU/CUDA 回归）：
+
+- `6a71ec4` graph_cache：`TrackerGraphShape`、shape helper、阶段容量与 `TrackerGraphSlot`
+  移入 `video/graph_cache.hpp`，`TrackerGraphCache` 持有四个槽与 build 时间。
+- `85927b8` memory_payload：`TrackerRecord`/`TrackerPropagationInput`、pointer 时间位置、
+  pointer 切片、BF16 memory 打包与 memory position 表选择移入 `video/memory_payload.hpp`。
+- `ac41091` frame_storage：`TrackerResidentUploadState`、resident context/buffer、neck 张量与
+  位置表移入 `video/frame_storage.hpp`（`TrackerFrameStorage`）。
+- `dc9e0af` workspace_policy：serial/seed 预算与探针、批次拆分、sticky none-resident/
+  none-serial 策略与探针诊断移入 `video/workspace_policy.hpp`（`TrackerWorkspacePolicy`）。
+- 各提取保留图 key、内存选择、布局、传输/释放时机、执行锁与多 session 生命周期；
+  `TrackerExecution` 仍为协调者（1668 行降至 1078 行），不夹带性能优化。
+
+**实测结果**（最终提交 `f14ab3a`；证据 `build/structure-b-evidence-v1/`，索引 `index.json`）：
+
+| 检查 | 配置/命令 | 结果 |
+| --- | --- | --- |
+| CPU Release | `build/structure-cpu-b`；`GGML_METAL=OFF GGML_CUDA=OFF GGML_BLAS=OFF` | 构建 0；CTest 17/17 |
+| CUDA probes OFF | `build/structure-cuda-b`；`GGML_CUDA=ON SAM_REQUIRE_CUDA_TESTS=ON` | 构建 0；CTest 30/30 |
+| CUDA probes ON | `build/structure-cuda-probes-b`；`SAM_BUILD_CUDA_PROBES=ON -DCMAKE_CUDA_ARCHITECTURES=89` | 全部探针构建；线性探针回归 45/45 |
+| 共享构建 | `build/structure-shared-b`；`BUILD_SHARED_LIBS=ON` | 构建 0；CTest 17/17 |
+| 参考图像 | CPU 与 CUDA 官方 reference 门槛 | exit 0；与 A 输出对比各 98 文件一致 |
+| 参考视频 | CUDA 完整套件；CPU `negative` 16 帧固定回归 | exit 0；CUDA 1276 文件、CPU 88 文件与 A 输出在计时/元数据归一化后一致，二进制载荷零差异 |
+| 来源与归档 | `source_snapshot()` / `archive_sources()` | 149 项（src 53、include 5）全部纳入并归档；变更/离线/篡改负例测试通过 |
+| 冻结归档只读 | `build/precision-final-v2/exports/f16` | 只读校验 PASS（1187 产物、137 归档源），未写入 |
+| 增量编译 | touch `src/models/sam3/video/execution.hpp` 后重建 | 库对象重编、应用重链接；未变化应用对象不重编 |
+| Python | `.venv-reference/bin/python -B tools/test_tools.py` | 145 通过 |
+| 文档/空白 | `tools/check_docs.py`、`git diff --check` | 70 份文档通过、无空白问题 |
+
+未验证：Metal（无匹配硬件）；CPU 完整 216 帧视频套件（吞吐，沿用 A 的 16 帧 `negative`
+固定回归）。逐模块 `.hpp/.cpp` 去内联未在本节点执行：私有实现仍为 `src/` 头文件，由库实现
+TU（`src/model_factory.cpp`、`src/api/*.cpp`）编译进 `sam`，公共 target 与安装集不包含这些
+路径；内部测试/探针经 `sam_private` 获取 `src` 私有 include。将大实现转为库内隐藏符号前，
+需先为内部测试建立静态支持 target。
+
+交接 C：从 `f14ab3a` 继续。`src/` 已全部纳入来源身份与归档；旧→新路径映射见 changelog 与
+`tools/check_docs.py`；apps/support/tools 目录尚未迁移。
