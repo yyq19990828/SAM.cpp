@@ -15,8 +15,8 @@ math is adapted separately, with full temporal integration still pending.
 ## GGML
 
 The supported dependency is official
-[GGML 0.25.3](https://github.com/ggml-org/ggml/tree/353b63b439f27ab2cc19dac97ab1681ba6d2d084),
-revision `353b63b439f27ab2cc19dac97ab1681ba6d2d084`. It is fetched separately or
+[GGML 0.26.0](https://github.com/ggml-org/ggml/tree/d7cb574130e6f01ad25b3289685489200febcd74),
+revision `d7cb574130e6f01ad25b3289685489200febcd74`. It is fetched separately or
 provided by the embedding application's existing `ggml` CMake target.
 
 SAM's [local Metal patch](cmake/patches/README.md) adds explicit FP32

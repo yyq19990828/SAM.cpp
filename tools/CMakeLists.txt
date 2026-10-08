@@ -20,7 +20,7 @@ if(SAM_BUILD_TOOLS)
     add_executable(sam_quantize_rows quantize/quantize_rows.cpp)
     target_compile_features(sam_quantize_rows PRIVATE cxx_std_17)
     target_compile_definitions(sam_quantize_rows PRIVATE
-        SAM_GGML_REVISION=\"353b63b439f27ab2cc19dac97ab1681ba6d2d084\"
+        SAM_GGML_REVISION=\"d7cb574130e6f01ad25b3289685489200febcd74\"
         SAM_GGML_LIBRARY_PATH=\"$<TARGET_FILE:${SAM_GGML_LINK_TARGET}>\")
     target_link_libraries(sam_quantize_rows PRIVATE ${SAM_GGML_LINK_TARGET} ${CMAKE_DL_LIBS})
     set_target_properties(sam_quantize_rows PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/examples)

@@ -273,7 +273,7 @@ class ToolChecks(unittest.TestCase):
     def test_quantizer_identity_hashes_linked_target_and_encoder_library(self):
         from tools.convert.sam3_artifacts import sha256_file
         from tools.validation.validate_image import SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT
-        from tools.convert.sam3_gguf import LEGACY_GGML_QUANTIZER_BUILD_COMMITS
+        from tools.convert.sam3_gguf import GGML_VERSION, LEGACY_GGML_QUANTIZER_IDENTITIES
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -281,12 +281,11 @@ class ToolChecks(unittest.TestCase):
             linked_library.write_bytes(b"linked ggml target")
             encoder_library.write_bytes(b"actual quantize_chunk provider")
             identity = {"ggml_revision": GGML_REVISION, "ggml_build_commit": GGML_REVISION,
-                        "ggml_version": "0.25.3", "quantization_version": 2,
+                        "ggml_version": GGML_VERSION, "quantization_version": 2,
                         "ggml_library_path": str(linked_library),
                         "ggml_quantize_library_path": str(encoder_library)}
             helper = root / "sam_quantize_rows"
-            for commit in (GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT,
-                           *LEGACY_GGML_QUANTIZER_BUILD_COMMITS):
+            for commit in (GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT):
                 with self.subTest(commit=commit):
                     identity["ggml_build_commit"] = commit
                     helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
@@ -295,10 +294,19 @@ class ToolChecks(unittest.TestCase):
                     self.assertEqual(executable, helper.resolve())
                     self.assertEqual(provenance["ggml_revision"], GGML_REVISION)
                     self.assertEqual(provenance["ggml_build_commit"], commit)
-                    self.assertEqual(provenance["ggml_version"], "0.25.3")
+                    self.assertEqual(provenance["ggml_version"], GGML_VERSION)
                     self.assertEqual(provenance["ggml_library"]["sha256"], sha256_file(linked_library))
                     self.assertEqual(provenance["ggml_quantize_library"]["sha256"], sha256_file(encoder_library))
             identity["ggml_build_commit"] = SAM_PATCHED_GGML_BUILD_COMMIT + "-unverified"
+            helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
+            with self.assertRaisesRegex(ValueError, "pinned GGML"):
+                quantizer_identity(helper)
+            for revision, version, commit in LEGACY_GGML_QUANTIZER_IDENTITIES:
+                identity.update(ggml_revision=revision, ggml_version=version, ggml_build_commit=commit)
+                helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
+                with self.subTest(legacy_generator=commit), self.assertRaisesRegex(ValueError, "revision"):
+                    quantizer_identity(helper)
+            identity.update(ggml_revision=GGML_REVISION, ggml_version=GGML_VERSION)
             helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
             with self.assertRaisesRegex(ValueError, "pinned GGML"):
                 quantizer_identity(helper)

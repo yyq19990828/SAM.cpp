@@ -1,6 +1,6 @@
 # SAM GGUF format
 
-SAM 3 model files use little-endian [GGUF v3](https://github.com/ggml-org/ggml/blob/353b63b439f27ab2cc19dac97ab1681ba6d2d084/docs/gguf.md)
+SAM 3 model files use little-endian [GGUF v3](https://github.com/ggml-org/ggml/blob/d7cb574130e6f01ad25b3289685489200febcd74/docs/gguf.md)
 with 32-byte alignment. GGUF defines the container; the fields below define
 this project's SAM 3 model contract. Schema 1 covers image F32 and mixed-F16
 weights, schema 2 covers video weights and explicit state/transport metadata,

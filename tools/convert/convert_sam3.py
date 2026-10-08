@@ -25,7 +25,8 @@ if __package__ in (None, ""):
 
 from tools.convert.sam3_artifacts import BPE_SHA256, PAB_REVISION, SAM3_REVISION, sha256_file, write_json
 from tools.convert.sam3_gguf import (KEEP_F32, HYBRID_PROFILE, HYBRID_F32_PREFIXES, QUANTIZATION_PROFILES,
-                       QUANTIZATION_VERSION, QUANTIZED_ARITHMETIC_PROFILE, LEGACY_GGML_QUANTIZER_BUILD_COMMITS, bytes_to_unicode,
+                       QUANTIZATION_VERSION, QUANTIZED_ARITHMETIC_PROFILE, GGML_REVISION, GGML_VERSION,
+                       supported_ggml_quantizer, bytes_to_unicode,
                        canonical_shape, converted_array, inspect_tensors, quantized_array,
                        quantization_profile, quantization_module_for_tensor, quantized_tensor_type,
                        quantization_reason_for_tensor,
@@ -33,7 +34,6 @@ from tools.convert.sam3_gguf import (KEEP_F32, HYBRID_PROFILE, HYBRID_F32_PREFIX
                        write_metadata, tensor_schema, validate_quantized_payload,
                        SUPPORTED_STORAGE_PROFILES)
 
-GGML_REVISION = "353b63b439f27ab2cc19dac97ab1681ba6d2d084"
 GGUF_PACKAGE_VERSION = "0.19.0"
 
 
@@ -169,14 +169,9 @@ def quantizer_identity(quantizer):
             or type(identity.get("quantization_version")) is not int
             or identity.get("quantization_version") != QUANTIZATION_VERSION):
         raise ValueError("quantizer GGML revision or quantization version is unsupported")
-    patch_hash = sha256_file(Path(__file__).resolve().parents[2] / "cmake/patches/ggml-precise-metal.patch")
-    expected_patched_commit = f"{GGML_REVISION[:8]}-sam-{patch_hash[:12]}"
-    cuda_patch_hash = sha256_file(Path(__file__).resolve().parents[2] / "cmake/patches/ggml-precise-cuda.patch")
-    expected_combined_commit = f"{expected_patched_commit}-{cuda_patch_hash[:12]}"
     build_commit = identity.get("ggml_build_commit")
-    if build_commit not in (GGML_REVISION, expected_patched_commit, expected_combined_commit,
-                            *LEGACY_GGML_QUANTIZER_BUILD_COMMITS) or identity.get("ggml_version") != "0.25.3":
-        raise ValueError("quantizer is not linked to the pinned GGML 0.25.3 source")
+    if not supported_ggml_quantizer(identity.get("ggml_revision"), identity.get("ggml_version"), build_commit):
+        raise ValueError(f"quantizer is not linked to the pinned GGML {GGML_VERSION} source")
 
     libraries = {}
     for field, label in (("ggml_library_path", "ggml_library"),

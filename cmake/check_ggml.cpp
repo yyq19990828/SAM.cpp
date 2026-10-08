@@ -39,7 +39,7 @@ using GgufStringGetter = const char* (*)(const gguf_context*, int64_t);
 using GgufTensorSizeGetter = size_t (*)(const gguf_context*, int64_t);
 static_assert(std::is_same_v<gguf_reader_callback_t, GgufReaderCallback> &&
               std::is_same_v<decltype(&gguf_init_from_callback), GgufCallbackInitializer>,
-              "SAM requires the pinned GGML 0.25.3 bounded GGUF callback reader API");
+              "SAM requires the pinned GGML 0.26.0 bounded GGUF callback reader API");
 static_assert(std::is_same_v<decltype(gguf_init_params::no_alloc), bool> &&
               std::is_same_v<decltype(gguf_init_params::ctx), ggml_context**>,
               "SAM requires no-allocation GGUF metadata initialization");

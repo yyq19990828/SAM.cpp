@@ -19,7 +19,8 @@ from tools.convert.sam3_artifacts import (BPE_SHA256, PAB_REVISION, REQUIRED_TEN
                            artifact_path, load_case_manifest, read_array, read_json, read_tensor_index,
                            sha256_file, validate_case_manifest, validate_cuda_oracle_provenance, write_json)
 from tools.convert.sam3_gguf import (QUANTIZATION_MODULES as GGUF_QUANTIZATION_MODULES,
-                       QUANTIZATION_VERSION, LEGACY_GGML_QUANTIZER_BUILD_COMMITS, canonical_quantization_modules, inspect_tensors,
+                       QUANTIZATION_VERSION, GGML_REVISION, GGML_VERSION, GGML_QUANTIZER_BUILD_COMMITS,
+                       supported_ggml_quantizer, canonical_quantization_modules, inspect_tensors,
                        quantization_module_for_tensor, quantization_reason_for_tensor,
                        quantization_profile as storage_quantization_profile, read_gguf,
                        validate_metadata, tensor_schema)
@@ -53,12 +54,10 @@ FROZEN_VISION_QUANTIZATION_GATES_SHA256 = "6bdb91602e8a89e8b29b208282b846b541d8f
 FROZEN_OUTPUT_QUALITY_GATES_SHA256 = "c69dd6fee4abc789e421c407c7f954e3fdfd7f04a2a79288d3192816385f11e8"
 FROZEN_FULL_QUANTIZATION_GATES_SHA256 = "17447e93cbec08233a9be3b50f43574da057d5ce05f79493e662fb757071d0bb"
 FROZEN_FULL_OUTPUT_QUALITY_GATES_SHA256 = "f796add8c03adc078797c6c5f93bb439c214044007578b40a63af5d99a342aa3"
-PINNED_GGML_REVISION = "353b63b439f27ab2cc19dac97ab1681ba6d2d084"
-PINNED_GGML_VERSION = "0.25.3"
-GGML_PRECISION_PATCH = Path(__file__).resolve().parents[2] / "cmake/patches/ggml-precise-metal.patch"
-SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT = f"{PINNED_GGML_REVISION[:8]}-sam-{sha256_file(GGML_PRECISION_PATCH)[:12]}"
-GGML_CUDA_PRECISION_PATCH = Path(__file__).resolve().parents[2] / "cmake/patches/ggml-precise-cuda.patch"
-SAM_PATCHED_GGML_BUILD_COMMIT = f"{SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT}-{sha256_file(GGML_CUDA_PRECISION_PATCH)[:12]}"
+PINNED_GGML_REVISION = GGML_REVISION
+PINNED_GGML_VERSION = GGML_VERSION
+SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT = GGML_QUANTIZER_BUILD_COMMITS[1]
+SAM_PATCHED_GGML_BUILD_COMMIT = GGML_QUANTIZER_BUILD_COMMITS[2]
 CPU_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-weights-f32-v1"
 METAL_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-native-v1"
 CUDA_QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-cuda-native-v1"
@@ -427,11 +426,8 @@ def validate_quantization_sidecar(model, allow_custom_quantization=False):
         if (quantizer.get("implementation") != "ggml_quantize_chunk"
                 or quantizer.get("fallback_implementation") != "gguf-py"
                 or quantizer.get("fallback_version") != model.get("gguf_package_version")
-                or quantizer.get("ggml_revision") != PINNED_GGML_REVISION
-                or quantizer.get("ggml_build_commit") not in (
-                    PINNED_GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT,
-                    *LEGACY_GGML_QUANTIZER_BUILD_COMMITS)
-                or quantizer.get("ggml_version") != PINNED_GGML_VERSION
+                or not supported_ggml_quantizer(quantizer.get("ggml_revision"), quantizer.get("ggml_version"),
+                                                quantizer.get("ggml_build_commit"), allow_legacy=True)
                 or quantizer.get("ggml_quantization_version") != QUANTIZATION_VERSION
                 or not isinstance(helper.get("file"), str) or not helper["file"]
                 or not isinstance(library.get("file"), str) or not library["file"]

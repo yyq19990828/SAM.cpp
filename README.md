@@ -115,8 +115,9 @@ quantization tools. Their checks and scope are documented in the
 and [cache plan](docs/plans/20261007-181154-typed-image-cache-runtime.md).
 To reuse a local GGML checkout, set
 `-DFETCHCONTENT_SOURCE_DIR_GGML=/absolute/path/to/pinned/ggml`.
-Use the pinned GGML 0.25.3 revision and [required patches](cmake/patches/README.md).
-Other GGML revisions are not a compatibility guarantee.
+Use the pinned GGML 0.26.0 revision and [required patches](cmake/patches/README.md).
+Other GGML revisions are not a compatibility guarantee. The v0.26.0 Metal patch port is pending Apple GPU
+validation; earlier Metal measurements describe the previous dependency.
 
 `SAM_ENABLE_INSTALL` defaults to `ON` for standalone builds and adds standard
 install rules; embedded builds can opt in when the GGML dependency is

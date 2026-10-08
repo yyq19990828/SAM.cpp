@@ -47,7 +47,7 @@ No releases have been published.
 - CPU execution uses registered BLAS when available. Quantized weights remain compressed in memory while matrix operations use temporary F32 weights.
 - Explicit F32 Metal execution and native Metal window operations are available. Quantized Metal execution rejects CPU compute fallback.
 - Public facades delegate to model adapters; backend modules own device initialization, storage policy, and accounting. Private implementation headers use `sam::internal` and unique include guards.
-- Dependency preparation pins GGML 0.25.3, checks supplied source/patch identity, and leaves caller checkouts untouched.
+- Upgrade the pinned GGML dependency to v0.26.0 with ported Metal/CUDA precision patches and verified source identities. New conversions record the new quantizer identity; existing GGUF models retain compatibility with their recorded v0.25.3 provenance. Metal validation on Apple hardware remains pending for this upgrade.
 - User documentation focuses on integration, supported configurations, and concise performance tables. Experiment history lives in the corresponding plans.
 - Bilingual performance pages list complete current model measurements; historical results and optimization comparisons remain in implementation plans.
 - Validation provenance records identify retired historical payloads and retained original references.

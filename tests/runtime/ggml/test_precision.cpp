@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -64,17 +65,21 @@ void check_matrix(ggml_backend_t backend, ggml_type left_type, int k, int m, int
               << ", default max error=" << default_error << '\n';
 }
 
-void check_attention(ggml_backend_t backend, int dimensions, int queries, int keys) {
+void check_attention(ggml_backend_t backend, int dimensions, int queries, int keys, bool masked_sparse = false) {
     auto context = sam::internal::make_context(16, 64);
     auto* q = ggml_new_tensor_4d(context.get(), GGML_TYPE_F32, dimensions, queries, 1, 1);
     auto* k = ggml_new_tensor_4d(context.get(), GGML_TYPE_F32, dimensions, keys, 1, 1);
     auto* v = ggml_new_tensor_4d(context.get(), GGML_TYPE_F32, dimensions, keys, 1, 1);
+    auto* mask = masked_sparse
+        ? ggml_new_tensor_2d(context.get(), GGML_TYPE_F16, keys, ((queries + 63) / 64) * 64) : nullptr;
     const float scale = 1.0f / std::sqrt(static_cast<float>(dimensions));
-    auto* precise = ggml_flash_attn_ext(context.get(), q, k, v, nullptr, scale, 0, 0);
+    auto* precise = ggml_flash_attn_ext(context.get(), q, k, v, mask, scale, 0, 0);
     if (!ggml_prec_set_acc(precise, GGML_PREC_F32)) {
         throw std::runtime_error("Attention precision request was rejected");
     }
-    auto* default_precision = ggml_flash_attn_ext(context.get(), q, k, v, nullptr, scale, 0, 0);
+    // The precise path must honor the full mask even with a smaller sparse hint.
+    if (masked_sparse) ggml_flash_attn_ext_set_n_kv_max(precise, keys / 2);
+    auto* default_precision = ggml_flash_attn_ext(context.get(), q, k, v, mask, scale, 0, 0);
     if (!ggml_backend_supports_op(backend, precise)) {
         throw std::runtime_error("Selected backend does not support the attention precision probe");
     }
@@ -84,7 +89,9 @@ void check_attention(ggml_backend_t backend, int dimensions, int queries, int ke
     if (default_supported) ggml_build_forward_expand(graph, default_precision);
     sam::internal::BufferPtr buffer(ggml_backend_alloc_ctx_tensors(context.get(), backend));
     if (!buffer) throw std::runtime_error("Could not allocate attention precision buffers");
-    const std::vector<float> q_values(dimensions * queries, 1.0003f);
+    std::vector<float> q_values(dimensions * queries);
+    for (int query = 0; query < queries; ++query)
+        std::fill_n(q_values.begin() + query * dimensions, dimensions, 1.0003f + (query % 7) * 0.00001f);
     std::vector<float> k_values(dimensions * keys), v_values(dimensions * keys);
     for (int key = 0; key < keys; ++key) {
         for (int dimension = 0; dimension < dimensions; ++dimension) {
@@ -95,6 +102,12 @@ void check_attention(ggml_backend_t backend, int dimensions, int queries, int ke
     ggml_backend_tensor_set(q, q_values.data(), 0, q_values.size() * sizeof(float));
     ggml_backend_tensor_set(k, k_values.data(), 0, k_values.size() * sizeof(float));
     ggml_backend_tensor_set(v, v_values.data(), 0, v_values.size() * sizeof(float));
+    if (mask) {
+        std::vector<ggml_fp16_t> values(ggml_nelements(mask));
+        for (std::size_t i = 0; i < values.size(); ++i)
+            values[i] = ggml_fp32_to_fp16(i % keys < 4 ? -std::numeric_limits<float>::infinity() : 0.0f);
+        ggml_backend_tensor_set(mask, values.data(), 0, values.size() * sizeof(ggml_fp16_t));
+    }
     if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS) {
         throw std::runtime_error("Attention precision execution failed");
     }
@@ -102,9 +115,10 @@ void check_attention(ggml_backend_t backend, int dimensions, int queries, int ke
     ggml_backend_tensor_get(precise, precise_values.data(), 0, precise_values.size() * sizeof(float));
     if (default_supported)
         ggml_backend_tensor_get(default_precision, default_values.data(), 0, default_values.size() * sizeof(float));
-    const double expected = std::tanh(dimensions * 0.0625 * scale * static_cast<double>(q_values[0]));
+    const double mask_shift = masked_sparse ? 0.5 * std::log(double(keys / 2 - 4) / (keys - keys / 2)) : 0.0;
     double precise_error = 0, default_error = 0;
     for (std::size_t i = 0; i < precise_values.size(); ++i) {
+        const double expected = std::tanh(dimensions * 0.0625 * scale * static_cast<double>(q_values[i]) + mask_shift);
         if (!std::isfinite(precise_values[i]) || (default_supported && !std::isfinite(default_values[i]))) {
             throw std::runtime_error("Attention precision produced a non-finite value");
         }
@@ -115,6 +129,7 @@ void check_attention(ggml_backend_t backend, int dimensions, int queries, int ke
     // still rejects the measured 1.18e-4 half-Q loss; model gates are unchanged.
     if (precise_error > 1e-5) throw std::runtime_error("Attention lost FP32 query precision");
     std::cout << ggml_backend_name(backend) << " Q" << queries << " D" << dimensions << " K" << keys
+              << " masked_sparse=" << masked_sparse
               << " attention: precise max error=" << precise_error
               << ", default=" << (default_supported ? std::to_string(default_error) : "unsupported") << '\n';
 }
@@ -128,9 +143,18 @@ void check_precision(sam::Backend selected) {
     // CPU weights are promoted to F32; its native F16 dot path rounds the RHS.
     if (selected == sam::Backend::Metal || selected == sam::Backend::Cuda)
         check_matrix(backend, GGML_TYPE_F16, 257, 65, 33);
+    // Cross the new few-row MMA/MMVF dispatch boundaries with sub-half detail.
+    if (selected != sam::Backend::Cpu) {
+        for (int rows : {1, 2, 3, 5, 6, 8, 9, 16, 17}) {
+            check_matrix(backend, GGML_TYPE_F32, 256, 65, rows);
+            check_matrix(backend, GGML_TYPE_F16, 256, 65, rows);
+        }
+    }
     check_attention(backend, 64, 1, 128);
     check_attention(backend, 32, 1, 130);
     check_attention(backend, 64, 33, 130);
+    check_attention(backend, 32, 7, 130, true);
+    check_attention(backend, 64, 33, 130, true);
     if (selected == sam::Backend::Cuda) {
         check_attention(backend, 32, 129, 5184);
         check_attention(backend, 64, 257, 576);

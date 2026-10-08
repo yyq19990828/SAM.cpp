@@ -9,7 +9,7 @@ if(NOT TARGET ggml AND NOT TARGET ggml::ggml)
     set(GGML_CUDA_GRAPHS OFF CACHE BOOL "CUDA graph capture requires separate SAM validation")
     FetchContent_Declare(ggml
         GIT_REPOSITORY https://github.com/ggml-org/ggml.git
-        GIT_TAG 353b63b439f27ab2cc19dac97ab1681ba6d2d084
+        GIT_TAG d7cb574130e6f01ad25b3289685489200febcd74
         GIT_SHALLOW FALSE
         SOURCE_SUBDIR sam_source_only)
     FetchContent_MakeAvailable(ggml)

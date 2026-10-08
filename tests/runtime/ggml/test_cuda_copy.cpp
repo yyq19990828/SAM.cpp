@@ -95,6 +95,9 @@ int main() {
         auto backend = runtime.weights_backend();
         int cases = 0;
         for (auto type : {GGML_TYPE_F32, GGML_TYPE_F16, GGML_TYPE_BF16, GGML_TYPE_I32}) {
+            // A plain 2-D transpose with a padded destination must not enter
+            // the upstream contiguous-destination transpose fast path.
+            check_copy(backend, type, type, {33, 65, 1, 1}, {1, 0, 2, 3}, false, true, false); ++cases;
             std::array<int, 4> permutation{0, 1, 2, 3};
             do {
                 for (bool padded : {false, true}) {

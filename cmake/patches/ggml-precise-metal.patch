@@ -1,7 +1,6 @@
-diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-device.cpp
 --- a/src/ggml-metal/ggml-metal-device.cpp
 +++ b/src/ggml-metal/ggml-metal-device.cpp
-@@ -798,6 +798,9 @@
+@@ -928,6 +928,9 @@
      const ggml_type tsrc0 = op->src[0]->type;
      const ggml_type tsrc1 = op->src[1]->type;
  
@@ -11,7 +10,7 @@ diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-de
      const bool bc_inp = op->src[0]->ne[0] % 32 != 0;
  
      constexpr int NRA = SZ_SIMDGROUP * N_MM_BLOCK_Y * N_MM_SIMD_GROUP_Y;
-@@ -815,7 +818,7 @@
+@@ -945,7 +948,7 @@
      const int16_t r2   = (int16_t) (ne12 / op->src[0]->ne[2]);
      const int16_t r3   = (int16_t) (ne13 / op->src[0]->ne[3]);
  
@@ -20,7 +19,7 @@ diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-de
      snprintf(name, 256, "%s_bci=%d_bco=%d_ne12=%d_ne13=%d_r2=%d_r3=%d",
               base, bc_inp, bc_out, ne12, ne13, r2, r3);
  
-@@ -839,13 +842,13 @@
+@@ -969,13 +972,13 @@
          res.nr0 = NRA;
          res.nr1 = NRB;
  
@@ -36,7 +35,7 @@ diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-de
      }
  
      res.nsg = N_MM_SIMD_GROUP_X * N_MM_SIMD_GROUP_Y;
-@@ -1737,14 +1740,18 @@
+@@ -1902,14 +1905,18 @@
  
      const char * type = use_kv_f16 ? "f16" : ggml_type_name(op->src[1]->type);
  
@@ -57,7 +56,7 @@ diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-de
  
      snprintf(name, 256, "%s_mask=%d_sinks=%d_bias=%d_scap=%d_kvpad=%d_bcm=%d_ns10=%d_ns20=%d_nsg=%d",
              base,
-@@ -2574,3 +2581,37 @@
+@@ -2739,3 +2746,37 @@
  
      return res;
  }
@@ -95,10 +94,9 @@ diff --git a/src/ggml-metal/ggml-metal-device.cpp b/src/ggml-metal/ggml-metal-de
 +
 +    return res;
 +}
-diff --git a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-device.h
 --- a/src/ggml-metal/ggml-metal-device.h
 +++ b/src/ggml-metal/ggml-metal-device.h
-@@ -168,6 +168,8 @@
+@@ -170,6 +170,8 @@
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_2d_dw        (ggml_metal_library_t lib, const struct ggml_tensor * op, bool tiled);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_conv_3d           (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_upscale           (ggml_metal_library_t lib, const struct ggml_tensor * op);
@@ -107,10 +105,9 @@ diff --git a/src/ggml-metal/ggml-metal-device.h b/src/ggml-metal/ggml-metal-devi
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pad               (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_pad_reflect_1d    (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_roll              (ggml_metal_library_t lib, const struct ggml_tensor * op);
-diff --git a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-device.m
 --- a/src/ggml-metal/ggml-metal-device.m
 +++ b/src/ggml-metal/ggml-metal-device.m
-@@ -1698,6 +1698,12 @@
+@@ -1711,6 +1711,12 @@
              return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
          case GGML_OP_POOL_2D:
              return op->src[0]->type == GGML_TYPE_F32;
@@ -121,12 +118,11 @@ diff --git a/src/ggml-metal/ggml-metal-device.m b/src/ggml-metal/ggml-metal-devi
 +                   ggml_is_contiguous(op->src[0]) && ggml_is_contiguous(op) &&
 +                   ggml_nelements(op) < (1LL << 31);
          case GGML_OP_PAD:
-             // TODO: add circular padding support for metal, see https://github.com/ggml-org/llama.cpp/pull/16985
-             if (ggml_get_op_params_i32(op, 8) != 0) {
-diff --git a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
+         case GGML_OP_PAD_REFLECT_1D:
+         case GGML_OP_TIMESTEP_EMBEDDING:
 --- a/src/ggml-metal/ggml-metal-impl.h
 +++ b/src/ggml-metal/ggml-metal-impl.h
-@@ -1379,4 +1379,33 @@
+@@ -1397,4 +1397,33 @@
      int64_t ne;
  } ggml_metal_kargs_silu_back;
  
@@ -160,14 +156,12 @@ diff --git a/src/ggml-metal/ggml-metal-impl.h b/src/ggml-metal/ggml-metal-impl.h
 +    int32_t  w;
 +} ggml_metal_kargs_win_unpart;
  #endif // GGML_METAL_IMPL
-diff --git a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.cpp
 --- a/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/src/ggml-metal/ggml-metal-ops.cpp
-@@ -441,6 +441,14 @@
-         case GGML_OP_UPSCALE:
+@@ -446,6 +446,14 @@
              {
                  n_fuse = ggml_metal_op_upscale(ctx, idx);
-+            } break;
+             } break;
 +        case GGML_OP_WIN_PART:
 +            {
 +                n_fuse = ggml_metal_op_win_part(ctx, idx);
@@ -175,10 +169,11 @@ diff --git a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.c
 +        case GGML_OP_WIN_UNPART:
 +            {
 +                n_fuse = ggml_metal_op_win_unpart(ctx, idx);
-             } break;
++            } break;
          case GGML_OP_PAD:
              {
-@@ -2938,11 +2946,24 @@
+                 n_fuse = ggml_metal_op_pad(ctx, idx);
+@@ -3070,11 +3078,24 @@
      return 1;
  }
  
@@ -203,7 +198,7 @@ diff --git a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.c
  
      // use vec kernel if the batch size is small and if the head size is supported
      return (ne01 < 20) && (ne00 % 32 == 0);
-@@ -2977,6 +2998,11 @@
+@@ -3150,6 +3171,11 @@
  // n_kv_max is only an upper bound on their number per mask row, used to size the index lists
  static int ggml_metal_op_flash_attn_ext_n_kv_max_sparse(const ggml_tensor * op) {
      assert(op->op == GGML_OP_FLASH_ATTN_EXT);
@@ -215,18 +210,23 @@ diff --git a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.c
  
      int32_t n_kv_max = 0;
      memcpy(&n_kv_max, ((const int32_t *) op->op_params) + 4, sizeof(n_kv_max));
-@@ -3501,7 +3527,9 @@
-         // the shared memory needed for the simdgroups to load the KV cache
-         // each thread loads (dequantizes) 16 head elements, there are 32 threads in th SG
-         //
--#define FATTN_SMEM(nsg) (GGML_PAD((nqptg*(ne00 + 2*GGML_PAD(ne20, 64) + 2*(2*ncpsg)) + is_q*(16*32*(nsg)))*(sizeof(float)/2), 16))
-+        const int qhs = ggml_metal_op_flash_attn_ext_use_prec_f32(op) ? sizeof(float)/sizeof(ggml_fp16_t) : 1;
-+
-+#define FATTN_SMEM(nsg) (GGML_PAD((nqptg*(qhs*ne00 + 2*GGML_PAD(ne20, 64) + 2*(2*ncpsg)) + is_q*(16*32*(nsg)))*(sizeof(float)/2), 16))
+@@ -3762,12 +3788,13 @@
+         const int is_q = !use_kv_f16 && ggml_is_quantized(op->src[1]->type) ? 1 : 0;
  
-         //int64_t nsgmax = 4;
-         //
-@@ -5755,3 +5783,91 @@
+         // shared memory layout (halfs unless noted):
+-        //   queries/attn/result: Q*(DK + 2*PAD2(DV,64) + 4*C)
++        //   queries/attn/result: Q*(QHS*DK + 2*PAD2(DV,64) + 4*C)
+         //   quantized KV scratch: 16*32*NSG (only when is_q)
+         const int64_t dv_pad = GGML_PAD(ne20, 64);
++        const int qhs = ggml_metal_op_flash_attn_ext_use_prec_f32(op) ? sizeof(float)/sizeof(ggml_fp16_t) : 1;
+ 
+         auto fa_smem = [&](int32_t nsg) -> size_t {
+-            const size_t smem_half = nqptg*(ne00 + 2*dv_pad + 4*ncpsg) + is_q*(16*32*nsg);
++            const size_t smem_half = nqptg*(qhs*ne00 + 2*dv_pad + 4*ncpsg) + is_q*(16*32*nsg);
+             return GGML_PAD(smem_half*sizeof(ggml_fp16_t), 16);
+         };
+ 
+@@ -6008,3 +6035,91 @@
  
      return 1;
  }
@@ -318,7 +318,6 @@ diff --git a/src/ggml-metal/ggml-metal-ops.cpp b/src/ggml-metal/ggml-metal-ops.c
 +
 +    return 1;
 +}
-diff --git a/src/ggml-metal/ggml-metal-ops.h b/src/ggml-metal/ggml-metal-ops.h
 --- a/src/ggml-metal/ggml-metal-ops.h
 +++ b/src/ggml-metal/ggml-metal-ops.h
 @@ -90,6 +90,8 @@
@@ -330,10 +329,9 @@ diff --git a/src/ggml-metal/ggml-metal-ops.h b/src/ggml-metal/ggml-metal-ops.h
  int ggml_metal_op_pad               (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_pad_reflect_1d    (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_roll              (ggml_metal_op_t ctx, int idx);
-diff --git a/src/ggml-metal/kernels/fa.metal b/src/ggml-metal/kernels/fa.metal
---- a/src/ggml-metal/kernels/fa.metal
-+++ b/src/ggml-metal/kernels/fa.metal
-@@ -273,12 +273,13 @@
+--- a/src/ggml-metal/kernels/fa_common.metal
++++ b/src/ggml-metal/kernels/fa_common.metal
+@@ -91,12 +91,13 @@
      constexpr short SH  = 2*C; // shared memory per simdgroup (s_t == float)
  
      constexpr short TS = 2*SH;
@@ -350,7 +348,9 @@ diff --git a/src/ggml-metal/kernels/fa.metal b/src/ggml-metal/kernels/fa.metal
      threadgroup s_t  * ss  = (threadgroup s_t  *) (shmem_f16 + Q*T); // scratch buffer for attention, mask and diagonal matrix
      threadgroup s2_t * ss2 = (threadgroup s2_t *) (shmem_f16 + Q*T); // same as above but in s2_t
  
-@@ -921,6 +922,14 @@
+--- a/src/ggml-metal/kernels/fa_f32.metal
++++ b/src/ggml-metal/kernels/fa_f32.metal
+@@ -29,6 +29,14 @@
      float,  float4,    simdgroup_float8x8
      //half,   half4,     simdgroup_half8x8
  
@@ -365,29 +365,22 @@ diff --git a/src/ggml-metal/kernels/fa.metal b/src/ggml-metal/kernels/fa.metal
  typedef decltype(kernel_flash_attn_ext<FA_TYPES, half4x4, 1, dequantize_f16, half4x4, 1, dequantize_f16, 64, 64>) flash_attn_ext_t;
  
  template [[host_name("kernel_flash_attn_ext_f32_dk32_dv32"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  32,  32>;
-@@ -939,6 +948,10 @@
- template [[host_name("kernel_flash_attn_ext_f32_dk320_dv256")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  320, 256>;
+@@ -48,6 +56,12 @@
  template [[host_name("kernel_flash_attn_ext_f32_dk512_dv512")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  512, 512>;
  template [[host_name("kernel_flash_attn_ext_f32_dk576_dv512")]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  576, 512>;
-+
+ 
 +// Explicit F32 precision preserves Query values as well as F32 K/V.
 +template [[host_name("kernel_flash_attn_ext_f32_dk32_dv32_prec_f32"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32_PREC, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  32,  32>;
 +template [[host_name("kernel_flash_attn_ext_f32_dk64_dv64_prec_f32"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES_F32_PREC, float4x4,   1, dequantize_f32,  float4x4,   1, dequantize_f32,  64,  64>;
- 
- template [[host_name("kernel_flash_attn_ext_f16_dk32_dv32"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES,    half4x4,    1, dequantize_f16,  half4x4,    1, dequantize_f16,  32,  32>;
- template [[host_name("kernel_flash_attn_ext_f16_dk40_dv40"  )]]  kernel flash_attn_ext_t kernel_flash_attn_ext<FA_TYPES,    half4x4,    1, dequantize_f16,  half4x4,    1, dequantize_f16,  40,  40>;
-@@ -1064,6 +1077,7 @@
++
  #undef FA_TYPES
  #undef FA_TYPES_BF
  #undef FA_TYPES_F32
++
 +#undef FA_TYPES_F32_PREC
- 
- constant bool FC_flash_attn_ext_vec_has_mask  [[function_constant(FC_FLASH_ATTN_EXT_VEC + 0)]];
- constant bool FC_flash_attn_ext_vec_has_sinks [[function_constant(FC_FLASH_ATTN_EXT_VEC + 1)]];
-diff --git a/src/ggml-metal/kernels/misc.metal b/src/ggml-metal/kernels/misc.metal
 --- a/src/ggml-metal/kernels/misc.metal
 +++ b/src/ggml-metal/kernels/misc.metal
-@@ -656,3 +656,82 @@
+@@ -772,3 +772,82 @@
          *(device float *) (dst + i0*args.nb_d0 + idst*args.nb_d1 + it*args.nb_d2) = result[idst];
      }
  }
@@ -470,7 +463,6 @@ diff --git a/src/ggml-metal/kernels/misc.metal b/src/ggml-metal/kernels/misc.met
 +
 +    dst_ptr[i0] = src_ptr[i0];
 +}
-diff --git a/src/ggml-metal/kernels/mul_mm.metal b/src/ggml-metal/kernels/mul_mm.metal
 --- a/src/ggml-metal/kernels/mul_mm.metal
 +++ b/src/ggml-metal/kernels/mul_mm.metal
 @@ -159,7 +159,7 @@
@@ -482,7 +474,7 @@ diff --git a/src/ggml-metal/kernels/mul_mm.metal b/src/ggml-metal/kernels/mul_mm
  
      constexpr int NR0 = 64;
      constexpr int NR1 = 32;
-@@ -849,6 +849,10 @@
+@@ -847,6 +847,10 @@
  //
  
  typedef decltype(kernel_mul_mm<half, half4x4, simdgroup_half8x8, half, half2x4, simdgroup_half8x8, float4x4, 1, dequantize_f32, float, float4x4, float, float2x4>) mul_mm_t;

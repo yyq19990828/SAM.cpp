@@ -28,7 +28,7 @@ from tools.validation.validate_image import (GATES, QUANTIZATION_GATES, QUANTIZA
                             quantization_release_eligibility,
                             validate_diagnostic_case_descriptor,
                             validate_existing_validation_profile, PINNED_GGML_REVISION,
-                            SAM_PATCHED_GGML_BUILD_COMMIT,
+                            PINNED_GGML_VERSION, SAM_PATCHED_GGML_BUILD_COMMIT,
                             allowed_runtime_arithmetic_profiles, runtime_arithmetic_profiles_valid,
                             validate_existing_run_receipt,
                             validate_quantization_sidecar)
@@ -315,7 +315,7 @@ class QuantizationChecks(unittest.TestCase):
                              "quantize_text_linear": profile["quantize_text_linear"]},
             "quantizer": {"implementation": "ggml_quantize_chunk", "fallback_implementation": "gguf-py",
                           "fallback_version": "0.19.0", "ggml_revision": PINNED_GGML_REVISION,
-                          "ggml_build_commit": PINNED_GGML_REVISION, "ggml_version": "0.25.3",
+                          "ggml_build_commit": PINNED_GGML_REVISION, "ggml_version": PINNED_GGML_VERSION,
                           "ggml_quantization_version": 2,
                           "helper": {"file": "sam_quantize_rows", "sha256": "4" * 64},
                           "ggml_library": {"file": "libggml-base.dylib", "sha256": "5" * 64},
@@ -324,14 +324,22 @@ class QuantizationChecks(unittest.TestCase):
         validate_quantization_sidecar(sidecar)
         sidecar["quantizer"]["ggml_build_commit"] = SAM_PATCHED_GGML_BUILD_COMMIT
         validate_quantization_sidecar(sidecar)
-        from tools.convert.sam3_gguf import LEGACY_GGML_QUANTIZER_BUILD_COMMITS
-        for commit in LEGACY_GGML_QUANTIZER_BUILD_COMMITS:
-            sidecar["quantizer"]["ggml_build_commit"] = commit
+        from tools.convert.sam3_gguf import LEGACY_GGML_QUANTIZER_IDENTITIES
+        current_identity = {key: sidecar["quantizer"][key]
+                            for key in ("ggml_revision", "ggml_version", "ggml_build_commit")}
+        for revision, version, commit in LEGACY_GGML_QUANTIZER_IDENTITIES:
+            sidecar["quantizer"].update(ggml_revision=revision, ggml_version=version, ggml_build_commit=commit)
             validate_quantization_sidecar(sidecar)
+            for field, current in current_identity.items():
+                previous = sidecar["quantizer"][field]
+                sidecar["quantizer"][field] = current
+                with self.subTest(legacy=commit, mixed_field=field), self.assertRaisesRegex(ValueError, "pinned GGML"):
+                    validate_quantization_sidecar(sidecar)
+                sidecar["quantizer"][field] = previous
         sidecar["quantizer"]["ggml_build_commit"] += "-unverified"
         with self.assertRaisesRegex(ValueError, "pinned GGML encoder/provider"):
             validate_quantization_sidecar(sidecar)
-        sidecar["quantizer"]["ggml_build_commit"] = SAM_PATCHED_GGML_BUILD_COMMIT
+        sidecar["quantizer"].update(current_identity)
         del sidecar["quantizer"]["ggml_quantize_library"]
         with self.assertRaisesRegex(ValueError, "pinned GGML encoder/provider"):
             validate_quantization_sidecar(sidecar)

@@ -182,7 +182,7 @@ records the measured selection and its workspace cost.
 
 Adding another platform requires a real driver, supported-driver selection,
 public configuration, device-aware statistics and matching hardware validation.
-The pinned [GGML backend registry](https://github.com/ggml-org/ggml/blob/353b63b439f27ab2cc19dac97ab1681ba6d2d084/src/ggml-backend-reg.cpp)
+The pinned [GGML backend registry](https://github.com/ggml-org/ggml/blob/d7cb574130e6f01ad25b3289685489200febcd74/src/ggml-backend-reg.cpp)
 provides the registration mechanism; a new backend still needs operator,
 precision, transfer and fallback checks. A non-GGML engine would need its own
 execution adapter.

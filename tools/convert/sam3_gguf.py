@@ -19,14 +19,42 @@ HYBRID_PROFILE = "visual-tracker-f32-v1"
 HYBRID_F32_PREFIXES = ("vit.", "neck.trk.", "mem_attn.", "mem_enc.", "sam_pe.", "sam_dec.",
                       "obj_ptr_proj.", "obj_ptr_tpos_proj.", "trk_mask_ds.")
 QUANTIZATION_VERSION = 2
-# Approved earlier builds: CUDA execution changes leave the quantization encoder
-# and packed weight format unchanged. Keep existing conversion receipts valid.
+GGML_REVISION = "d7cb574130e6f01ad25b3289685489200febcd74"
+GGML_VERSION = "0.26.0"
+_PATCH_DIRECTORY = Path(__file__).resolve().parents[2] / "cmake/patches"
+_METAL_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-precise-metal.patch").read_bytes()).hexdigest()
+_CUDA_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-precise-cuda.patch").read_bytes()).hexdigest()
+GGML_QUANTIZER_BUILD_COMMITS = (
+    GGML_REVISION,
+    f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}",
+    f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}-{_CUDA_PATCH_HASH[:12]}",
+)
+# Historical encoders remain valid provenance for existing packed weights.
+# New conversions use the current encoder; encoder changes need not be bitwise
+# identical merely because the packed format's quantization version is unchanged.
 LEGACY_GGML_QUANTIZER_BUILD_COMMITS = (
+    "353b63b439f27ab2cc19dac97ab1681ba6d2d084",
+    "353b63b4-sam-0a0b80dd15c2",
+    "353b63b4-sam-0a0b80dd15c2-28b1260af845",
     "353b63b4-sam-0a0b80dd15c2-08e802442ae8",
     "353b63b4-sam-0a0b80dd15c2-9417f66f5488",
     "353b63b4-sam-0a0b80dd15c2-e62f040cf989",
     "353b63b4-sam-0a0b80dd15c2-2e0b508b9ca2",
 )
+LEGACY_GGML_QUANTIZER_IDENTITIES = tuple(
+    ("353b63b439f27ab2cc19dac97ab1681ba6d2d084", "0.25.3", commit)
+    for commit in LEGACY_GGML_QUANTIZER_BUILD_COMMITS
+)
+
+
+def supported_ggml_quantizer(revision, version, build_commit, *, allow_legacy=False):
+    if not all(isinstance(value, str) for value in (revision, version, build_commit)):
+        return False
+    if revision == GGML_REVISION and version == GGML_VERSION and build_commit in GGML_QUANTIZER_BUILD_COMMITS:
+        return True
+    return allow_legacy and (revision, version, build_commit) in LEGACY_GGML_QUANTIZER_IDENTITIES
+
+
 QUANTIZED_ARITHMETIC_PROFILE = "ggml-quantized-native-v1"
 QUANTIZATION_MODULES = ("vision", "text", "fusion", "decoder")
 MAX_QUANTIZATION_MODULE_CSV_LENGTH = 256
