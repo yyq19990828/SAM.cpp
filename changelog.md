@@ -56,6 +56,7 @@ No releases have been published.
 
 ### Fixed
 
+- Make documentation checks independent of private build/model artifacts: retain their paths as archive records, reject links to Git-ignored targets, and check all repository Markdown documents.
 - Restore direct execution of grouped Python commands from any working directory, including reference-export child processes, while preserving flat compatibility entry points and module invocation.
 - Resolve the fully static SDK's OpenMP runtime dependencies for consumers that enable only C++, without requiring a C compiler in the consuming project.
 - Build conversion tools with caller-provided `ggml::ggml` packages and recognize namespaced CUDA backend targets in tools and tests.

@@ -1,5 +1,7 @@
 # W8A8 浮点对照与混合层修复
 
+归档路径说明：`build/`、`models/` 等目录中的证据不随源码分发。下文以相对仓库根目录的普通路径记录这些产物，保留历史哈希和验收结论。
+
 创建：2026-10-07 17:26:34，Asia/Shanghai。状态：浮点对照已修复，三种完整 selection 均未通过量化输出门限。
 
 ## 范围与依据
@@ -77,13 +79,13 @@ query 误选／高置信丢失／mask-score-box 越界计数为 28／13／23，�
 
 凭据：
 
-- [完整混合层序列](../../build/runtime-quantization-mixed-selection-v1/sequence.json)
-- [全视觉输出与特征](../../build/runtime-quantization-mixed-selection-v1/all/screening.json)
-- [全视觉 COCO 指标](../../build/runtime-quantization-mixed-selection-v1/all-coco/metrics.json)
-- [MLP COCO 指标](../../build/runtime-quantization-mixed-selection-v1/mlp-coco/metrics.json)
-- [Attention 线性层 COCO 指标](../../build/runtime-quantization-mixed-selection-v1/attention-coco/metrics.json)
-- [浮点修复烟测](../../build/runtime-quantization-repair-smoke-v1/sequence.json)
-- [二次幂 scale 的 CUDA 对照](../../build/runtime-quantization-power-two-kernel-v1/parity.json)
-- [失败归因](../../build/runtime-quantization-failure-analysis-v1/analysis.json)
-- [99 项工具测试](../../build/runtime-quantization-repair-tools-v1.log)
-- [本轮冻结凭据](../../build/runtime-quantization-repair-delivery-v1/receipt.json)
+- 完整混合层序列（`build/runtime-quantization-mixed-selection-v1/sequence.json`）
+- 全视觉输出与特征（`build/runtime-quantization-mixed-selection-v1/all/screening.json`）
+- 全视觉 COCO 指标（`build/runtime-quantization-mixed-selection-v1/all-coco/metrics.json`）
+- MLP COCO 指标（`build/runtime-quantization-mixed-selection-v1/mlp-coco/metrics.json`）
+- Attention 线性层 COCO 指标（`build/runtime-quantization-mixed-selection-v1/attention-coco/metrics.json`）
+- 浮点修复烟测（`build/runtime-quantization-repair-smoke-v1/sequence.json`）
+- 二次幂 scale 的 CUDA 对照（`build/runtime-quantization-power-two-kernel-v1/parity.json`）
+- 失败归因（`build/runtime-quantization-failure-analysis-v1/analysis.json`）
+- 99 项工具测试（`build/runtime-quantization-repair-tools-v1.log`）
+- 本轮冻结凭据（`build/runtime-quantization-repair-delivery-v1/receipt.json`）

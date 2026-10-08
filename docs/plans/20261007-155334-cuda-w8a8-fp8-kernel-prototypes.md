@@ -1,5 +1,7 @@
 # CUDA W8A8 与 FP8 矩阵原型
 
+归档路径说明：`build/`、`models/` 等目录中的证据不随源码分发。下文以相对仓库根目录的普通路径记录这些产物，保留历史哈希和验收结论。
+
 创建：2026-10-07 15:53:34，Asia/Shanghai。状态：独立内核筛选完成，整图筛选待续。
 
 ## 范围与依据
@@ -78,8 +80,8 @@ F16 溢出和非法输入拒绝。新 INT8 模式在 512 个位置核对精确 I
 此处 CUDA 与独立 CPU 参考都采用 F32 除法后舍入。前批离线研究为避免溢出，
 使用 F64 除法；临界 tie 值可能不同，不声称两套 fake-quant 逐位相同。
 
-- [诊断输入 manifest](../../models/calibration/coco2017-linear-probes-v1/manifest.json)
-- [完整内核检查与来源身份](../../build/cuda-linear-probes-validation-v1/validation.json)
+- 诊断输入 manifest（`models/calibration/coco2017-linear-probes-v1/manifest.json`）
+- 完整内核检查与来源身份（`build/cuda-linear-probes-validation-v1/validation.json`）
 
 ```sh
 rtk proxy cmake -S . -B build/cuda-linear-probes-v1 -G Ninja \
@@ -125,12 +127,12 @@ F16 记录中的 0 不代表实际点积为 0。
 两个输出类型的当前 FP8 候选均退出本轮整图集成；若后续提供满足契约的累加方案，
 再重新做独立验证。
 
-- [F32 累加限制后的失败记录](../../build/cuda-linear-probes-smoke-v3/fp8-f32/kernel-check-failure.json)
-- [单位缩放隔离记录](../../build/cuda-linear-probes-smoke-v4/fp8-f32/kernel-check-failure.json)
-- [实际内核 trace](../../build/cuda-linear-probes-smoke-v4/fp8-trace.nsys-rep)
-- [最终构建的 F32 失败复现](../../build/cuda-linear-probes-diagnostics-v1/fp8-f32-final/kernel-check-failure.json)
-- [F16 输出的补充验证：14/15，未通过准入](../../build/cuda-linear-probes-fp8-validation-v1/validation.json)
-- [F16 边界失败](../../build/cuda-linear-probes-fp8-validation-v1/nearest-even/kernel-check-failure.json)
+- F32 累加限制后的失败记录（`build/cuda-linear-probes-smoke-v3/fp8-f32/kernel-check-failure.json`）
+- 单位缩放隔离记录（`build/cuda-linear-probes-smoke-v4/fp8-f32/kernel-check-failure.json`）
+- 实际内核 trace（`build/cuda-linear-probes-smoke-v4/fp8-trace.nsys-rep`）
+- 最终构建的 F32 失败复现（`build/cuda-linear-probes-diagnostics-v1/fp8-f32-final/kernel-check-failure.json`）
+- F16 输出的补充验证：14/15，未通过准入（`build/cuda-linear-probes-fp8-validation-v1/validation.json`）
+- F16 边界失败（`build/cuda-linear-probes-fp8-validation-v1/nearest-even/kernel-check-failure.json`）
 
 ### 计时口径修正
 
@@ -192,19 +194,19 @@ profile。静态模式保留作消融，F16 输出先解决临时缓冲，当前
 72 个独立计时进程保持原样；修正采样器对已退出 PID 的处理后，仅在新目录补跑
 72 个内存进程，再汇总两组记录，没有为了改变计时结果重跑基线。
 
-- [正式计时元数据](../../build/cuda-linear-probes-performance-v1/metadata.json)
-- [完整 144 进程序列](../../build/cuda-linear-probes-memory-v2/sequence.json)
-- [完整时间／内存对照](../../build/cuda-linear-probes-memory-v2/comparison.json)
-- [INT8 实际内核 trace](../../build/cuda-linear-probes-diagnostics-v1/int8-trace.nsys-rep)
-- [INT8 kernel 统计](../../build/cuda-linear-probes-diagnostics-v1/int8-kernels.csv)
-- [Compute Sanitizer：0 errors、0 bytes leaked](../../build/cuda-linear-probes-diagnostics-v1/memcheck-token-f32.log)
-- [F16 分离输出缓冲的 Memcheck](../../build/cuda-linear-probes-diagnostics-v1/memcheck-static-f16.log)
-- [隔离环境 81 项工具测试通过](../../build/cuda-linear-probes-diagnostics-v1/tools-tests.log)
+- 正式计时元数据（`build/cuda-linear-probes-performance-v1/metadata.json`）
+- 完整 144 进程序列（`build/cuda-linear-probes-memory-v2/sequence.json`）
+- 完整时间／内存对照（`build/cuda-linear-probes-memory-v2/comparison.json`）
+- INT8 实际内核 trace（`build/cuda-linear-probes-diagnostics-v1/int8-trace.nsys-rep`）
+- INT8 kernel 统计（`build/cuda-linear-probes-diagnostics-v1/int8-kernels.csv`）
+- Compute Sanitizer：0 errors、0 bytes leaked（`build/cuda-linear-probes-diagnostics-v1/memcheck-token-f32.log`）
+- F16 分离输出缓冲的 Memcheck（`build/cuda-linear-probes-diagnostics-v1/memcheck-static-f16.log`）
+- 隔离环境 81 项工具测试通过（`build/cuda-linear-probes-diagnostics-v1/tools-tests.log`）
 
 新辅助头单独、重复包含的 C++17 编译检查通过；文档和 whitespace 检查通过。
 默认 CPU 配置保持 probes 关闭，没有要求 CUDA 编译器或加入 probe target。
 本批没有修改已验收的 SAM 运行时路径，未重复执行第一批的完整模型质量测试。
 
 本批源码、实际执行文件／动态库身份、通过与拒绝的数值记录、计时和内存测量
-汇总于[原型筛选归档](../../build/cuda-linear-probes-delivery-v1/receipt.json)。完整
+汇总于原型筛选归档（`build/cuda-linear-probes-delivery-v1/receipt.json`）。完整
 SAM 路线继续进行，不将这份归档视为 W8A8 模型发布或整条路线完成。

@@ -1,5 +1,7 @@
 # W8A8 的独立 COCO 整图筛选
 
+归档路径说明：`build/`、`models/` 等目录中的证据不随源码分发。下文以相对仓库根目录的普通路径记录这些产物，保留历史哈希和验收结论。
+
 创建：2026-10-07 16:51:28，Asia/Shanghai。状态：128 张筛选及标注评估完成；统一候选未通过，继续精度修复。
 
 ## 范围与依据
@@ -88,9 +90,9 @@ evaluation 来修复候选。尚未实现 C++ 整图接入或声称端到端延�
 
 凭据：
 
-- [完整输出筛选](../../build/runtime-quantization-output-selection-v1/screening.json)
-- [COCO 标注结果](../../build/runtime-quantization-coco-selection-v1/metrics.json)
-- [修正后的 CUDA 算术对照](../../build/runtime-quantization-output-screen-preflight-v2/cuda-kernel-parity.json)
-- [初次舍入差异](../../build/runtime-quantization-output-screen-preflight-v1/scale-rounding-diagnostic.json)
-- [两张图诊断烟测](../../build/runtime-quantization-output-screen-smoke-v1/screening.json)
-- [本轮源码及证据归档](../../build/runtime-quantization-screening-delivery-v1/receipt.json)
+- 完整输出筛选（`build/runtime-quantization-output-selection-v1/screening.json`）
+- COCO 标注结果（`build/runtime-quantization-coco-selection-v1/metrics.json`）
+- 修正后的 CUDA 算术对照（`build/runtime-quantization-output-screen-preflight-v2/cuda-kernel-parity.json`）
+- 初次舍入差异（`build/runtime-quantization-output-screen-preflight-v1/scale-rounding-diagnostic.json`）
+- 两张图诊断烟测（`build/runtime-quantization-output-screen-smoke-v1/screening.json`）
+- 本轮源码及证据归档（`build/runtime-quantization-screening-delivery-v1/receipt.json`）

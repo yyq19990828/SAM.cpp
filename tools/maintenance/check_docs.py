@@ -4,6 +4,8 @@
 from pathlib import Path
 import os
 import re
+import subprocess
+from urllib.parse import unquote, urlsplit
 
 # Historical plans keep their original path narrative. Links from those
 # documents still resolve through this explicit compiled-library migration
@@ -119,21 +121,48 @@ MOVED_SOURCE_PATHS = {
 }
 
 
+def doc_target_path(path, target):
+    # Check the linked path itself: an ignored symlink to a public source is
+    # still absent in a clean checkout. Normalize '..' without following it.
+    return Path(os.path.abspath(path.parent / unquote(target.split("#", 1)[0])))
+
+
 def resolve_doc_target(root, path, target):
-    destination = target.split("#")[0]
-    direct = path.parent / destination
-    if direct.is_file():
-        return direct
+    direct = doc_target_path(path, target)
     try:
-        relative = os.path.normpath(str(direct))
-        relative = Path(relative).relative_to(root).as_posix()
+        relative = direct.relative_to(root).as_posix()
     except ValueError:
         return None
+    if direct.is_file():
+        return direct
     replacement = MOVED_SOURCE_PATHS.get(relative)
     if replacement is None:
         return None
     moved = root / replacement
     return moved if moved.is_file() else None
+
+
+def local_doc_targets(text):
+    # Inline links/images and reference definitions share the same destination
+    # rules. Angle brackets permit spaces; optional link titles are not paths.
+    patterns = (r"\]\(\s*(?:<([^>\n]+)>|([^\s)]+))",
+                r"(?m)^[ \t]{0,3}\[[^]\n]+\]:[ \t]*(?:<([^>\n]+)>|([^\s]+))")
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            target = match.group(1) or match.group(2)
+            if not target.startswith(("#", "//")) and not urlsplit(target).scheme:
+                yield target
+
+
+def ignored_doc_targets(root, destinations):
+    if not destinations:
+        return set()
+    result = subprocess.run(["git", "check-ignore", "--stdin", "-z"], cwd=root,
+                            input="\0".join(sorted(destinations)) + "\0",
+                            capture_output=True, text=True)
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f"cannot check Git ignore rules: {result.stderr.strip()}")
+    return set(result.stdout.split("\0")) - {""}
 
 
 def table_facts(text):
@@ -145,19 +174,31 @@ def table_facts(text):
 
 
 def check(root):
-    root = Path(root)
+    root = Path(root).resolve()
     for name in ("BENCHMARK", "MODEL_ZOO", "docs/quantization", "docs/visual-examples"):
         english, chinese = root / (name + ".md"), root / (name + "_zh.md")
         if table_facts(english.read_text()) != table_facts(chinese.read_text()):
             raise ValueError(f"bilingual measurement/artifact table differs: {name}")
-    files = [root / name for name in ("README.md", "BENCHMARK.md", "BENCHMARK_zh.md", "MODEL_ZOO.md", "MODEL_ZOO_zh.md")]
-    files += list((root / "docs").rglob("*.md"))
+    # Check source documents (including newly written ones) without walking
+    # generated dependency docs, model downloads or virtual environments.
+    inventory = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.md"],
+        cwd=root, text=True)
+    files = sorted({root / name for name in inventory.split("\0") if name and (root / name).is_file()})
+    links = []
     for path in files:
-        for target in re.findall(r"\]\(([^)]+)\)", path.read_text()):
-            if "://" in target or target.startswith("#"):
-                continue
-            if resolve_doc_target(root, path, target) is None:
+        for target in local_doc_targets(path.read_text()):
+            try:
+                relative = doc_target_path(path, target).relative_to(root).as_posix()
+            except ValueError:
                 raise ValueError(f"missing local doc target: {path}: {target}")
+            links.append((path, target, relative))
+    ignored = ignored_doc_targets(root, {relative for _, _, relative in links})
+    for path, target, relative in links:
+        if relative in ignored:
+            raise ValueError(f"ignored local doc target: {path}: {target}; use a plain archive path instead")
+        if resolve_doc_target(root, path, target) is None:
+            raise ValueError(f"missing local doc target: {path}: {target}")
     return len(files)
 
 

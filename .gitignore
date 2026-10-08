@@ -4,3 +4,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+# >>> orca-dag planning artifacts (managed)
+.orca-dag/
+# <<< orca-dag planning artifacts (managed)

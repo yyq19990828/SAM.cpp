@@ -1,5 +1,7 @@
 # CUDA 算子 profiling 与推理优化计划
 
+归档路径说明：`build/`、`models/` 等目录中的证据不随源码分发。下文以相对仓库根目录的普通路径记录这些产物，保留历史哈希和验收结论。
+
 创建：2026-10-07 01:55:52，Asia/Shanghai。状态：完成。
 基线：`92b56bc`；工作区开始时干净。本机 Linux x86_64、RTX 4090、driver
 610.57.04、NVCC 13.3.73、Nsight Systems/Compute 已安装。
@@ -48,7 +50,7 @@ Nsight Systems 2026.1.3 的 F32/F16/full-Q8_0 完整 traces、SQLite、CSV 位�
 `build/cuda-operator-profiling-v1/`；只分析五次完整 warm 调用，排除首轮。
 以 12,192,768-byte 图像上传及 66,355,200-byte mask-logits 下载界定 GPU
 区间，不能把该区间当作端到端时间。原始统计见
-[warm kernel summary](../../build/cuda-operator-profiling-v1/warm-kernel-summary-v1.json)。
+warm kernel summary（`build/cuda-operator-profiling-v1/warm-kernel-summary-v1.json`）。
 F32 每次 152,772 kernels、GPU kernel 合计中位数 552.423 ms、区间
 774.760 ms；F16 153,191 / 554.831 / 781.077；full-Q8_0
 153,378 / 446.763 / 673.816。小 SGEMM、split-K reduction、attention
@@ -61,7 +63,7 @@ softmax/output 是主要调用来源，F32 每次 softmax/output 各 27,672 次�
 记录为 prototype；实际 ldd 和运行中进程 maps 均确认所选 library。
 正式交付另行 clean build，不修改原 baseline build。
 
-[未 profile A/B/A](../../build/cuda-operator-profiling-v1/tile-timing-v3.json)
+未 profile A/B/A（`build/cuda-operator-profiling-v1/tile-timing-v3.json`）
 为同一 F32 truck，一次冷调用、五次 full、五次 cache；中位数 baseline-before
 831.549 ms，256 为 688.584，512 为 620.791，1024 为 589.295，
 baseline-after 为 832.396。1024 相对首 baseline 减少 29.13%，两次
@@ -103,7 +105,7 @@ baseline 正确复现旧 tree hash，新 tree 与 CMake 实际计算一致。保
 
 ### 优化后算子结构
 
-[统一 profiling summary](../../build/cuda-operator-profiling-v1/operator-summary-v1.json)
+统一 profiling summary（`build/cuda-operator-profiling-v1/operator-summary-v1.json`）
 保留每次 GPU interval、原始 kernel family、CUDA API、传输类型与字节数。
 
 | Image profile | Warm kernels / request | Kernel sum median, ms | GPU interval median, ms |
@@ -136,7 +138,7 @@ trace；小 GEMM 的来源以 pinned attention 代码和实际 kernel counts 验
 
 Clean build `build/cuda-attention-optimized`，Release/Ninja、arch 89，
 `GGML_CUDA=ON`、Metal/BLAS/CUDA graphs off、required CUDA tests on。
-[clean source audit](../../build/cuda-operator-profiling-v1/clean-source-audit-v1.json)
+clean source audit（`build/cuda-operator-profiling-v1/clean-source-audit-v1.json`）
 确认新旧 prepared tree 文件 inventory 相同，仅 `sam-precise.cu` bytes 改变，
 且与 prototype 一致。原始 GGML 和 Meta checkouts 的 Git status 均干净。
 
@@ -188,22 +190,22 @@ Clean CUDA Release build 已完成；正式 CTest 23/23 全通过、零 skips。
 head-64 Q1025/K137 同样通过现有 5e-6 absolute bound；未改变 bounds。
 原 head-64/K5184 的误差为 1.64295e-7。完整 raw 输出在
 `build/cuda-attention-optimized/Testing/Temporary/LastTest.log`，结构化报告为
-[CUDA CTest](../../build/cuda-attention-optimized/cuda-runtime-v1.xml)。
+CUDA CTest（`build/cuda-attention-optimized/cuda-runtime-v1.xml`）。
 
 CPU-disabled-CUDA fresh Release build 的 14/14 CTest 全通过、零 skips；
-[CPU CTest](../../build/cpu-attention-regression/cpu-runtime-v1.xml)。
+CPU CTest（`build/cpu-attention-regression/cpu-runtime-v1.xml`）。
 正式 CUDA F32/F16 两组各七 case 的原始 checkpoint 图像验收全部通过，
-[dense original acceptance](../../build/cuda-attention-images-v1/sequence.json)。
+dense original acceptance（`build/cuda-attention-images-v1/sequence.json`）。
 truck F32 的 mask-logits normalized L2 为 2.5289e-5，vision features
 为约 4.53e-6～1.15e-5，均满足冻结 gates；这不是 prototype mask 相等
 替代原始模型验收。production ldd 独立确认新 build 的 CUDA library，见
-[loader audit](../../build/cuda-operator-profiling-v1/production-loader-audit-v1.json)。
+loader audit（`build/cuda-operator-profiling-v1/production-loader-audit-v1.json`）。
 head-64 Q1025/K137 double golden 最大误差实际为 1.97789e-7。
 
 八个 CUDA Vision/Full × Q8_0/Q6_K/Q5_K/Q4_K 预设全部通过各七 case
 原始 output-quality gates（56/56），runtime CUDA arithmetic profile 均有效。
 新 records：
-[quantized acceptance](../../build/cuda-attention-quantized-v1/sequence.json)。
+quantized acceptance（`build/cuda-attention-quantized-v1/sequence.json`）。
 `tensor_fidelity_passed=false` 仍独立保留；未把量化中间张量描述为原始 F32
 等价，也未改变压缩/native arithmetic diagnostic 的 gates 或权重数据。
 结合 dense image，本轮十个 CUDA image 配置原始验收共 70/70 case 通过。
@@ -211,37 +213,37 @@ head-64 Q1025/K137 double golden 最大误差实际为 1.97789e-7。
 正式 F32 video 五个原始 case（motion 48、entry 64、occlusion 64、
 hotstart-removal 24、negative 16）共 216 帧全部通过 tensors/masks/IDs/
 state gates。记录为
-[F32 video acceptance](../../build/cuda-attention-videos-v1/f32/metrics.json)。
+F32 video acceptance（`build/cuda-attention-videos-v1/f32/metrics.json`）。
 Hybrid、shared sessions 与正式 timing 继续串行执行。
 
 Hybrid video 同样完成全部五 case/216 帧并通过；两种 video 配置合计
 432 帧原始模型 tensors/masks/IDs/state gates 通过。
-[完整 video acceptance](../../build/cuda-attention-videos-v1/sequence.json)。
+完整 video acceptance（`build/cuda-attention-videos-v1/sequence.json`）。
 继续执行原始模型共享 session、长序列内存检查，以及独立已资格化 fixtures
 的正式 timing；无 profiler、无编译重叠。
 
 六个 original-weight shared/session checks 全部通过，含 F32/hybrid 各
 64+64 交错 long-video state/ownership/workspace-bounds：
-[session sequence](../../build/cuda-attention-sessions-v1/sequence.json)。
+session sequence（`build/cuda-attention-sessions-v1/sequence.json`）。
 原始 Meta 模块重新完成 one/four-object 的 17-frame prefix qualification，
 仍声明完整长度 64、维持 expected delay 14 与 ID/对象记录：
-[fixture qualification v3](../../build/cuda-video-benchmark-qualification-v3/sequence.json)。
+fixture qualification v3（`build/cuda-video-benchmark-qualification-v3/sequence.json`）。
 它绑定当前工具 source hashes，不覆写 v1/v2，也不绕过 provenance checks。
 正式未 profile 的十 image / 四 video cells 开始执行；源码、library 与模型
 identities 运行前后核对，采样 GPU memory 可能漏过短暂 scratch 峰值。
 
 ## 完成交付
 
-[串行 delivery](../../build/cuda-attention-delivery-v1/sequence.json) 与
-[qualification pipeline](../../build/cuda-attention-pipeline-v1/sequence.json)
+串行 delivery（`build/cuda-attention-delivery-v1/sequence.json`） 与
+qualification pipeline（`build/cuda-attention-pipeline-v1/sequence.json`）
 全部完成。CUDA 23、CPU-disabled-CUDA 14、isolated tool 69 检查通过；
 十 image 配置 70/70 original cases、F32/hybrid video 各五 case/216 帧、
 六 original shared-session runs（含各 64+64 交错 long video）通过。
-[最终产物一致性 audit](../../build/cuda-attention-delivery-audit-v1.json)
+最终产物一致性 audit（`build/cuda-attention-delivery-audit-v1.json`）
 190 checks 全通过，重新核对每个独立 model/binary/library/qualification/
 timing source snapshot，不重写原 completed receipts。
 
-[正式未 profile timing](../../build/cuda-attention-performance-v1/sequence.json)
+正式未 profile timing（`build/cuda-attention-performance-v1/sequence.json`）
 共 14 cells：十 image 的 cold/five-full/five-cache、四 video 的完整
 64/16/48 一／四对象。与此前 same-host 完整合格 baseline 比较，
 F32/F16 image median 837.321/851.330 → 589.913/604.971 ms；
@@ -251,10 +253,10 @@ F32 video one/four-object median 1,176.676/2,004.978 →
 934.176/1,755.855 ms。历史 CUDA receipts 来源 image v1 / video v2
 不变；source patch 的版本差异是预期，baseline binaries/compiled libraries
 保持原样。精确值、14-cell model/receipt hashes 和比较范围见
-[final comparison](../../build/cuda-operator-profiling-v1/final-comparison-v1.json)。
+final comparison（`build/cuda-operator-profiling-v1/final-comparison-v1.json`）。
 
 独立 clean production 的
-[A/B/A receipt](../../build/cuda-operator-profiling-v1/production-timing-v1.json)
+A/B/A receipt（`build/cuda-operator-profiling-v1/production-timing-v1.json`）
 使用 default loader、真实 `/proc/PID/maps`、binary/library/source-provenance
 identities：baseline-before 832.519 ms、production 589.618 ms、
 baseline-after 836.072 ms，latency 减少 29.1767%，baseline drift 0.4267%。
@@ -272,7 +274,7 @@ Vision Q6_K 的正式 timing 记录只采到 2.498 GB，不能作为真实 VRAM 
 maps、artifact hashes 和 CUDA-only node placement 全核对，每个 process
 74～98 个有效 samples。此过程的时钟全部排除正式性能。
 
-[image memory profiling](../../build/cuda-attention-memory-v1/sequence.json)
+image memory profiling（`build/cuda-attention-memory-v1/sequence.json`）
 全部通过；F32 peak 4,777,312,256 bytes，Vision Q6_K 为 3,460,300,800。
 双语表 image GPU 列采用该单独约 20 Hz 采样；video 继续采用 64-frame
 正式 timing 中每秒采样，明确均为真实峰值的下界。RSS 仍取 timing process，
@@ -292,6 +294,6 @@ checker 或历史机器凭据。production A/B/A 的三次 truck binary-mask SHA
 同 cadence 下 baseline GPU peak 4,758,437,888 bytes，production
 4,777,312,256 bytes（增加 18,874,368 bytes，约 18.9 MB）。
 
-[发布数据校对](../../build/cuda-attention-publication-audit-v1.json)通过：
+发布数据校对（`build/cuda-attention-publication-audit-v1.json`）通过：
 双语表共 28 个 CUDA 单元格与已资格化 timing / 独立 memory receipts 的
 median、P95、RSS、GPU memory 逐项一致，十个 memory CSV 的 SHA 再次核对。

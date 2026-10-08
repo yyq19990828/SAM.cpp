@@ -1,5 +1,7 @@
 # 类型感知图像缓存的运行时实验
 
+归档路径说明：`build/`、`models/` 等目录中的证据不随源码分发。下文以相对仓库根目录的普通路径记录这些产物，保留历史哈希和验收结论。
+
 创建：2026-10-07 18:11:54，Asia/Shanghai。状态：实验及质量/性能验收完成；保留内部模式。
 
 ## 范围
@@ -57,10 +59,10 @@ FPN 0/1 消融也已通过，按该固定组合进入运行时实验。512 张 e
 依赖构建，没有改写上一阶段库；因此本次 CTest 不重复注册 GGML preparation
 检查。Metal 缓存模式没有硬件验收或支持声明。
 
-[真实权重预检](../../build/cache-runtime-preflight-v1/sequence.json)覆盖原始 F32
+真实权重预检（`build/cache-runtime-preflight-v1/sequence.json`）覆盖原始 F32
 权重/CUDA F32 计算，以及现有 full Q8_0 权重/CUDA F16 计算，各跑默认、F16、
 混合 Q8_0 缓存。七个固定用例分别比较原始 checkpoint 与本轮 native baseline。
-[136 项检查](../../build/cache-runtime-preflight-analysis-v1/analysis.json)均通过：
+136 项检查（`build/cache-runtime-preflight-analysis-v1/analysis.json`）均通过：
 候选 FPN 与对应原生编码参考逐值一致；混合 Q8_0 的检测路径未变；默认 full Q8
 路径的十个诊断 tensor 及七例最终输出与上一阶段相同。
 
@@ -86,13 +88,13 @@ FPN 0/1 消融也已通过，按该固定组合进入运行时实验。512 张 e
 F16 计算这一组选择实验，评估它能否兼顾严格质量和已有快速路径的内存优势。
 
 单个真实原始权重的 CPU 默认路径回归也已通过
-[原有 F32 门槛](../../build/cache-runtime-cpu-smoke-v1-analysis.json)。它与 CUDA
+原有 F32 门槛（`build/cache-runtime-cpu-smoke-v1-analysis.json`）。它与 CUDA
 数值筛选并行运行，不用于计时。
 
 ### 原生 selection 与固定候选
 
-[两种原配置](../../build/native-cache-selection-v1/sequence.json)及
-[dense F16 补充配置](../../build/native-cache-dense-f16-selection-v1/sequence.json)
+两种原配置（`build/native-cache-selection-v1/sequence.json`）及
+dense F16 补充配置（`build/native-cache-dense-f16-selection-v1/sequence.json`）
 均完成每模式 128 张、413 个提示。下表的新增误差相对同权重/计算的 native F32
 缓存基线；绝对质量仍相对原始 checkpoint，两个条件不能互相替代。
 
@@ -113,9 +115,9 @@ F16 计算这一组选择实验，评估它能否兼顾严格质量和已有快�
 支持，也不把此前支持扩大为通过本轮更严格门槛。
 
 最终只冻结 **F32 权重/CUDA F32 计算 + FPN 0/1 Q8_0、FPN 2 F32** 一种配方，
-见[冻结清单](../../build/native-cache-frozen-recipe-v1.json)。它记录源码、二进制、
+见冻结清单（`build/native-cache-frozen-recipe-v1.json`）。它记录源码、二进制、
 依赖、原始 checkpoint、GGUF、数据、门槛、selection 证据和评估脚本身份；
-[源码副本](../../build/typed-cache-runtime-sources-v1/hashes.json)保存 native 编译
+源码副本（`build/typed-cache-runtime-sources-v1/hashes.json`）保存 native 编译
 路径和工具。512 张 evaluation 只比较此候选及相同权重/计算的 F32 缓存基线。
 先在两张 selection 控制图上检查原始 oracle 与已归档输出逐字节一致，再进入
 独立图片。评估后不依据失败样本修改本轮参数、候选或门槛。
@@ -128,20 +130,20 @@ F16 计算这一组选择实验，评估它能否兼顾严格质量和已有快�
 
 最终完整重建后，CPU CTest 15/15、CUDA CTest 28/28、隔离环境 Python 工具测试
 104/104 再次通过。使用最终二进制补测了量化权重/CUDA F32 联合图路径，
-[28 项检查](../../build/native-cache-joint-regression-v1/analysis.json)通过：默认七例
+28 项检查（`build/native-cache-joint-regression-v1/analysis.json`）通过：默认七例
 最终检测字段和掩码与旧验收逐值一致，F16/混合 Q8_0 缓存也通过新增误差门槛。
 这组属于路径回归，不扩展其独立 COCO 质量资格。上述数值检查可以与 oracle
 生成并行；正式性能测量仍要求 GPU 串行。
 
 共享图像缓存类型也经真实视频默认路径回归：hybrid 权重/CUDA F16 的 48 帧
-motion 用例完成，[230 项比较](../../build/typed-cache-video-regression-v1/analysis.json)
+motion 用例完成，230 项比较（`build/typed-cache-video-regression-v1/analysis.json`）
 全部通过，包含最终字段、每帧掩码、去除执行计时后的跟踪决策和四个采样帧的
 诊断张量逐字节一致。对应旧输出已经过原始视频参考验收。本次不声称重新覆盖
 全部视频场景或新增视频 A8 支持。
 
 ### 独立 512 张质量结果
 
-[独立评估](../../build/native-cache-evaluation-v1/metrics.json)已完成，覆盖全部
+独立评估（`build/native-cache-evaluation-v1/metrics.json`）已完成，覆盖全部
 512 张 evaluation 和 1,676 个提示。原始 oracle 的两张 selection 控制图与旧
 参考逐字节一致；没有用 evaluation 拟合或替换配方。原生 F32 缓存基线及混合
 Q8_0 候选均为 **512/512 张通过**原始 checkpoint 逐对象门槛，候选也为
@@ -164,8 +166,8 @@ val2017 AP。该结果只为冻结的 F32 权重/CUDA F32 计算组合提供图�
 
 ### 正式性能、内存与发布决定
 
-[测量记录](../../build/native-cache-performance-v1/sequence.json)及
-[汇总](../../build/native-cache-performance-v1/comparison.json)完成。RTX 4090、CPU
+测量记录（`build/native-cache-performance-v1/sequence.json`）及
+汇总（`build/native-cache-performance-v1/comparison.json`）完成。RTX 4090、CPU
 4 线程，1800×1200 truck 图像；完整调用包含 `set_image` 与分割，更换提示交替
 truck/wheel，结果重放单独测量。每个配置三个独立计时进程，5 次 warmup 后
 20 次完整调用，基线/候选按 AB/BA/AB 交错；下表时间汇总 60 次样本。内存另用
@@ -192,7 +194,7 @@ FPN payload 降低 **69.940%**。但三个基线 GPU 采样峰值均为 4,777,31
 GPU 峰值下降。arena 计数不覆盖全部 CUDA 库、临时缓冲及保留容量，不能用
 它替代实际进程采样，也不在缺少独立分配归因时将差额归因于某一个 buffer。
 
-[判定](../../build/native-cache-performance-v1/decision.json)：严格图像质量通过，
+判定（`build/native-cache-performance-v1/decision.json`）：严格图像质量通过，
 但未达到路线图的均衡模式显存降幅或节省显存模式目标。**本轮不新增公共缓存
 精度选项**，保留类型感知 host storage、原生 codec 检查及内部实验工具。该
 固定候选的有效收益是这一配置下的延迟、主机载荷和传输量；不宣传其节省显存，

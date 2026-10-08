@@ -33,7 +33,7 @@ First write `docs/plans/YYYYMMDD-HHMMSS-topic.md` using Asia/Shanghai time and k
 
 ## Documentation Audience
 
-README and user guides explain installation, APIs, model/backend support, conversion, stable format contracts, and concise performance results. Experimental procedures, failed attempts, diagnostic tensor statistics, receipt hashes, private archive inventories, and historical measurements belong in the corresponding `docs/plans/` file. Keep immutable machine-readable evidence unchanged and link it from plans. Hardware used for a measurement is not the repository's platform boundary; one implemented adapter is not the full model roadmap.
+README and user guides explain installation, APIs, model/backend support, conversion, stable format contracts, and concise performance results. Experimental procedures, failed attempts, diagnostic tensor statistics, receipt hashes, private archive inventories, and historical measurements belong in the corresponding `docs/plans/` file. Keep immutable machine-readable evidence unchanged and reference it from plans. Local Markdown links must resolve in a clean checkout; record evidence under Git-ignored directories such as `build/`, `models/` or `.venv*/` as repository-relative inline-code paths with an availability note. Link only to distributed repository files or durable external archive URLs. Hardware used for a measurement is not the repository's platform boundary; one implemented adapter is not the full model roadmap.
 
 ## Build and Test
 

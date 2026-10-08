@@ -1,5 +1,7 @@
 # 分精度验收门槛 v2 规划
 
+归档路径说明：`build/`、`models/` 等目录中的证据不随源码分发。下文以相对仓库根目录的普通路径记录这些产物，保留历史哈希和验收结论。
+
 创建：2026-10-07 20:09:54，Asia/Shanghai。
 
 状态：v2 工具、开发筛选、独立最终质量评估和性能测量均已完成并归档。
@@ -1032,7 +1034,7 @@ AP/mIoU 的点值、置信界、尺寸/类别分组及其余数值项均达标�
 - `build/precision-development-metrics-v2-resumed/f16-fast/metrics.json` 的 SHA-256
   为 `0b491621323637b611c7247ab556ccf6ab349a274cf4e1967b481b1bf3012ef0`。
 
-四份作业进度均已完成且无执行错误。[完整开发汇总](../../build/precision-development-summary-v2.json)
+四份作业进度均已完成且无执行错误。完整开发汇总（`build/precision-development-summary-v2.json`）
 已核对各报告及绑定文件，SHA-256 为
 `04a029f5ce71e7498972c90b5dae6511e003872f83ad2ad3fa730622fd68181c`。
 19 个配置的 v2 七例回归均通过，15 个既有未压缩配置的原七例验证也通过；

@@ -1,5 +1,7 @@
 # 激活、注意力与运行时状态量化规划
 
+归档路径说明：`build/`、`models/` 等目录中的证据不随源码分发。下文以相对仓库根目录的普通路径记录这些产物，保留历史哈希和验收结论。
+
 创建：2026-10-07 14:30:03，Asia/Shanghai。状态：首轮实现、验收与候选取舍已完成；后续研究范围见文末。
 
 最新进展：[真实 typed cache 运行时实验](20261007-181154-typed-image-cache-runtime.md)
@@ -83,9 +85,9 @@ F16 快速模式比默认模式快约 16.5%，但采样显存增加约 13.3%。�
 把新增显存全部归因于某一个 buffer；须在阶段 0 分解分配峰值。
 
 沿用 [最近的 CUDA 优化计划](20261007-113358-cuda-layout-kernel-optimization.md)
-及其不可变凭据：[性能](../../build/cuda-layout-performance-v1/sequence.json)、
-[显存](../../build/cuda-layout-memory-v1/sequence.json)、
-[验收](../../build/cuda-layout-acceptance-v1/sequence.json)。历史 attention、拷贝和
+及其不可变凭据：性能（`build/cuda-layout-performance-v1/sequence.json`）、
+显存（`build/cuda-layout-memory-v1/sequence.json`）、
+验收（`build/cuda-layout-acceptance-v1/sequence.json`）。历史 attention、拷贝和
 concat 优化已经实施，不能把重新启用 FlashAttention 当作本轮增量。
 
 ## 方法取舍
@@ -452,22 +454,22 @@ wall time，初始化也包含在记录内。它说明单独替换线性层核�
 
 不可变凭据：
 
-- [初始源文件／旧二进制身份](../../build/runtime-quantization-baseline-v1/snapshot.json)
-- [图与 VMM 分解、真实算子形状](../../build/runtime-quantization-baseline-v1/graph-analysis.json)
-- [独立 VMM 诊断库构建](../../build/runtime-quantization-baseline-v1/pool-probe/build.json)
-- [三种权重的原始模型验收](../../build/runtime-quantization-acceptance-v1/sequence.json)
-- [与旧 F16 路径的逐位比较](../../build/runtime-quantization-acceptance-v1/exact-comparison.json)
-- [交错完整性能与独立显存运行](../../build/runtime-quantization-performance-v1/sequence.json)
-- [汇总对照](../../build/runtime-quantization-performance-v1/comparison.json)
-- [Nsight kernel 分类](../../build/runtime-quantization-kernel-profile-v1/kernels.json)
-- [CUDA CTest](../../build/runtime-quantization-cuda-v1/ctest.log) 27/27；
-  [CPU CTest](../../build/runtime-quantization-cpu-v1/ctest.log) 15/15，含头文件和 linkage 构建检查。
+- 初始源文件／旧二进制身份（`build/runtime-quantization-baseline-v1/snapshot.json`）
+- 图与 VMM 分解、真实算子形状（`build/runtime-quantization-baseline-v1/graph-analysis.json`）
+- 独立 VMM 诊断库构建（`build/runtime-quantization-baseline-v1/pool-probe/build.json`）
+- 三种权重的原始模型验收（`build/runtime-quantization-acceptance-v1/sequence.json`）
+- 与旧 F16 路径的逐位比较（`build/runtime-quantization-acceptance-v1/exact-comparison.json`）
+- 交错完整性能与独立显存运行（`build/runtime-quantization-performance-v1/sequence.json`）
+- 汇总对照（`build/runtime-quantization-performance-v1/comparison.json`）
+- Nsight kernel 分类（`build/runtime-quantization-kernel-profile-v1/kernels.json`）
+- CUDA CTest（`build/runtime-quantization-cuda-v1/ctest.log`） 27/27；
+  CPU CTest（`build/runtime-quantization-cpu-v1/ctest.log`） 15/15，含头文件和 linkage 构建检查。
 
 共享图像编码／检测也用于视频。F32 与 hybrid 权重的 F16 路径均已通过独立的
 五场景、216 帧原始参考输出验收，覆盖移动、进入、遮挡、添加／移除和负提示。
 每种权重的全部导出 tensor、mask 和逐帧 score／box／ID／输出时序也与旧 F16
-路径逐位一致，见[视频验收](../../build/runtime-quantization-video-acceptance-v1/sequence.json)
-和[精确比较](../../build/runtime-quantization-video-acceptance-v1/exact-comparison-v2.json)。
+路径逐位一致，见视频验收（`build/runtime-quantization-video-acceptance-v1/sequence.json`）
+和精确比较（`build/runtime-quantization-video-acceptance-v1/exact-comparison-v2.json`）。
 每种权重各比较 378 个诊断张量、220 个导出 mask 和 216 个逐帧结果 JSON。
 本表只给图像收益，视频独立计时记录见文末。既有 CPU／Metal 和默认 CUDA
 存储、算术策略保持不变；没有在当前机器新增 Metal 验证。
@@ -539,14 +541,14 @@ alpha；分别报告 W-only、A-only、组合和浮点等价误差。它只在�
 
 凭据与复现：
 
-- [COCO 拆分](../../models/calibration/coco2017-v1/dataset.json)
-- [完整校准 manifest](../../models/calibration/coco2017-vision-f32-v1/manifest.json)
-- [校准摘要](../../build/runtime-quantization-baseline-v1/calibration-receipt.json)
-- [原导出源码身份](../../build/runtime-quantization-baseline-v1/calibration-sources-v1/hashes.json)
-- [导出器元数据增强烟测](../../build/runtime-quantization-baseline-v1/calibration-provenance-smoke.json)
-- [完整逐层研究](../../models/calibration/coco2017-layer-study-v1/study.json)
-- [数值摘要](../../build/runtime-quantization-baseline-v1/study-receipt.json)
-- [工具测试](../../build/runtime-quantization-baseline-v1/tools-tests-provenance.log)
+- COCO 拆分（`models/calibration/coco2017-v1/dataset.json`）
+- 完整校准 manifest（`models/calibration/coco2017-vision-f32-v1/manifest.json`）
+- 校准摘要（`build/runtime-quantization-baseline-v1/calibration-receipt.json`）
+- 原导出源码身份（`build/runtime-quantization-baseline-v1/calibration-sources-v1/hashes.json`）
+- 导出器元数据增强烟测（`build/runtime-quantization-baseline-v1/calibration-provenance-smoke.json`）
+- 完整逐层研究（`models/calibration/coco2017-layer-study-v1/study.json`）
+- 数值摘要（`build/runtime-quantization-baseline-v1/study-receipt.json`）
+- 工具测试（`build/runtime-quantization-baseline-v1/tools-tests-provenance.log`）
 
 ```sh
 rtk proxy .venv-reference/bin/python tools/study_activation_quantization.py \
@@ -574,16 +576,16 @@ F32／hybrid 的采样显存分别降低约 10.8%／12.5%，未把图像的 15% 
 1.351／1.480／1.350／1.493 GB，没有主机内存节省结论。视频历史 BF16 memory
 与专用 tracker 卷积仍保持原有策略。
 
-- [新视频测量序列](../../build/runtime-quantization-video-performance-v1/sequence.json)
-- [新旧视频记录对照](../../build/runtime-quantization-video-performance-v1/comparison.json)
-- [历史完整性能记录](../../build/cuda-layout-performance-v1/sequence.json)
+- 新视频测量序列（`build/runtime-quantization-video-performance-v1/sequence.json`）
+- 新旧视频记录对照（`build/runtime-quantization-video-performance-v1/comparison.json`）
+- 历史完整性能记录（`build/cuda-layout-performance-v1/sequence.json`）
 
 阶段 0 的诊断与校准设施，以及阶段 1 的卷积紧凑存储首批改动已经验收。MLP／QKV
 较小输出的连续消费链、真正的 INT8／FP8 kernel、完整 W8A8 质量评估、量化
 attention 和视频 A8 状态仍未完成，不能把本批成果视为整条路线完成。
 
 本批修改的源码副本、通过的验收凭据、运行二进制／模型身份和原基线保持不变的
-检查汇总于[首批交付归档](../../build/runtime-quantization-first-delivery-v2/receipt.json)。
+检查汇总于首批交付归档（`build/runtime-quantization-first-delivery-v2/receipt.json`）。
 
 ### 2026-10-07 第二批：真实 INT8／FP8 内核筛选
 
@@ -617,7 +619,7 @@ Linear 的 fused bias 与输入形状后，先前两张浮点失败图恢复通�
 
 按照阶段 0 的耗时占比退出规则，量化 attention 不在本轮继续接入产品。
 首个拟替换的视觉 head-64 F16 FlashAttention 在
-[既有 kernel 记录](../../build/runtime-quantization-kernel-profile-v1/kernels.json)
+既有 kernel 记录（`build/runtime-quantization-kernel-profile-v1/kernels.json`）
 中为 96 次、22.151 ms，约三个完整调用的 7.384 ms/图；相对于同配置约
 335.929 ms 的整图墙钟耗时，仅约 2.2%。这只是诊断口径的优先级估算，包含
 初始化的 kernel 记录不能精确归因成加速比；即使忽略该项计算，单靠此边界
@@ -626,7 +628,7 @@ Linear 的 fused bias 与输入形状后，先前两张浮点失败图恢复通�
 实现或宣传 QK INT8/PV FP8 attention。
 
 视频 A8 history 留作后续独立研究，未改写已有 BF16 状态。当前
-[已验收 64 帧测量](../../build/runtime-quantization-video-performance-v1/comparison.json)
+已验收 64 帧测量（`build/runtime-quantization-video-performance-v1/comparison.json`）
 的单/四对象最多保留 27/108 条 record；对应 benchmark.json 记录 host history
 17,943,552/71,774,208 bytes，其中 pointer 仍是 F32。即使不计 scale 开销，
 BF16 memory 改为 INT8 最多只减少约 8.96/35.83 MB 的长期主机载荷。当前

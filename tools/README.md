@@ -31,6 +31,12 @@ suite; the tests themselves live in `tests/tools/`. Python dependencies are
 pinned in `requirements.lock` and `requirements-linux-cuda.lock` and are
 installed in the isolated `.venv-reference` environment for validation runs.
 
+Run `python3 tools/maintenance/check_docs.py` in a Git checkout to check local
+links across repository Markdown files and the bilingual measurement tables.
+Links to Git-ignored artifacts are rejected even when the files exist locally.
+Keep their repository-relative paths as inline code in plans, with a note that
+the artifacts are stored separately from the source checkout.
+
 C++ tool sources use the private `sam_private` and `sam_image_io` targets and
 are never installed. `quantize_rows.cpp` provides the pinned GGML quantization
 provenance required by conversion receipts.

@@ -1,5 +1,7 @@
 # 图像特征缓存的 F16／A8 数值与传输筛选
 
+归档路径说明：`build/`、`models/` 等目录中的证据不随源码分发。下文以相对仓库根目录的普通路径记录这些产物，保留历史哈希和验收结论。
+
 创建：2026-10-07 17:38:58，Asia/Shanghai。状态：数值筛选完成；运行时接入另行验收。
 
 ## 范围与依据
@@ -54,13 +56,13 @@ CUDA 的 fast-math 行为，也不构成生产运行时依赖或新 profile。
 首次逐字节对照暴露了真实后端差异：标量参考用 `1 / (amax / 127)` 和 ties-away；
 当前 x86 AVX2 编码用 `127 / amax` 和 nearest-even；CUDA 的 fast-math 又影响
 少量舍入边界。F32/F16 本来就一致，不能将 Q8_0 差异归咎于布局或放松误差门槛。
-保留[首次原生输出](../../build/cache-codec-validation-v1/validation.json)和当时源码，
-按实际后端修正参考后，[第二次对照](../../build/cache-codec-validation-v2/validation.json)
+保留首次原生输出（`build/cache-codec-validation-v1/validation.json`）和当时源码，
+按实际后端修正参考后，第二次对照（`build/cache-codec-validation-v2/validation.json`）
 复用了相同原生文件，24/24 组合的编码字节和解码 F32 均完全一致。覆盖零值、
 舍入边界及三个真实 FPN 形状。CPU 结论限于本机 AVX2 路径。
 
 独立 CMake 构建复用已验证 GGML 动态库，同时检查拥有私有 CUDA headers 和仅有
-公共 GGML target 的两种集成方式。[构建检查](../../build/cache-cmake-validation-v1/validation.json)
+公共 GGML target 的两种集成方式。构建检查（`build/cache-cmake-validation-v1/validation.json`）
 17/17 通过：六组原生字节对照、四个 bridge 形状、公共 target 路径和六种输入拒绝。
 它与模型筛选并行，不将其计时作为性能证据。完整工具测试 104/104 通过。
 
@@ -71,7 +73,7 @@ CUDA 的 fast-math 行为，也不构成生产运行时依赖或新 profile。
 
 ### 完整整图筛选结果
 
-[两张预检图](../../build/cache-output-screen-smoke-v1/screening.json)中三种模式都
+两张预检图（`build/cache-output-screen-smoke-v1/screening.json`）中三种模式都
 通过，原始结果与上一阶段参考的 payload 完全一致。完整 128 张筛选已完成，
 仍沿用相同 frozen gates、413 个提示和独立未使用的 512 张 evaluation。
 
@@ -97,10 +99,10 @@ F16 的 AP 下降为 0.03557 个百分点；两种通过的候选均满足已冻
 这里 AP 仍是预先选择的 image/category pairs、score > 0.5 的 prompted 指标，
 不能冒充完整 COCO val2017 AP。
 
-证据：[全层输出](../../build/cache-output-selection-v1/screening.json)、
-[全层标注指标](../../build/cache-coco-selection-v1/metrics.json)、
-[混合输出](../../build/cache-hybrid-output-selection-v1/screening.json)、
-[混合标注指标](../../build/cache-hybrid-coco-selection-v1/metrics.json)。
+证据：全层输出（`build/cache-output-selection-v1/screening.json`）、
+全层标注指标（`build/cache-coco-selection-v1/metrics.json`）、
+混合输出（`build/cache-hybrid-output-selection-v1/screening.json`）、
+混合标注指标（`build/cache-hybrid-coco-selection-v1/metrics.json`）。
 全层 Q8_0 不进入运行时。F16 和混合 Q8_0 进入
 [类型感知缓存实验](20261007-181154-typed-image-cache-runtime.md)，尚无新公共选项、
 生产加速结论或最终 512 张评估通过声明。

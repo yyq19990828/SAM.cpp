@@ -34,6 +34,7 @@ from tests.tools.test_precision_performance import PrecisionPerformanceChecks
 from tests.tools.test_precision_regression import PrecisionRegressionChecks
 from tests.tools.test_tool_entrypoints import ToolEntrypointChecks
 from tests.tools.test_video_benchmark import VideoBenchmarkChecks
+from tests.tools.test_documentation import DocumentationChecks
 from tools.validation.validate_image import GATES, check_provenance, mask_iou, read_results, tensor_error
 
 
