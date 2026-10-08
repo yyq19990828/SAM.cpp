@@ -17,11 +17,9 @@ add_test(NAME sam_two_tu COMMAND test_two_tu)
 # checked separately through the non-installed sam_private support target.
 # Every header starts its own translation unit and is included twice.
 file(GLOB sam_public_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/sam/*.hpp")
-# Private implementation headers moved into src/ in the second migration batch;
-# the runtime headers are still under include/sam/internal/ until their move.
-file(GLOB_RECURSE sam_internal_headers CONFIGURE_DEPENDS
-    "${PROJECT_SOURCE_DIR}/include/sam/internal/*.hpp"
-    "${PROJECT_SOURCE_DIR}/src/*.hpp")
+# Private implementation and runtime headers live under src/; they are checked
+# through the non-installed sam_private support target.
+file(GLOB_RECURSE sam_internal_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/src/*.hpp")
 file(GLOB example_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*.hpp")
 set(sam_checked_headers ${sam_public_headers} ${sam_internal_headers} ${example_headers})
 set(public_header_sources)

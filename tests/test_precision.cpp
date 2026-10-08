@@ -1,4 +1,4 @@
-#include <sam/internal/runtime/ggml.hpp>
+#include <runtime/ggml.hpp>
 #include "backend_test_support.hpp"
 
 #include <cmath>

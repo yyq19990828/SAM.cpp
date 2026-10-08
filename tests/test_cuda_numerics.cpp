@@ -1,6 +1,6 @@
 #include "backend_test_support.hpp"
 #include <models/sam3/ops.hpp>
-#include <sam/internal/runtime/ggml/graph.hpp>
+#include <runtime/ggml/graph.hpp>
 
 #include <algorithm>
 #include <cmath>

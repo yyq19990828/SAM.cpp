@@ -1,5 +1,5 @@
-#ifndef SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_CPU_HPP
-#define SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_CPU_HPP
+#ifndef SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_CPU_HPP
+#define SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_CPU_HPP
 
 #include "../backend.hpp"
 #include "ggml-backend.h"
@@ -38,4 +38,4 @@ inline BackendDriver make_cpu_blas_backend(int threads) {
 
 } // namespace sam::internal
 
-#endif // SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_CPU_HPP
+#endif // SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_CPU_HPP

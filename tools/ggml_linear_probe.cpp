@@ -1,5 +1,5 @@
 #include "linear_probe.hpp"
-#include <sam/internal/runtime/ggml/graph.hpp>
+#include <runtime/ggml/graph.hpp>
 #include <cstring>
 #include <iostream>
 

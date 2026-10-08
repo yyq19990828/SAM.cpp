@@ -1,5 +1,5 @@
-#ifndef SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_CUDA_HPP
-#define SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_CUDA_HPP
+#ifndef SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_CUDA_HPP
+#define SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_CUDA_HPP
 
 #include "../backend.hpp"
 #include "ggml.h"
@@ -190,4 +190,4 @@ inline BackendDriver make_cuda_backend(int device_index, CudaComputeMode compute
 
 } // namespace sam::internal
 
-#endif // SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_CUDA_HPP
+#endif // SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_CUDA_HPP

@@ -7,7 +7,7 @@
 #include <models/sam3/video/preprocessing.hpp>
 #include <models/sam3/video/memory_selection.hpp>
 #include <models/sam3/weights.hpp>
-#include <sam/internal/runtime/ggml.hpp>
+#include <runtime/ggml.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>

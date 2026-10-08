@@ -1,5 +1,5 @@
-#ifndef SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_RESOURCES_HPP
-#define SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_RESOURCES_HPP
+#ifndef SAM_CPP_SRC_RUNTIME_GGML_RESOURCES_HPP
+#define SAM_CPP_SRC_RUNTIME_GGML_RESOURCES_HPP
 
 #include "ggml.h"
 #include "ggml-backend.h"
@@ -29,4 +29,4 @@ inline ContextPtr make_context(std::size_t tensor_count, std::size_t graph_size 
 
 } // namespace sam::internal
 
-#endif // SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_RESOURCES_HPP
+#endif // SAM_CPP_SRC_RUNTIME_GGML_RESOURCES_HPP

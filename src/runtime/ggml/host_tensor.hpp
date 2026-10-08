@@ -1,5 +1,5 @@
-#ifndef SAM_CPP_INTERNAL_RUNTIME_GGML_HOST_TENSOR_HPP
-#define SAM_CPP_INTERNAL_RUNTIME_GGML_HOST_TENSOR_HPP
+#ifndef SAM_CPP_SRC_RUNTIME_GGML_HOST_TENSOR_HPP
+#define SAM_CPP_SRC_RUNTIME_GGML_HOST_TENSOR_HPP
 
 #include "graph.hpp"
 #include "common/input_validation.hpp"
@@ -103,4 +103,4 @@ inline CachedInput cached_input(ggml_context* ctx, const char* name, const HostT
 
 } // namespace sam::internal
 
-#endif // SAM_CPP_INTERNAL_RUNTIME_GGML_HOST_TENSOR_HPP
+#endif // SAM_CPP_SRC_RUNTIME_GGML_HOST_TENSOR_HPP

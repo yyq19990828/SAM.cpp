@@ -9,7 +9,7 @@
 #include "detector.hpp"
 #include "mask_decoder.hpp"
 #include "video/preprocessing.hpp"
-#include "sam/internal/runtime/ggml.hpp"
+#include "runtime/ggml.hpp"
 #include "sam/types.hpp"
 #include <array>
 #include <chrono>

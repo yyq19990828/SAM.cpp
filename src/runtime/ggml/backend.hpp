@@ -1,5 +1,5 @@
-#ifndef SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKEND_HPP
-#define SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKEND_HPP
+#ifndef SAM_CPP_SRC_RUNTIME_GGML_BACKEND_HPP
+#define SAM_CPP_SRC_RUNTIME_GGML_BACKEND_HPP
 
 #include "resources.hpp"
 #include "sam/types.hpp"
@@ -53,4 +53,4 @@ inline bool is_compute_node(const ggml_tensor* tensor) {
 
 } // namespace sam::internal
 
-#endif // SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKEND_HPP
+#endif // SAM_CPP_SRC_RUNTIME_GGML_BACKEND_HPP

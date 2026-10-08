@@ -1,5 +1,5 @@
-#ifndef SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_GRAPH_HPP
-#define SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_GRAPH_HPP
+#ifndef SAM_CPP_SRC_RUNTIME_GGML_GRAPH_HPP
+#define SAM_CPP_SRC_RUNTIME_GGML_GRAPH_HPP
 
 #include "resources.hpp"
 #include "runtime.hpp"
@@ -167,4 +167,4 @@ inline std::vector<float> download(ggml_tensor* tensor, RuntimeStats& stats) {
 
 } // namespace sam::internal
 
-#endif // SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_GRAPH_HPP
+#endif // SAM_CPP_SRC_RUNTIME_GGML_GRAPH_HPP

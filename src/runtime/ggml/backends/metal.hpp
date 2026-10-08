@@ -1,5 +1,5 @@
-#ifndef SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_METAL_HPP
-#define SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_METAL_HPP
+#ifndef SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_METAL_HPP
+#define SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_METAL_HPP
 
 #include "../backend.hpp"
 #include "ggml.h"
@@ -51,4 +51,4 @@ inline BackendDriver make_metal_backend() {
 
 } // namespace sam::internal
 
-#endif // SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_BACKENDS_METAL_HPP
+#endif // SAM_CPP_SRC_RUNTIME_GGML_BACKENDS_METAL_HPP

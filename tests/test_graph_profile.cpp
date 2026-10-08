@@ -1,5 +1,5 @@
 #include "../tools/graph_profile.hpp"
-#include <sam/internal/runtime/ggml/graph.hpp>
+#include <runtime/ggml/graph.hpp>
 #include "backend_test_support.hpp"
 #include <iostream>
 

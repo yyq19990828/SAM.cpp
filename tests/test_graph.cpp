@@ -1,7 +1,7 @@
 #include <models/sam3/detector.hpp>
 #include <models/sam3/model.hpp>
 #include <models/sam3/ops.hpp>
-#include <sam/internal/runtime/ggml.hpp>
+#include <runtime/ggml.hpp>
 
 #include <cmath>
 #include <iostream>

@@ -1,5 +1,5 @@
-#ifndef SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_RUNTIME_HPP
-#define SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_RUNTIME_HPP
+#ifndef SAM_CPP_SRC_RUNTIME_GGML_RUNTIME_HPP
+#define SAM_CPP_SRC_RUNTIME_GGML_RUNTIME_HPP
 
 #include "backend.hpp"
 #include "observer.hpp"
@@ -104,4 +104,4 @@ private:
 
 } // namespace sam::internal
 
-#endif // SAM_CPP_SAM_INTERNAL_RUNTIME_GGML_RUNTIME_HPP
+#endif // SAM_CPP_SRC_RUNTIME_GGML_RUNTIME_HPP

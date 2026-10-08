@@ -1,7 +1,7 @@
 #ifndef SAM_CPP_TESTS_BACKEND_TEST_SUPPORT_HPP
 #define SAM_CPP_TESTS_BACKEND_TEST_SUPPORT_HPP
 
-#include <sam/internal/runtime/ggml.hpp>
+#include <runtime/ggml.hpp>
 #include <stdexcept>
 #include <string>
 

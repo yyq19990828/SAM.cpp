@@ -1,7 +1,7 @@
 # Public SAM library: the public headers in include/sam/ expose the task API,
-# and this target compiles the wrapper implementations, the model factory and
-# the private model implementation under src/. Private runtime headers still
-# live under include/sam/internal/ until the runtime move lands.
+# and this target compiles the wrapper implementations, the model factory, the
+# private model implementation under src/models/ and the shared runtime under
+# src/runtime/.
 include(GenerateExportHeader)
 
 set(SAM_LIBRARY_SOURCES

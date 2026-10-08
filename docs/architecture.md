@@ -86,7 +86,7 @@ which may differ from a graph's assigned compute device.
 
 The current GGML modules are split by responsibility:
 
-| Header under `internal/runtime/ggml/` | Responsibility |
+| Header under `src/runtime/ggml/` | Responsibility |
 | --- | --- |
 | `resources.hpp` | RAII ownership of contexts, buffers, backends and schedulers |
 | `backend.hpp` | Driver/device contract, identity, storage policy and node statistics |

@@ -2,7 +2,7 @@
 #define SAM_CPP_SRC_MODELS_SAM3_VIDEO_ATTENTION_HPP
 
 #include "ggml.h"
-#include "sam/internal/runtime/ggml/backend.hpp"
+#include "runtime/ggml/backend.hpp"
 #include <algorithm>
 #include <cmath>
 #include <limits>

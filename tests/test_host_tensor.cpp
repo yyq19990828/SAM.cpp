@@ -1,4 +1,4 @@
-#include <sam/internal/runtime/ggml/host_tensor.hpp>
+#include <runtime/ggml/host_tensor.hpp>
 #include "backend_test_support.hpp"
 #include <cmath>
 #include <iostream>

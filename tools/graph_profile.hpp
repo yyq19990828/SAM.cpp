@@ -1,7 +1,7 @@
 #ifndef SAM_CPP_TOOLS_GRAPH_PROFILE_HPP
 #define SAM_CPP_TOOLS_GRAPH_PROFILE_HPP
 
-#include <sam/internal/runtime/ggml/observer.hpp>
+#include <runtime/ggml/observer.hpp>
 #include <algorithm>
 #include <array>
 #include <cstddef>

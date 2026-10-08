@@ -1,8 +1,8 @@
 #include "models/sam3/weights.hpp"
 #include "models/sam3/tensors.hpp"
-#include "sam/internal/runtime/ggml.hpp"
-#include "sam/internal/runtime/ggml/backends/cpu.hpp"
-#include "sam/internal/runtime/ggml/backends/metal.hpp"
+#include "runtime/ggml.hpp"
+#include "runtime/ggml/backends/cpu.hpp"
+#include "runtime/ggml/backends/metal.hpp"
 #include "backend_test_support.hpp"
 
 #include <algorithm>
