@@ -8,6 +8,7 @@
 #include "memory_selection.hpp"
 #include "mask_ops.hpp"
 #include "graph_cache.hpp"
+#include "memory_payload.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -54,21 +55,10 @@ private:
     bool high_uploaded_ = false;
 };
 
-struct TrackerRecord {
-    std::vector<ggml_bf16_t> memory;
-    std::vector<float> pointer;
-    float object_logit = 0, iou = 0;
-};
-
 struct TrackerPrediction {
     std::vector<float> mask, pointer, conditioned, decoder_masks, decoder_iou;
     float object_logit = 0, iou = 0, decoder_object_logit = 0;
     int mask_index = 0, pointer_index = 0;
-};
-
-struct TrackerPropagationInput {
-    const std::map<int, TrackerRecord>* records = nullptr;
-    const MemorySelection* selection = nullptr;
 };
 
 struct TrackerNoneSerialPolicy {
@@ -434,7 +424,6 @@ public:
     }
 
 private:
-    struct MemoryPayload { std::vector<float> memory, pointer_position; };
     struct WorkspaceProbe { std::size_t required = 0, actual = 0; };
     struct NoneResidentPolicy { TrackerGraphShape low_shape; std::size_t budget = 0; };
     struct DecoderInputs {
@@ -651,23 +640,6 @@ private:
         return value;
     }
 
-    static std::vector<float> sine_positions(const std::vector<TrackerPropagationInput>& inputs, int frame_count) {
-        std::vector<float> values;
-        const auto pointers = inputs.front().selection->pointers.size();
-        if (!pointers) return values;
-        const int maximum = std::min(frame_count, 16);
-        if (maximum <= 1) throw std::runtime_error("tracker pointer temporal range is invalid");
-        values.reserve(inputs.size() * pointers * 256);
-        for (const auto& input : inputs) for (const auto& selected : input.selection->pointers) {
-            const float relative = static_cast<float>(selected.position) / (maximum - 1);
-            for (int phase = 0; phase < 2; ++phase) for (int k = 0; k < 128; ++k) {
-                const float angle = relative / std::pow(10000.0f, 2.0f * (k / 2) / 128);
-                values.push_back(phase ? std::cos(angle) : std::sin(angle));
-            }
-        }
-        return values;
-    }
-
     std::vector<float> tiled_rope(int spatial) const {
         std::vector<float> values;
         values.reserve(static_cast<std::size_t>(spatial) * rope_.size());
@@ -782,7 +754,7 @@ private:
             ++budget_failures_;
             throw budget_error("pointer projection", actual_arena, serial_budget);
         }
-        const auto values = sine_positions(inputs, frame_count);
+        const auto values = tracker_sine_positions(inputs, frame_count);
         upload_tracked(pointer_input_, values);
         graph.compute();
         return download_tracked(pointer_output_);
@@ -798,75 +770,6 @@ private:
                     throw std::runtime_error("tracker pointer has an invalid feature width");
             }
         }
-    }
-
-    static std::vector<float> slice_pointer_positions(const std::vector<float>& source,
-            int pointers, std::size_t begin, std::size_t count) {
-        if (!pointers) {
-            if (!source.empty()) throw std::runtime_error("tracker pointer-position payload is unexpectedly nonempty");
-            return {};
-        }
-        const auto row = static_cast<std::size_t>(pointers) * 64;
-        if (source.size() % row || begin > source.size() / row || count > source.size() / row - begin)
-            throw std::runtime_error("tracker pointer-position slice is out of range");
-        const auto first = begin * row;
-        return std::vector<float>(source.begin() + first, source.begin() + first + count * row);
-    }
-
-    MemoryPayload make_memory_payload(const std::vector<TrackerPropagationInput>& inputs,
-                                      const std::vector<float>& projected) {
-        const auto spatial_count = inputs.front().selection->spatial.size();
-        const auto pointer_count = inputs.front().selection->pointers.size();
-        const auto batch = inputs.size();
-        const auto tokens = spatial_count * 5184 + pointer_count * 4;
-        MemoryPayload result;
-        result.memory.reserve(batch * tokens * 64);
-        result.pointer_position.reserve(batch * pointer_count * 4 * 64);
-        for (std::size_t b = 0; b < batch; ++b) {
-            const auto& input = inputs[b];
-            for (const auto& selected : input.selection->spatial) {
-                const auto& record = input.records->at(selected.frame);
-                for (const auto value : record.memory) result.memory.push_back(ggml_bf16_to_fp32(value));
-            }
-            for (std::size_t i = 0; i < input.selection->pointers.size(); ++i) {
-                const auto& selected = input.selection->pointers[i];
-                const auto& pointer = input.records->at(selected.frame).pointer;
-                result.memory.insert(result.memory.end(), pointer.begin(), pointer.end());
-                const auto projected_offset = (b * pointer_count + i) * 64;
-                for (int token = 0; token < 4; ++token)
-                    result.pointer_position.insert(result.pointer_position.end(),
-                        projected.begin() + projected_offset, projected.begin() + projected_offset + 64);
-            }
-        }
-        const auto bytes = (result.memory.capacity() + result.pointer_position.capacity()) * sizeof(float);
-        memory_payload_peak_bytes_ = std::max(memory_payload_peak_bytes_, bytes);
-        return result;
-    }
-
-    std::vector<float> memory_position_payload(const std::vector<TrackerPropagationInput>& inputs,
-                                               const MemoryPayload& payload) const {
-        if (inputs.empty()) return {};
-        const auto spatial_count = inputs.front().selection->spatial.size();
-        const auto pointer_count = inputs.front().selection->pointers.size();
-        const auto batch = inputs.size();
-        constexpr std::size_t memory_plane_size = 64u * 5184;
-        const auto pointer_row = pointer_count * 4 * 64;
-        std::vector<float> values;
-        values.reserve(batch * (spatial_count * memory_plane_size + pointer_row));
-        for (std::size_t b = 0; b < batch; ++b) {
-            for (const auto& selected : inputs[b].selection->spatial) {
-                if (selected.position < 0 || selected.position > 6)
-                    throw std::runtime_error("tracker memory position is outside its resident table");
-                const auto position = static_cast<std::size_t>(6 - selected.position);
-                const auto first = memory_position_bank_.begin() + position * memory_plane_size;
-                values.insert(values.end(), first, first + memory_plane_size);
-            }
-            if (pointer_row) {
-                const auto first = payload.pointer_position.begin() + b * pointer_row;
-                values.insert(values.end(), first, first + pointer_row);
-            }
-        }
-        return values;
     }
 
     TrackerGraphShape propagation_shape(int spatial, int pointers, int batch,
@@ -1006,7 +909,7 @@ private:
             result.reserve(static_cast<std::size_t>(batch));
             sam3_for_each_tracker_chunk(batch, max_fused_batch_, [&](int begin, int count) {
                 std::vector<TrackerPropagationInput> slice(inputs.begin() + begin, inputs.begin() + begin + count);
-                auto positions = slice_pointer_positions(pointer_positions, pointers,
+                auto positions = tracker_slice_pointer_positions(pointer_positions, pointers,
                     static_cast<std::size_t>(begin), static_cast<std::size_t>(count));
                 auto values = run_propagation_batch(image, slice,
                     positions, spatial, pointers, count, serial_budget);
@@ -1082,12 +985,12 @@ private:
                 propagation_object_ = propagation_pointer_ = nullptr;
             return run_serial_batch(image, inputs, pointer_positions, pointers, serial_budget);
         }
-        const auto payload = make_memory_payload(inputs, pointer_positions);
+        const auto payload = tracker_make_memory_payload(inputs, pointer_positions, &memory_payload_peak_bytes_);
         upload_tracked(ggml_get_tensor(graph.context(), "tracker_memory"), payload.memory);
         if (none_resident_) {
             upload_tracked(propagation_current_input_, image.tracker[2]);
             upload_tracked(propagation_current_position_input_, image.position);
-            upload_tracked(propagation_memory_position_input_, memory_position_payload(inputs, payload));
+            upload_tracked(propagation_memory_position_input_, tracker_memory_position_payload(inputs, payload, memory_position_bank_));
             upload_tracked(propagation_rope_input_, rope_);
             upload_tracked(propagation_key_rope_input_, tiled_rope(spatial));
             upload_tracked(propagation_dense_position_input_, dense_position_);
@@ -1339,8 +1242,8 @@ private:
             std::vector<float> conditioned;
             {
                 const std::vector<TrackerPropagationInput> one{inputs[b]};
-                const auto one_pointer_positions = slice_pointer_positions(pointer_positions, pointers, b, 1);
-                const auto payload = make_memory_payload(one, one_pointer_positions);
+                const auto one_pointer_positions = tracker_slice_pointer_positions(pointer_positions, pointers, b, 1);
+                const auto payload = tracker_make_memory_payload(one, one_pointer_positions, &memory_payload_peak_bytes_);
                 conditioned = condition_one(image, *inputs[b].selection, payload, serial_budget);
             }
             result.push_back(decode(image, conditioned, nullptr, serial_budget));
@@ -1349,7 +1252,7 @@ private:
     }
 
     std::vector<float> condition_one(const ImageFeatures& image, const MemorySelection& selection,
-                                     const MemoryPayload& payload, std::size_t budget_override) {
+                                     const TrackerMemoryPayload& payload, std::size_t budget_override) {
         require_frame(image);
         const int pointer_count = static_cast<int>(selection.pointers.size());
         const int spatial_count = static_cast<int>(selection.spatial.size());
@@ -1432,7 +1335,7 @@ private:
             upload_tracked(propagation_current_input_, image.tracker[2]);
             upload_tracked(propagation_current_position_input_, image.position);
             const std::vector<TrackerPropagationInput> request{{nullptr, &selection}};
-            upload_tracked(propagation_memory_position_input_, memory_position_payload(request, payload));
+            upload_tracked(propagation_memory_position_input_, tracker_memory_position_payload(request, payload, memory_position_bank_));
             upload_tracked(propagation_rope_input_, rope_);
             upload_tracked(propagation_key_rope_input_, tiled_rope(spatial_count));
         } else if (pointer_count) {
