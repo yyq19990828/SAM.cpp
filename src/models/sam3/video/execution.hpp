@@ -10,6 +10,7 @@
 #include "graph_cache.hpp"
 #include "memory_payload.hpp"
 #include "frame_storage.hpp"
+#include "workspace_policy.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -37,40 +38,13 @@ struct TrackerPrediction {
     int mask_index = 0, pointer_index = 0;
 };
 
-struct TrackerNoneSerialPolicy {
-    const void* runtime_identity = nullptr;
-    Backend backend = Backend::Cpu;
-    std::string storage_profile, arithmetic_profile;
-    int spatial = 0, pointers = 0;
-    std::size_t budget = 0;
-};
-
-inline bool tracker_none_serial_policy_matches(const std::optional<TrackerNoneSerialPolicy>& policy,
-        const void* runtime_identity, Backend backend, const std::string& storage_profile,
-        const std::string& arithmetic_profile, int spatial, int pointers, std::size_t budget) {
-    return policy && policy->runtime_identity == runtime_identity && policy->backend == backend &&
-        policy->storage_profile == storage_profile && policy->arithmetic_profile == arithmetic_profile &&
-        policy->spatial == spatial && policy->pointers == pointers && policy->budget == budget;
-}
-
-template<class Callback>
-inline void sam3_for_each_tracker_chunk(int total, int& chunk_limit, Callback&& callback) {
-    if (total < 0) throw std::invalid_argument("tracker chunk total cannot be negative");
-    int begin = 0;
-    while (begin < total) {
-        if (chunk_limit <= 0) throw std::invalid_argument("tracker chunk limit must be positive");
-        const int count = std::min(chunk_limit, total - begin);
-        callback(begin, count);
-        begin += count; // The callback may change chunk_limit while recursing.
-    }
-}
-
 class TrackerExecution {
 public:
     TrackerExecution(ModelState& model, RuntimeStats& stats)
         : model_(model), stats_(stats), workspace_(std::make_shared<GraphWorkspace>(
               *model.runtime, sam3_tracker_workspace_capacity(*model.runtime))),
-          frame_storage_(*model.runtime) {
+          frame_storage_(*model.runtime), workspace_policy_(model, stats, *workspace_, frame_storage_,
+                                                          graphs_) {
         const auto& weights = model_.definition.weights;
         const auto gaussian = read_weight(weights.sam_pe.pe_gaussian);
         const auto no_point = read_weight(weights.sam_pe.not_a_point_embed);
@@ -107,8 +81,7 @@ public:
             throw std::runtime_error("tracker frame has noncanonical feature shapes");
         frame_storage_.begin_frame();
         active_image_ = &image;
-        frame_serial_budget_ = 0;
-        frame_serial_required_budget_ = 0;
+        workspace_policy_.clear_frame_budget();
     }
 
     void end_frame() noexcept {
@@ -131,28 +104,24 @@ public:
                 throw std::invalid_argument("tracker propagation batch has incompatible memory shapes");
 
         const auto batch = static_cast<int>(inputs.size());
-        const auto baseline = serial_workspace_budget(static_cast<int>(spatial_count),
-                                                      static_cast<int>(pointer_count));
-        frame_serial_budget_ = std::max(frame_serial_budget_, baseline);
-        frame_serial_required_budget_ = std::max(frame_serial_required_budget_, serial_required_budget_);
+        const auto baseline = workspace_policy_.serial_workspace_budget(static_cast<int>(spatial_count),
+                                                                        static_cast<int>(pointer_count));
+        workspace_policy_.note_frame_budget(baseline, workspace_policy_.serial_required_budget());
         const int spatial = static_cast<int>(spatial_count);
         const int pointers = static_cast<int>(pointer_count);
-        const bool sticky_none_serial = tracker_none_serial_policy_matches(none_serial_policy_,
-            model_.runtime.get(), model_.runtime->backend(),
-            model_.model_info.precision + ":" + model_.model_info.storage_profile,
-            model_.runtime->arithmetic_profile(), spatial, pointers, baseline);
+        const bool sticky_none_serial = workspace_policy_.none_serial_policy_matches(spatial, pointers, baseline);
         if (sticky_none_serial) {
             if (!frame_storage_.none_resident() &&
                 (frame_storage_.resident_bytes() || workspace_->allocated_bytes()))
-                demote_none_residency();
+                workspace_policy_.demote_none_residency();
             frame_storage_.mark_none_residency();
-            max_fused_batch_ = sam3_tracker_graph_batch_limit;
-            fusion_disabled_ = true;
+            workspace_policy_.reset_fused_batch();
+            workspace_policy_.set_fusion_disabled(true);
         } else {
-            select_resident_mode(baseline);
+            workspace_policy_.select_resident_mode(baseline);
             require_frame(image);
         }
-        configure_batch_policy(spatial, pointers, frame_storage_.resident_bytes(), sticky_none_serial);
+        workspace_policy_.configure_batch_policy(spatial, pointers, frame_storage_.resident_bytes(), sticky_none_serial);
         const auto pointer_positions = project_pointer_positions(inputs, frame_count, baseline);
         validate_memory_payload_inputs(inputs);
         auto result = run_propagation_batch(image, inputs, pointer_positions, static_cast<int>(spatial_count),
@@ -165,15 +134,14 @@ public:
                              const std::vector<float>* seed_mask = nullptr,
                              std::size_t budget_override = 0) {
         validate_frame(image);
-        const auto budget = seed_mask ? seed_memory_workspace_budget() :
-            (budget_override ? budget_override :
-             (frame_serial_budget_ ? frame_serial_budget_ : seed_memory_workspace_budget()));
-        select_resident_mode(budget);
+        const auto budget = seed_mask ? workspace_policy_.seed_memory_workspace_budget() :
+            (budget_override ? budget_override : workspace_policy_.effective_serial_budget());
+        workspace_policy_.select_resident_mode(budget);
         require_frame(image);
         const auto& weights = model_.definition.weights;
         const bool seed = seed_mask != nullptr;
         auto key = decoder_shape(seed, 1);
-        if (apply_none_resident_policy(key, budget)) key = decoder_shape(seed, 1);
+        if (workspace_policy_.apply_none_resident_policy(key, budget)) key = decoder_shape(seed, 1);
         bool built = false;
         auto& graph = graphs_.decoder().ensure(
             *model_.runtime, stats_, workspace_, key, sam3_tracker_decoder_graph_capacity, built);
@@ -228,26 +196,26 @@ public:
                 return decode(image, conditioned, seed_mask, budget_override);
             }
             if (!frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, budget);
+                workspace_policy_.demote_none_residency();
                 return decode(image, conditioned, seed_mask, budget_override);
             }
-            ++budget_failures_;
-            throw budget_error("decoder", required, budget);
+            workspace_policy_.count_budget_failure();
+            throw workspace_policy_.budget_error("decoder", required, budget);
         }
         std::size_t actual_arena = required;
-        if (!allocate_under_budget(graph, required, budget, &actual_arena)) {
+        if (!workspace_policy_.allocate_under_budget(graph, required, budget, &actual_arena)) {
             if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return decode(image, conditioned, seed_mask, budget_override);
             }
             if (!frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, budget);
+                workspace_policy_.demote_none_residency();
                 return decode(image, conditioned, seed_mask, budget_override);
             }
-            ++budget_failures_;
-            throw budget_error("decoder", actual_arena, budget);
+            workspace_policy_.count_budget_failure();
+            throw workspace_policy_.budget_error("decoder", actual_arena, budget);
         }
         if (!seed) upload_tracked(decoder_inputs_.conditioned, conditioned);
         else if (frame_storage_.none_resident()) upload_tracked(decoder_inputs_.frame_current, image.tracker[2]);
@@ -272,11 +240,11 @@ public:
     std::vector<ggml_bf16_t> encode_memory(const ImageFeatures& image, const std::vector<float>& mask,
                                            bool present, std::vector<float>* unrounded = nullptr) {
         validate_frame(image);
-        const auto budget = frame_serial_budget_ ? frame_serial_budget_ : seed_memory_workspace_budget();
-        select_resident_mode(budget);
+        const auto budget = workspace_policy_.effective_serial_budget();
+        workspace_policy_.select_resident_mode(budget);
         require_frame(image);
         auto key = memory_shape(present, unrounded != nullptr);
-        if (apply_none_resident_policy(key, budget)) key = memory_shape(present, unrounded != nullptr);
+        if (workspace_policy_.apply_none_resident_policy(key, budget)) key = memory_shape(present, unrounded != nullptr);
         bool built = false;
         auto& graph = graphs_.memory().ensure(
             *model_.runtime, stats_, workspace_, key, sam3_tracker_memory_graph_capacity, built);
@@ -295,27 +263,27 @@ public:
             if (frame_storage_.high_resident()) demote_high_residency();
             if (required > budget || frame_storage_.resident_bytes() > budget - std::min(required, budget)) {
                 if (!frame_storage_.none_resident()) {
-                    remember_none_resident_policy(key, budget);
-                    demote_none_residency();
+                    workspace_policy_.remember_none_resident_policy(key, budget);
+                    workspace_policy_.demote_none_residency();
                     return encode_memory(image, mask, present, unrounded);
                 }
-                ++budget_failures_;
-                throw budget_error("memory encoder", required, budget);
+                workspace_policy_.count_budget_failure();
+                throw workspace_policy_.budget_error("memory encoder", required, budget);
             }
         }
         std::size_t actual_arena = required;
-        if (!allocate_under_budget(graph, required, budget, &actual_arena)) {
+        if (!workspace_policy_.allocate_under_budget(graph, required, budget, &actual_arena)) {
             if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return encode_memory(image, mask, present, unrounded);
             }
             if (!frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, budget);
+                workspace_policy_.demote_none_residency();
                 return encode_memory(image, mask, present, unrounded);
             }
-            ++budget_failures_;
-            throw budget_error("memory encoder", actual_arena, budget);
+            workspace_policy_.count_budget_failure();
+            throw workspace_policy_.budget_error("memory encoder", actual_arena, budget);
         }
         upload_tracked(memory_mask_input_, mask);
         if (frame_storage_.none_resident()) upload_tracked(memory_pixels_input_, image.tracker[2]);
@@ -332,20 +300,21 @@ public:
     const GraphDiagnostics& diagnostics() const { return workspace_->diagnostics(); }
     std::size_t workspace_live_bytes() const { return workspace_->allocated_bytes(); }
     std::size_t model_buffer_bytes() const { return ggml_backend_buffer_get_size(model_.buffer.get()); }
-    std::size_t batch_splits() const { return batch_splits_; }
-    std::size_t serial_fallbacks() const { return serial_fallbacks_; }
+    std::size_t batch_splits() const { return workspace_policy_.batch_splits(); }
+    std::size_t serial_fallbacks() const { return workspace_policy_.serial_fallbacks(); }
     double graph_build_ms() const { return graphs_.graph_build_ms(); }
     double upload_ms() const { return upload_ms_; }
     double download_ms() const { return download_ms_; }
 
     std::string diagnostics_json() const {
         const auto& d = diagnostics();
-        const auto graph_builds = d.graph_builds + probe_diagnostics_.graph_builds;
-        const auto graph_reuses = d.graph_reuses + probe_diagnostics_.graph_reuses;
-        const auto graph_binds = d.graph_binds + probe_diagnostics_.graph_binds;
-        const auto reserve_probes = d.reserve_probes + probe_diagnostics_.reserve_probes;
-        const auto compute_calls = d.compute_calls + probe_diagnostics_.compute_calls;
-        const auto workspace_peak = std::max(d.workspace_peak_bytes, probe_diagnostics_.workspace_peak_bytes);
+        const auto& probes = workspace_policy_.probe_diagnostics();
+        const auto graph_builds = d.graph_builds + probes.graph_builds;
+        const auto graph_reuses = d.graph_reuses + probes.graph_reuses;
+        const auto graph_binds = d.graph_binds + probes.graph_binds;
+        const auto reserve_probes = d.reserve_probes + probes.reserve_probes;
+        const auto compute_calls = d.compute_calls + probes.compute_calls;
+        const auto workspace_peak = std::max(d.workspace_peak_bytes, probes.workspace_peak_bytes);
         std::ostringstream out;
         out << std::setprecision(9)
             << "{\"scope\":\"tracker-session-cumulative\",\"graph_builds\":" << graph_builds
@@ -361,31 +330,27 @@ public:
             << ",\"resident_demotions\":" << frame_storage_.resident_demotions()
             << ",\"none_resident_fallbacks\":" << frame_storage_.none_resident_fallbacks()
             << ",\"memory_payload_peak_bytes\":" << memory_payload_peak_bytes_
-            << ",\"budget_failures\":" << budget_failures_
+            << ",\"budget_failures\":" << workspace_policy_.budget_failures()
             << ",\"workspace_live_bytes\":" << workspace_live_bytes()
             << ",\"model_weight_buffer_bytes\":" << model_buffer_bytes()
             << ",\"model_tracker_live_backend_bytes\":" << frame_storage_.resident_bytes() + workspace_live_bytes() + model_buffer_bytes()
-            << ",\"batch_splits\":" << batch_splits_
-            << ",\"serial_fallbacks\":" << serial_fallbacks_
-            << ",\"max_fused_batch\":" << max_fused_batch_
-            << ",\"fusion_disabled\":" << (fusion_disabled_ ? "true" : "false")
-            << ",\"serial_workspace_budget_bytes\":" <<
-                (frame_serial_budget_ ? frame_serial_budget_ : seed_memory_budget_)
-            << ",\"serial_workspace_required_bytes\":" <<
-                (frame_serial_budget_ ? frame_serial_required_budget_ : seed_memory_required_budget_)
+            << ",\"batch_splits\":" << workspace_policy_.batch_splits()
+            << ",\"serial_fallbacks\":" << workspace_policy_.serial_fallbacks()
+            << ",\"max_fused_batch\":" << workspace_policy_.max_fused_batch()
+            << ",\"fusion_disabled\":" << (workspace_policy_.fusion_disabled() ? "true" : "false")
+            << ",\"serial_workspace_budget_bytes\":" << workspace_policy_.serial_budget_bytes()
+            << ",\"serial_workspace_required_bytes\":" << workspace_policy_.serial_required_bytes()
             << ",\"graph_build_ms\":" << graphs_.graph_build_ms()
-            << ",\"bind_ms\":" << d.bind_ms + probe_diagnostics_.bind_ms
-            << ",\"reserve_ms\":" << d.reserve_ms + probe_diagnostics_.reserve_ms
+            << ",\"bind_ms\":" << d.bind_ms + workspace_policy_.probe_diagnostics().bind_ms
+            << ",\"reserve_ms\":" << d.reserve_ms + workspace_policy_.probe_diagnostics().reserve_ms
             << ",\"compute_ms_includes_sync\":true,\"download_ms_may_include_wait\":true"
-            << ",\"compute_ms\":" << d.compute_ms + probe_diagnostics_.compute_ms
+            << ",\"compute_ms\":" << d.compute_ms + workspace_policy_.probe_diagnostics().compute_ms
             << ",\"upload_ms\":" << upload_ms_ << ",\"download_ms\":" << download_ms_
             << ",\"gpu_timestamps\":false}";
         return out.str();
     }
 
 private:
-    struct WorkspaceProbe { std::size_t required = 0, actual = 0; };
-    struct NoneResidentPolicy { TrackerGraphShape low_shape; std::size_t budget = 0; };
     struct DecoderInputs {
         ggml_tensor* conditioned = nullptr;
         ggml_tensor* seed = nullptr;
@@ -398,19 +363,6 @@ private:
 
     static double elapsed_ms(std::chrono::steady_clock::time_point start) {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    }
-
-    void accumulate_probe_diagnostics(const GraphDiagnostics& diagnostics) {
-        probe_diagnostics_.graph_builds += diagnostics.graph_builds;
-        probe_diagnostics_.graph_reuses += diagnostics.graph_reuses;
-        probe_diagnostics_.graph_binds += diagnostics.graph_binds;
-        probe_diagnostics_.reserve_probes += diagnostics.reserve_probes;
-        probe_diagnostics_.compute_calls += diagnostics.compute_calls;
-        probe_diagnostics_.workspace_peak_bytes = std::max(probe_diagnostics_.workspace_peak_bytes,
-                                                           diagnostics.workspace_peak_bytes);
-        probe_diagnostics_.bind_ms += diagnostics.bind_ms;
-        probe_diagnostics_.reserve_ms += diagnostics.reserve_ms;
-        probe_diagnostics_.compute_ms += diagnostics.compute_ms;
     }
 
     std::vector<float> read_weight(ggml_tensor* tensor) {
@@ -437,12 +389,6 @@ private:
     void validate_frame(const ImageFeatures& image) const {
         if (!active_image_ || active_image_ != &image)
             throw std::runtime_error("tracker execution requires the current resident frame");
-    }
-
-    void select_resident_mode(std::size_t budget) {
-        if (frame_storage_.select_resident_mode(budget) != TrackerFrameStorage::ResidentDecision::demote_none)
-            return;
-        demote_none_residency();
     }
 
     void require_frame(const ImageFeatures& image) {
@@ -479,36 +425,7 @@ private:
         decoder_inputs_ = {};
         decoder_masks_ = decoder_iou_ = decoder_object_ = decoder_pointer_ = nullptr;
         frame_storage_.drop_high_residency();
-        policy_resident_bytes_ = frame_storage_.resident_bytes();
-    }
-
-    void demote_none_residency() noexcept {
-        if (frame_storage_.none_resident()) return;
-        // Flush scheduler references before releasing either resident context.
-        // Cached graph metadata remains intact and gets a distinct none-resident
-        // key; a later frame reuses the original resident tensor metadata.
-        workspace_->release_storage();
-        frame_storage_.force_none_residency();
-        policy_resident_bytes_ = 0;
-        max_fused_batch_ = sam3_tracker_graph_batch_limit;
-        fusion_disabled_ = false;
-    }
-
-    bool apply_none_resident_policy(const TrackerGraphShape& low_shape, std::size_t budget) {
-        if (!none_resident_policy_ || none_resident_policy_->budget != budget ||
-            !(none_resident_policy_->low_shape == low_shape)) return false;
-        demote_none_residency();
-        return true;
-    }
-
-    void remember_none_resident_policy(const TrackerGraphShape& low_shape, std::size_t budget) {
-        none_resident_policy_ = NoneResidentPolicy{low_shape, budget};
-    }
-
-    void remember_none_serial_policy(int spatial, int pointers, std::size_t budget) {
-        none_serial_policy_ = TrackerNoneSerialPolicy{model_.runtime.get(), model_.runtime->backend(),
-            model_.model_info.precision + ":" + model_.model_info.storage_profile,
-            model_.runtime->arithmetic_profile(), spatial, pointers, budget};
+        workspace_policy_.set_policy_resident_bytes(frame_storage_.resident_bytes());
     }
 
     TrackerGraphShape shape(TrackerGraphShape::Stage stage, int spatial, int pointers, int batch,
@@ -544,7 +461,7 @@ private:
         const auto pointer_count = static_cast<int>(inputs.front().selection->pointers.size());
         if (!pointer_count) return {};
         const auto batch = static_cast<int>(inputs.size());
-        if (fusion_disabled_ && batch > 1) {
+        if (workspace_policy_.fusion_disabled() && batch > 1) {
             std::vector<float> result;
             result.reserve(inputs.size() * static_cast<std::size_t>(pointer_count) * 64);
             for (int begin = 0; begin < batch; ++begin) {
@@ -558,10 +475,10 @@ private:
                 throw std::runtime_error("serial pointer projection omitted an object");
             return result;
         }
-        if (batch > max_fused_batch_) {
+        if (batch > workspace_policy_.max_fused_batch()) {
             std::vector<float> result;
             result.reserve(inputs.size() * static_cast<std::size_t>(pointer_count) * 64);
-            sam3_for_each_tracker_chunk(batch, max_fused_batch_, [&](int begin, int count) {
+            workspace_policy_.for_each_batch(batch, [&](int begin, int count) {
                 std::vector<TrackerPropagationInput> slice(inputs.begin() + begin, inputs.begin() + begin + count);
                 auto values = project_pointer_positions(slice, frame_count, serial_budget);
                 const auto expected = static_cast<std::size_t>(count) * pointer_count * 64;
@@ -576,7 +493,7 @@ private:
         auto key = shape(TrackerGraphShape::Stage::pointer_time, 0, pointer_count, batch);
         tracker_shape_tensor(key, {256, pointer_count, batch, 1});
         tracker_shape_tensor(key, {64, pointer_count, batch, 1});
-        if (apply_none_resident_policy(key, serial_budget)) {
+        if (workspace_policy_.apply_none_resident_policy(key, serial_budget)) {
             key = shape(TrackerGraphShape::Stage::pointer_time, 0, pointer_count, batch);
             tracker_shape_tensor(key, {256, pointer_count, batch, 1});
             tracker_shape_tensor(key, {64, pointer_count, batch, 1});
@@ -598,8 +515,8 @@ private:
         bool over_budget = required > serial_budget || frame_storage_.resident_bytes() >
             serial_budget - std::min(required, serial_budget);
         if (over_budget && batch > 1) {
-            ++batch_splits_;
-            max_fused_batch_ = std::min(max_fused_batch_, std::max(1, batch / 2));
+            workspace_policy_.count_batch_split();
+            workspace_policy_.clamp_fused_batch(batch);
             graphs_.reset_pointer(); pointer_input_ = pointer_output_ = nullptr;
             return project_pointer_positions(inputs, frame_count, serial_budget);
         }
@@ -610,20 +527,20 @@ private:
                     serial_budget - std::min(required, serial_budget);
             }
             if (over_budget && !frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, serial_budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, serial_budget);
+                workspace_policy_.demote_none_residency();
                 return project_pointer_positions(inputs, frame_count, serial_budget);
             }
             if (over_budget) {
-                ++budget_failures_;
-                throw budget_error("pointer projection", required, serial_budget);
+                workspace_policy_.count_budget_failure();
+                throw workspace_policy_.budget_error("pointer projection", required, serial_budget);
             }
         }
         std::size_t actual_arena = required;
-        if (!allocate_under_budget(graph, required, serial_budget, &actual_arena)) {
+        if (!workspace_policy_.allocate_under_budget(graph, required, serial_budget, &actual_arena)) {
             if (batch > 1) {
-                ++batch_splits_;
-                max_fused_batch_ = std::min(max_fused_batch_, std::max(1, batch / 2));
+                workspace_policy_.count_batch_split();
+                workspace_policy_.clamp_fused_batch(batch);
                 graphs_.reset_pointer(); pointer_input_ = pointer_output_ = nullptr;
                 return project_pointer_positions(inputs, frame_count, serial_budget);
             }
@@ -632,12 +549,12 @@ private:
                 return project_pointer_positions(inputs, frame_count, serial_budget);
             }
             if (!frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, serial_budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, serial_budget);
+                workspace_policy_.demote_none_residency();
                 return project_pointer_positions(inputs, frame_count, serial_budget);
             }
-            ++budget_failures_;
-            throw budget_error("pointer projection", actual_arena, serial_budget);
+            workspace_policy_.count_budget_failure();
+            throw workspace_policy_.budget_error("pointer projection", actual_arena, serial_budget);
         }
         const auto values = tracker_sine_positions(inputs, frame_count);
         upload_tracked(pointer_input_, values);
@@ -787,12 +704,12 @@ private:
         if (batch <= 0) throw std::invalid_argument("tracker propagation batch is empty");
         if (static_cast<std::size_t>(batch) != inputs.size())
             throw std::invalid_argument("tracker propagation batch size does not match its inputs");
-        if (fusion_disabled_)
+        if (workspace_policy_.fusion_disabled())
             return run_serial_batch(image, inputs, pointer_positions, pointers, serial_budget);
-        if (batch > max_fused_batch_) {
+        if (batch > workspace_policy_.max_fused_batch()) {
             std::vector<TrackerPrediction> result;
             result.reserve(static_cast<std::size_t>(batch));
-            sam3_for_each_tracker_chunk(batch, max_fused_batch_, [&](int begin, int count) {
+            workspace_policy_.for_each_batch(batch, [&](int begin, int count) {
                 std::vector<TrackerPropagationInput> slice(inputs.begin() + begin, inputs.begin() + begin + count);
                 auto positions = tracker_slice_pointer_positions(pointer_positions, pointers,
                     static_cast<std::size_t>(begin), static_cast<std::size_t>(count));
@@ -808,7 +725,7 @@ private:
             return result;
         }
         auto key = propagation_shape(spatial, pointers, batch, inputs);
-        if (apply_none_resident_policy(key, serial_budget))
+        if (workspace_policy_.apply_none_resident_policy(key, serial_budget))
             key = propagation_shape(spatial, pointers, batch, inputs);
         bool built = false;
         auto& graph = graphs_.propagation().ensure(
@@ -822,8 +739,8 @@ private:
         const auto resident = frame_storage_.resident_bytes();
         bool over_budget = required > serial_budget || resident > serial_budget - std::min(required, serial_budget);
         if (over_budget && batch > 1) {
-            ++batch_splits_;
-            max_fused_batch_ = std::min(max_fused_batch_, std::max(1, batch / 2));
+            workspace_policy_.count_batch_split();
+            workspace_policy_.clamp_fused_batch(batch);
             graphs_.reset_propagation(); conditioned_ = propagation_masks_ = propagation_iou_ =
                 propagation_object_ = propagation_pointer_ = nullptr;
             return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
@@ -834,22 +751,22 @@ private:
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
             }
             if (!frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, serial_budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, serial_budget);
+                workspace_policy_.demote_none_residency();
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
             }
-            ++serial_fallbacks_;
-            remember_none_serial_policy(spatial, pointers, serial_budget);
-            fusion_disabled_ = true;
+            workspace_policy_.count_serial_fallback();
+            workspace_policy_.remember_none_serial_policy(spatial, pointers, serial_budget);
+            workspace_policy_.set_fusion_disabled(true);
             graphs_.reset_propagation(); conditioned_ = propagation_masks_ = propagation_iou_ =
                 propagation_object_ = propagation_pointer_ = nullptr;
             return run_serial_batch(image, inputs, pointer_positions, pointers, serial_budget);
         }
         std::size_t actual_arena = required;
-        if (!allocate_under_budget(graph, required, serial_budget, &actual_arena)) {
+        if (!workspace_policy_.allocate_under_budget(graph, required, serial_budget, &actual_arena)) {
             if (batch > 1) {
-                ++batch_splits_;
-                max_fused_batch_ = std::min(max_fused_batch_, std::max(1, batch / 2));
+                workspace_policy_.count_batch_split();
+                workspace_policy_.clamp_fused_batch(batch);
                 graphs_.reset_propagation(); conditioned_ = propagation_masks_ = propagation_iou_ =
                     propagation_object_ = propagation_pointer_ = nullptr;
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
@@ -859,13 +776,13 @@ private:
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
             }
             if (!frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, serial_budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, serial_budget);
+                workspace_policy_.demote_none_residency();
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
             }
-            ++serial_fallbacks_;
-            remember_none_serial_policy(spatial, pointers, serial_budget);
-            fusion_disabled_ = true;
+            workspace_policy_.count_serial_fallback();
+            workspace_policy_.remember_none_serial_policy(spatial, pointers, serial_budget);
+            workspace_policy_.set_fusion_disabled(true);
             graphs_.reset_propagation(); conditioned_ = propagation_masks_ = propagation_iou_ =
                 propagation_object_ = propagation_pointer_ = nullptr;
             return run_serial_batch(image, inputs, pointer_positions, pointers, serial_budget);
@@ -941,175 +858,6 @@ private:
         return result;
     }
 
-    std::size_t serial_workspace_budget(int spatial, int pointers) {
-        if (budget_spatial_ == spatial && budget_pointers_ == pointers && serial_budget_) return serial_budget_;
-        release_frame_storage_for_probe();
-        budget_spatial_ = spatial; budget_pointers_ = pointers;
-        serial_budget_ = 0;
-        serial_required_budget_ = 0;
-        const auto pointer = probe_pointer_workspace(pointers);
-        const auto condition = probe_condition_workspace(spatial, pointers);
-        const auto decoder = probe_decoder_workspace(false);
-        const auto seed_decoder = probe_decoder_workspace(true);
-        const auto memory = probe_memory_workspace(false);
-        const auto absent_memory = probe_memory_workspace(true);
-        for (const auto& probe : {pointer, condition, decoder, seed_decoder, memory, absent_memory}) {
-            serial_budget_ = std::max(serial_budget_, probe.actual);
-            serial_required_budget_ = std::max(serial_required_budget_, probe.required);
-        }
-        return serial_budget_;
-    }
-
-    std::size_t seed_memory_workspace_budget() {
-        if (seed_memory_budget_) return seed_memory_budget_;
-        release_frame_storage_for_probe();
-        seed_memory_required_budget_ = 0;
-        const auto decoder = probe_decoder_workspace(false);
-        const auto seed_decoder = probe_decoder_workspace(true);
-        const auto memory = probe_memory_workspace(false);
-        const auto absent_memory = probe_memory_workspace(true);
-        for (const auto& probe : {decoder, seed_decoder, memory, absent_memory}) {
-            seed_memory_budget_ = std::max(seed_memory_budget_, probe.actual);
-            seed_memory_required_budget_ = std::max(seed_memory_required_budget_, probe.required);
-        }
-        return seed_memory_budget_;
-    }
-
-    std::runtime_error budget_error(const char* stage, std::size_t arena, std::size_t budget) const {
-        std::ostringstream message;
-        message << "tracker " << stage << " exceeds serial workspace budget: resident="
-                << frame_storage_.resident_bytes() << " arena=" << arena << " budget=" << budget;
-        return std::runtime_error(message.str());
-    }
-
-    bool allocate_under_budget(GraphExecution& graph, std::size_t required,
-                               std::size_t budget, std::size_t* actual_bytes = nullptr) {
-        const auto resident = frame_storage_.resident_bytes();
-        if (actual_bytes) *actual_bytes = required;
-        if (resident > budget || required > budget - resident) return false;
-        const auto arena_limit = budget - resident;
-        // Different backend arenas can grow in opposite directions between
-        // stages. Compare their combined retained/required sizes before binding.
-        graph.allocate(arena_limit);
-        const auto actual = workspace_->allocated_bytes();
-        if (actual_bytes) *actual_bytes = actual;
-        if (actual > arena_limit) {
-            workspace_->release_storage();
-            return false;
-        }
-        return true;
-    }
-
-    void release_frame_storage_for_probe() noexcept {
-        workspace_->release_storage();
-        frame_storage_.release_storage();
-    }
-
-    void configure_batch_policy(int spatial, int pointers, std::size_t resident_bytes,
-                                bool preserve_none_serial = false) {
-        if (policy_spatial_ == spatial && policy_pointers_ == pointers &&
-            policy_resident_bytes_ == resident_bytes) return;
-        policy_spatial_ = spatial;
-        policy_pointers_ = pointers;
-        policy_resident_bytes_ = resident_bytes;
-        if (preserve_none_serial) return;
-        max_fused_batch_ = sam3_tracker_graph_batch_limit;
-        fusion_disabled_ = false;
-    }
-
-    WorkspaceProbe probe_actual_workspace(GraphExecution& graph) {
-        try {
-            const auto required = graph.required_workspace_bytes();
-            graph.allocate();
-            const auto diagnostics = graph.diagnostics();
-            accumulate_probe_diagnostics(diagnostics);
-            const auto actual = diagnostics.workspace_peak_bytes;
-            return {required, actual};
-        } catch (...) {
-            accumulate_probe_diagnostics(graph.diagnostics());
-            throw;
-        }
-    }
-
-    WorkspaceProbe probe_pointer_workspace(int pointers) {
-        if (!pointers) return {};
-        const auto build_start = std::chrono::steady_clock::now();
-        GraphExecution graph(*model_.runtime, 512, stats_);
-        auto* input = input_tensor(graph.context(), "probe_pointer_input", 256, pointers);
-        auto* output = ggml_add(graph.context(), ggml_mul_mat(graph.context(), model_.definition.weights.obj_ptr_tpos_w, input),
-                                model_.definition.weights.obj_ptr_tpos_b);
-        graph.output(output);
-        graphs_.add_auxiliary_build_ms(elapsed_ms(build_start));
-        return probe_actual_workspace(graph);
-    }
-
-    WorkspaceProbe probe_condition_workspace(int spatial, int pointers) {
-        const auto tokens = spatial * 5184 + pointers * 4;
-        const auto build_start = std::chrono::steady_clock::now();
-        GraphExecution graph(*model_.runtime, 16384, stats_);
-        auto* ctx = graph.context();
-        auto* current = input_tensor(ctx, "probe_current", 256, 5184);
-        auto* current_position = input_tensor(ctx, "probe_current_position", 256, 5184);
-        auto* memory = input_tensor(ctx, "probe_memory", 64, tokens);
-        auto* position = input_tensor(ctx, "probe_memory_position", 64, tokens);
-        auto* rope = input_tensor(ctx, "probe_rope", 2, 128, 5184);
-        auto* key_rope = input_tensor(ctx, "probe_key_rope", 2, 128, spatial * 5184);
-        auto* output = sam3_build_mem_attn_graph(ctx, model_.definition.weights, current, current_position,
-                                                  memory, position, rope, key_rope, pointers * 4, model_.runtime->attention_policy());
-        graph.output(output);
-        graphs_.add_auxiliary_build_ms(elapsed_ms(build_start));
-        return probe_actual_workspace(graph);
-    }
-
-    WorkspaceProbe probe_decoder_workspace(bool seed) {
-        const auto& weights = model_.definition.weights;
-        const auto build_start = std::chrono::steady_clock::now();
-        GraphExecution graph(*model_.runtime, 8192, stats_);
-        auto* ctx = graph.context();
-        auto* current = input_tensor(ctx, "probe_decoder_current", 256, 72, 72);
-        auto* position = input_tensor(ctx, "probe_decoder_position", 256, 72, 72);
-        auto* sparse = input_tensor(ctx, "probe_decoder_sparse", 256, 2);
-        auto* first = input_tensor(ctx, "probe_decoder_first", 256, 288, 288);
-        auto* second = input_tensor(ctx, "probe_decoder_second", 256, 144, 144);
-        ggml_tensor* dense = nullptr;
-        if (seed) {
-            auto* input = input_tensor(ctx, "probe_seed_mask", 1152, 1152);
-            dense = sam3_conv_2d(ctx, weights.tensors.at("trk_mask_ds.weight"), input, 4, 4, 0, 0);
-            dense = ggml_add(ctx, dense, weights.tensors.at("trk_mask_ds.bias"));
-            for (int stage = 0; stage < 2; ++stage) {
-                dense = sam3_conv_2d(ctx, weights.sam_pe.mask_ds_conv_w[stage], dense, 2, 2, 0, 0);
-                const auto channels = weights.sam_pe.mask_ds_conv_b[stage]->ne[0];
-                dense = ggml_add(ctx, dense, ggml_reshape_4d(ctx, weights.sam_pe.mask_ds_conv_b[stage], 1, 1, channels, 1));
-                dense = ggml_cont(ctx, ggml_permute(ctx, dense, 1, 2, 0, 3));
-                dense = sam3_layer_norm_2d(ctx, dense, weights.sam_pe.mask_ds_norm_w[stage], weights.sam_pe.mask_ds_norm_b[stage]);
-                dense = ggml_gelu_erf(ctx, dense);
-                dense = ggml_cont(ctx, ggml_permute(ctx, dense, 2, 0, 1, 3));
-            }
-            dense = sam3_conv_2d_sk_p0(ctx, weights.sam_pe.mask_ds_conv_w[2], dense);
-            dense = ggml_add(ctx, dense, ggml_reshape_4d(ctx, weights.sam_pe.mask_ds_conv_b[2], 1, 1, 256, 1));
-            dense = ggml_cont(ctx, ggml_permute(ctx, dense, 1, 2, 0, 3));
-        } else {
-            dense = ggml_repeat(ctx, ggml_reshape_4d(ctx, weights.sam_pe.no_mask_embed, 256, 1, 1, 1), current);
-        }
-        auto output = sam3_build_sam_dec_graph(ctx, weights, current, position, sparse, dense, first, second);
-        auto* pointer = sam3_mlp_forward(ctx, output.mask_tokens, weights.obj_ptr_proj_w, weights.obj_ptr_proj_b, 3);
-        graph.output(output.masks); graph.output(output.iou_pred); graph.output(output.obj_score); graph.output(pointer);
-        graphs_.add_auxiliary_build_ms(elapsed_ms(build_start));
-        return probe_actual_workspace(graph);
-    }
-
-    WorkspaceProbe probe_memory_workspace(bool present) {
-        const auto build_start = std::chrono::steady_clock::now();
-        GraphExecution graph(*model_.runtime, 4096, stats_);
-        auto* ctx = graph.context();
-        auto* mask = input_tensor(ctx, "probe_memory_mask", 1152, 1152);
-        auto* pixels = input_tensor(ctx, "probe_memory_pixels", 256, 72, 72);
-        auto* output = build_memory_encoder(ctx, model_.definition.weights, mask, pixels, present);
-        graph.output(output);
-        graphs_.add_auxiliary_build_ms(elapsed_ms(build_start));
-        return probe_actual_workspace(graph);
-    }
-
     std::vector<TrackerPrediction> run_serial_batch(const ImageFeatures& image,
             const std::vector<TrackerPropagationInput>& inputs, const std::vector<float>& pointer_positions,
             int pointers, std::size_t serial_budget) {
@@ -1133,10 +881,9 @@ private:
         require_frame(image);
         const int pointer_count = static_cast<int>(selection.pointers.size());
         const int spatial_count = static_cast<int>(selection.spatial.size());
-        const auto budget = budget_override ? budget_override :
-            (frame_serial_budget_ ? frame_serial_budget_ : seed_memory_workspace_budget());
+        const auto budget = budget_override ? budget_override : workspace_policy_.effective_serial_budget();
         auto key = condition_shape(spatial_count, pointer_count, selection);
-        if (apply_none_resident_policy(key, budget)) key = condition_shape(spatial_count, pointer_count, selection);
+        if (workspace_policy_.apply_none_resident_policy(key, budget)) key = condition_shape(spatial_count, pointer_count, selection);
         bool built = false;
         auto& graph = graphs_.propagation().ensure(
             *model_.runtime, stats_, workspace_, key, sam3_tracker_fused_graph_capacity, built);
@@ -1186,26 +933,26 @@ private:
                 return condition_one(image, selection, payload, budget_override);
             }
             if (!frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, budget);
+                workspace_policy_.demote_none_residency();
                 return condition_one(image, selection, payload, budget_override);
             }
-            ++budget_failures_;
-            throw budget_error("condition", required, budget);
+            workspace_policy_.count_budget_failure();
+            throw workspace_policy_.budget_error("condition", required, budget);
         }
         std::size_t actual_arena = required;
-        if (!allocate_under_budget(graph, required, budget, &actual_arena)) {
+        if (!workspace_policy_.allocate_under_budget(graph, required, budget, &actual_arena)) {
             if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return condition_one(image, selection, payload, budget_override);
             }
             if (!frame_storage_.none_resident()) {
-                remember_none_resident_policy(key, budget);
-                demote_none_residency();
+                workspace_policy_.remember_none_resident_policy(key, budget);
+                workspace_policy_.demote_none_residency();
                 return condition_one(image, selection, payload, budget_override);
             }
-            ++budget_failures_;
-            throw budget_error("condition", actual_arena, budget);
+            workspace_policy_.count_budget_failure();
+            throw workspace_policy_.budget_error("condition", actual_arena, budget);
         }
         upload_tracked(propagation_memory_, payload.memory);
         if (frame_storage_.none_resident()) {
@@ -1303,10 +1050,10 @@ private:
     RuntimeStats& stats_;
     std::shared_ptr<GraphWorkspace> workspace_;
     TrackerFrameStorage frame_storage_;
-    GraphDiagnostics probe_diagnostics_{};
     const ImageFeatures* active_image_ = nullptr;
 
     TrackerGraphCache graphs_;
+    TrackerWorkspacePolicy workspace_policy_;
     ggml_tensor *pointer_input_ = nullptr, *pointer_output_ = nullptr;
     ggml_tensor *propagation_memory_ = nullptr, *propagation_pointer_position_ = nullptr;
     ggml_tensor *propagation_current_input_ = nullptr, *propagation_current_position_input_ = nullptr;
@@ -1322,17 +1069,6 @@ private:
 
     std::vector<float> no_object_, no_point_sparse_, memory_tpos_, memory_position_bank_;
     std::vector<float> dense_position_, rope_;
-    int budget_spatial_ = -1, budget_pointers_ = -1;
-    int policy_spatial_ = -1, policy_pointers_ = -1, max_fused_batch_ = sam3_tracker_graph_batch_limit;
-    std::size_t policy_resident_bytes_ = 0;
-    bool fusion_disabled_ = false;
-    std::optional<NoneResidentPolicy> none_resident_policy_;
-    std::optional<TrackerNoneSerialPolicy> none_serial_policy_;
-    std::size_t serial_budget_ = 0, serial_required_budget_ = 0;
-    std::size_t batch_splits_ = 0, serial_fallbacks_ = 0;
-    std::size_t frame_serial_budget_ = 0, frame_serial_required_budget_ = 0;
-    std::size_t seed_memory_budget_ = 0, seed_memory_required_budget_ = 0;
-    std::size_t budget_failures_ = 0;
     std::size_t memory_payload_peak_bytes_ = 0;
     double upload_ms_ = 0, download_ms_ = 0;
 };
