@@ -9,6 +9,7 @@
 #include "mask_ops.hpp"
 #include "graph_cache.hpp"
 #include "memory_payload.hpp"
+#include "frame_storage.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -29,31 +30,6 @@
 #include <vector>
 
 namespace sam::internal::sam3 {
-
-struct TrackerResidentUploadState {
-    template<class Upload>
-    void ensure_core(Upload&& upload) {
-        if (core_uploaded_) return;
-        upload();
-        core_uploaded_ = true;
-    }
-
-    template<class Upload>
-    void ensure_high(Upload&& upload) {
-        if (high_uploaded_) return;
-        upload();
-        high_uploaded_ = true;
-    }
-
-    void reset_frame() noexcept { core_uploaded_ = high_uploaded_ = false; }
-    void release_high() noexcept { high_uploaded_ = false; }
-    bool core_uploaded() const noexcept { return core_uploaded_; }
-    bool high_uploaded() const noexcept { return high_uploaded_; }
-
-private:
-    bool core_uploaded_ = false;
-    bool high_uploaded_ = false;
-};
 
 struct TrackerPrediction {
     std::vector<float> mask, pointer, conditioned, decoder_masks, decoder_iou;
@@ -93,7 +69,8 @@ class TrackerExecution {
 public:
     TrackerExecution(ModelState& model, RuntimeStats& stats)
         : model_(model), stats_(stats), workspace_(std::make_shared<GraphWorkspace>(
-              *model.runtime, sam3_tracker_workspace_capacity(*model.runtime))) {
+              *model.runtime, sam3_tracker_workspace_capacity(*model.runtime))),
+          frame_storage_(*model.runtime) {
         const auto& weights = model_.definition.weights;
         const auto gaussian = read_weight(weights.sam_pe.pe_gaussian);
         const auto no_point = read_weight(weights.sam_pe.not_a_point_embed);
@@ -120,7 +97,6 @@ public:
         }
         no_point_sparse_ = no_point;
         no_point_sparse_.insert(no_point_sparse_.end(), no_point.begin(), no_point.end());
-        make_resident_context();
     }
 
     void begin_frame(const ImageFeatures& image) {
@@ -129,9 +105,7 @@ public:
             image.tracker[1].size() != 256u * 144 * 144 ||
             image.tracker[2].size() != 256u * 72 * 72 || image.position.size() != 256u * 72 * 72)
             throw std::runtime_error("tracker frame has noncanonical feature shapes");
-        high_resident_ = high_residency_allowed_;
-        none_resident_ = false;
-        resident_uploads_.reset_frame();
+        frame_storage_.begin_frame();
         active_image_ = &image;
         frame_serial_budget_ = 0;
         frame_serial_required_budget_ = 0;
@@ -139,18 +113,8 @@ public:
 
     void end_frame() noexcept {
         workspace_->release_storage();
-        if (resident_buffer_) {
-            clear_context(resident_context_.get());
-            resident_buffer_.reset();
-        }
-        if (high_buffer_) {
-            clear_context(high_context_.get());
-            high_buffer_.reset();
-        }
-        resident_uploads_.reset_frame();
+        frame_storage_.end_frame();
         active_image_ = nullptr;
-        high_resident_ = high_residency_allowed_;
-        none_resident_ = false;
     }
 
     std::vector<TrackerPrediction> propagate_batch(const ImageFeatures& image,
@@ -178,17 +142,17 @@ public:
             model_.model_info.precision + ":" + model_.model_info.storage_profile,
             model_.runtime->arithmetic_profile(), spatial, pointers, baseline);
         if (sticky_none_serial) {
-            if (!none_resident_ && (resident_buffer_ || high_buffer_ || workspace_->allocated_bytes()))
+            if (!frame_storage_.none_resident() &&
+                (frame_storage_.resident_bytes() || workspace_->allocated_bytes()))
                 demote_none_residency();
-            none_resident_ = true;
-            high_resident_ = false;
+            frame_storage_.mark_none_residency();
             max_fused_batch_ = sam3_tracker_graph_batch_limit;
             fusion_disabled_ = true;
         } else {
             select_resident_mode(baseline);
             require_frame(image);
         }
-        configure_batch_policy(spatial, pointers, resident_buffer_bytes(), sticky_none_serial);
+        configure_batch_policy(spatial, pointers, frame_storage_.resident_bytes(), sticky_none_serial);
         const auto pointer_positions = project_pointer_positions(inputs, frame_count, baseline);
         validate_memory_payload_inputs(inputs);
         auto result = run_propagation_batch(image, inputs, pointer_positions, static_cast<int>(spatial_count),
@@ -216,12 +180,12 @@ public:
         if (built) {
             const auto graph_start = std::chrono::steady_clock::now();
             auto* ctx = graph.context();
-            auto* current = seed && !none_resident_ ? resident_tracker_[2] :
+            auto* current = seed && !frame_storage_.none_resident() ? frame_storage_.tracker(2) :
                 input_tensor(ctx, seed ? "sam_seed_current" : "sam_current", 256, 72, 72);
-            auto* position = none_resident_ ? input_tensor(ctx, "sam_position", 256, 72, 72) : resident_dense_position_;
-            auto* sparse = none_resident_ ? input_tensor(ctx, "sam_sparse", 256, 2) : resident_no_point_;
-            auto* first = high_resident_ ? resident_tracker_[0] : input_tensor(ctx, "sam_first_neck", 256, 288, 288);
-            auto* second = high_resident_ ? resident_tracker_[1] : input_tensor(ctx, "sam_second_neck", 256, 144, 144);
+            auto* position = frame_storage_.none_resident() ? input_tensor(ctx, "sam_position", 256, 72, 72) : frame_storage_.dense_position();
+            auto* sparse = frame_storage_.none_resident() ? input_tensor(ctx, "sam_sparse", 256, 2) : frame_storage_.no_point();
+            auto* first = frame_storage_.high_resident() ? frame_storage_.tracker(0) : input_tensor(ctx, "sam_first_neck", 256, 288, 288);
+            auto* second = frame_storage_.high_resident() ? frame_storage_.tracker(1) : input_tensor(ctx, "sam_second_neck", 256, 144, 144);
             ggml_tensor* seed_tensor = nullptr;
             ggml_tensor* dense = nullptr;
             if (seed) {
@@ -247,9 +211,9 @@ public:
             auto* pointers = sam3_mlp_forward(ctx, output.mask_tokens, weights.obj_ptr_proj_w, weights.obj_ptr_proj_b, 3);
             graph.output(output.masks); graph.output(output.iou_pred); graph.output(output.obj_score); graph.output(pointers);
             decoder_inputs_ = {seed ? nullptr : current, seed_tensor,
-                               high_resident_ ? nullptr : first, high_resident_ ? nullptr : second,
-                               seed && none_resident_ ? current : nullptr,
-                               none_resident_ ? position : nullptr, none_resident_ ? sparse : nullptr};
+                               frame_storage_.high_resident() ? nullptr : first, frame_storage_.high_resident() ? nullptr : second,
+                               seed && frame_storage_.none_resident() ? current : nullptr,
+                               frame_storage_.none_resident() ? position : nullptr, frame_storage_.none_resident() ? sparse : nullptr};
             decoder_masks_ = output.masks;
             decoder_iou_ = output.iou_pred;
             decoder_object_ = output.obj_score;
@@ -258,12 +222,12 @@ public:
         }
 
         const auto required = graphs_.decoder().required_workspace_bytes();
-        if (required > budget || resident_buffer_bytes() > budget - std::min(required, budget)) {
-            if (high_resident_) {
+        if (required > budget || frame_storage_.resident_bytes() > budget - std::min(required, budget)) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return decode(image, conditioned, seed_mask, budget_override);
             }
-            if (!none_resident_) {
+            if (!frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, budget);
                 demote_none_residency();
                 return decode(image, conditioned, seed_mask, budget_override);
@@ -273,11 +237,11 @@ public:
         }
         std::size_t actual_arena = required;
         if (!allocate_under_budget(graph, required, budget, &actual_arena)) {
-            if (high_resident_) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return decode(image, conditioned, seed_mask, budget_override);
             }
-            if (!none_resident_) {
+            if (!frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, budget);
                 demote_none_residency();
                 return decode(image, conditioned, seed_mask, budget_override);
@@ -286,19 +250,19 @@ public:
             throw budget_error("decoder", actual_arena, budget);
         }
         if (!seed) upload_tracked(decoder_inputs_.conditioned, conditioned);
-        else if (none_resident_) upload_tracked(decoder_inputs_.frame_current, image.tracker[2]);
+        else if (frame_storage_.none_resident()) upload_tracked(decoder_inputs_.frame_current, image.tracker[2]);
         if (seed) upload_tracked(decoder_inputs_.seed, *seed_mask);
-        if (none_resident_) {
+        if (frame_storage_.none_resident()) {
             upload_tracked(decoder_inputs_.position, dense_position_);
             upload_tracked(decoder_inputs_.sparse, no_point_sparse_);
         }
-        if (!high_resident_) {
+        if (!frame_storage_.high_resident()) {
             upload_tracked(decoder_inputs_.first, image.tracker[0]);
             upload_tracked(decoder_inputs_.second, image.tracker[1]);
         }
-        if (!none_resident_) {
+        if (!frame_storage_.none_resident()) {
             ensure_core_resident_uploaded(image);
-            if (high_resident_) ensure_high_resident_uploaded(image);
+            if (frame_storage_.high_resident()) ensure_high_resident_uploaded(image);
         }
         graph.compute();
         return finish_prediction(conditioned, download_tracked(decoder_masks_), download_tracked(decoder_iou_),
@@ -320,17 +284,17 @@ public:
             const auto graph_start = std::chrono::steady_clock::now();
             auto* ctx = graph.context();
             memory_mask_input_ = input_tensor(ctx, "memory_mask", 1152, 1152);
-            memory_pixels_input_ = none_resident_ ? input_tensor(ctx, "memory_pixels", 256, 72, 72) : resident_tracker_[2];
+            memory_pixels_input_ = frame_storage_.none_resident() ? input_tensor(ctx, "memory_pixels", 256, 72, 72) : frame_storage_.tracker(2);
             auto* output = build_memory_encoder(ctx, model_.definition.weights, memory_mask_input_, memory_pixels_input_, present);
             graph.output(output);
             memory_output_ = output;
             graphs_.memory().add_build_ms(elapsed_ms(graph_start));
         }
         const auto required = graphs_.memory().required_workspace_bytes();
-        if (required > budget || resident_buffer_bytes() > budget - std::min(required, budget)) {
-            if (high_resident_) demote_high_residency();
-            if (required > budget || resident_buffer_bytes() > budget - std::min(required, budget)) {
-                if (!none_resident_) {
+        if (required > budget || frame_storage_.resident_bytes() > budget - std::min(required, budget)) {
+            if (frame_storage_.high_resident()) demote_high_residency();
+            if (required > budget || frame_storage_.resident_bytes() > budget - std::min(required, budget)) {
+                if (!frame_storage_.none_resident()) {
                     remember_none_resident_policy(key, budget);
                     demote_none_residency();
                     return encode_memory(image, mask, present, unrounded);
@@ -341,11 +305,11 @@ public:
         }
         std::size_t actual_arena = required;
         if (!allocate_under_budget(graph, required, budget, &actual_arena)) {
-            if (high_resident_) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return encode_memory(image, mask, present, unrounded);
             }
-            if (!none_resident_) {
+            if (!frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, budget);
                 demote_none_residency();
                 return encode_memory(image, mask, present, unrounded);
@@ -354,7 +318,7 @@ public:
             throw budget_error("memory encoder", actual_arena, budget);
         }
         upload_tracked(memory_mask_input_, mask);
-        if (none_resident_) upload_tracked(memory_pixels_input_, image.tracker[2]);
+        if (frame_storage_.none_resident()) upload_tracked(memory_pixels_input_, image.tracker[2]);
         else ensure_core_resident_uploaded(image);
         graph.compute();
         auto values = download_tracked(memory_output_);
@@ -366,10 +330,6 @@ public:
 
     const std::vector<float>& no_object_pointer() const { return no_object_; }
     const GraphDiagnostics& diagnostics() const { return workspace_->diagnostics(); }
-    std::size_t resident_buffer_bytes() const {
-        return (resident_buffer_ ? ggml_backend_buffer_get_size(resident_buffer_.get()) : 0) +
-            (high_buffer_ ? ggml_backend_buffer_get_size(high_buffer_.get()) : 0);
-    }
     std::size_t workspace_live_bytes() const { return workspace_->allocated_bytes(); }
     std::size_t model_buffer_bytes() const { return ggml_backend_buffer_get_size(model_.buffer.get()); }
     std::size_t batch_splits() const { return batch_splits_; }
@@ -394,17 +354,17 @@ public:
             << ",\"reserve_probes\":" << reserve_probes
             << ",\"compute_calls\":" << compute_calls
             << ",\"workspace_peak_bytes\":" << workspace_peak
-            << ",\"resident_buffer_bytes\":" << resident_buffer_bytes()
-            << ",\"resident_peak_bytes\":" << resident_peak_bytes_
-            << ",\"high_fpn_resident\":" << (high_resident_ ? "true" : "false")
-            << ",\"none_resident\":" << (none_resident_ ? "true" : "false")
-            << ",\"resident_demotions\":" << resident_demotions_
-            << ",\"none_resident_fallbacks\":" << none_resident_fallbacks_
+            << ",\"resident_buffer_bytes\":" << frame_storage_.resident_bytes()
+            << ",\"resident_peak_bytes\":" << frame_storage_.resident_peak_bytes()
+            << ",\"high_fpn_resident\":" << (frame_storage_.high_resident() ? "true" : "false")
+            << ",\"none_resident\":" << (frame_storage_.none_resident() ? "true" : "false")
+            << ",\"resident_demotions\":" << frame_storage_.resident_demotions()
+            << ",\"none_resident_fallbacks\":" << frame_storage_.none_resident_fallbacks()
             << ",\"memory_payload_peak_bytes\":" << memory_payload_peak_bytes_
             << ",\"budget_failures\":" << budget_failures_
             << ",\"workspace_live_bytes\":" << workspace_live_bytes()
             << ",\"model_weight_buffer_bytes\":" << model_buffer_bytes()
-            << ",\"model_tracker_live_backend_bytes\":" << resident_buffer_bytes() + workspace_live_bytes() + model_buffer_bytes()
+            << ",\"model_tracker_live_backend_bytes\":" << frame_storage_.resident_bytes() + workspace_live_bytes() + model_buffer_bytes()
             << ",\"batch_splits\":" << batch_splits_
             << ",\"serial_fallbacks\":" << serial_fallbacks_
             << ",\"max_fused_batch\":" << max_fused_batch_
@@ -474,105 +434,42 @@ private:
         return values;
     }
 
-    void make_resident_context() {
-        resident_context_ = make_context(6);
-        high_context_ = make_context(2);
-        for (int i = 0; i < 2; ++i) {
-            const int size = 288 >> i;
-            resident_tracker_[i] = ggml_new_tensor_4d(high_context_.get(), GGML_TYPE_F32, 256, size, size, 1);
-            ggml_set_name(resident_tracker_[i], ("tracker_frame_" + std::to_string(i)).c_str());
-        }
-        resident_tracker_[2] = ggml_new_tensor_4d(resident_context_.get(), GGML_TYPE_F32, 256, 72, 72, 1);
-        ggml_set_name(resident_tracker_[2], "tracker_frame_2");
-        resident_position_ = ggml_new_tensor_4d(resident_context_.get(), GGML_TYPE_F32, 256, 5184, 1, 1);
-        resident_memory_position_bank_ = ggml_new_tensor_4d(resident_context_.get(), GGML_TYPE_F32,
-                                                            64, 5184, 7, 1);
-        resident_dense_position_ = ggml_new_tensor_4d(resident_context_.get(), GGML_TYPE_F32, 256, 72, 72, 1);
-        resident_rope_ = ggml_new_tensor_4d(resident_context_.get(), GGML_TYPE_F32, 2, 128, 5184, 1);
-        resident_no_point_ = ggml_new_tensor_4d(resident_context_.get(), GGML_TYPE_F32, 256, 2, 1, 1);
-        ggml_set_name(resident_position_, "tracker_frame_position");
-        ggml_set_name(resident_memory_position_bank_, "tracker_memory_position_bank");
-        ggml_set_name(resident_dense_position_, "tracker_dense_position");
-        ggml_set_name(resident_rope_, "tracker_rope_frequencies");
-        ggml_set_name(resident_no_point_, "tracker_no_point_prompt");
-    }
-
     void validate_frame(const ImageFeatures& image) const {
         if (!active_image_ || active_image_ != &image)
             throw std::runtime_error("tracker execution requires the current resident frame");
     }
 
-    std::size_t context_buffer_bytes(const ggml_context* context) const {
-        const auto buffer_type = ggml_backend_get_default_buffer_type(model_.runtime->weights_backend());
-        return ggml_backend_alloc_ctx_tensors_from_buft_size(const_cast<ggml_context*>(context), buffer_type);
-    }
-
     void select_resident_mode(std::size_t budget) {
-        if (none_resident_ || resident_buffer_) return;
-        const auto core_bytes = context_buffer_bytes(resident_context_.get());
-        const auto high_bytes = high_residency_allowed_ ? context_buffer_bytes(high_context_.get()) : 0;
-        if (core_bytes > budget) {
-            demote_none_residency();
+        if (frame_storage_.select_resident_mode(budget) != TrackerFrameStorage::ResidentDecision::demote_none)
             return;
-        }
-        if (high_residency_allowed_ && high_bytes > budget - core_bytes) {
-            high_resident_ = false;
-            high_residency_allowed_ = false;
-            ++resident_demotions_;
-        } else {
-            high_resident_ = high_residency_allowed_;
-        }
+        demote_none_residency();
     }
 
     void require_frame(const ImageFeatures& image) {
         validate_frame(image);
-        if (none_resident_) return;
-        if (!resident_buffer_) {
-            auto buffer = ggml_backend_alloc_ctx_tensors(resident_context_.get(), model_.runtime->weights_backend());
-            if (!buffer) throw std::runtime_error("failed to allocate tracker resident frame inputs");
-            resident_buffer_.reset(buffer);
-            ggml_backend_buffer_set_usage(resident_buffer_.get(), GGML_BACKEND_BUFFER_USAGE_COMPUTE);
-        }
-        if (high_resident_ && !high_buffer_) {
-            auto high_buffer = ggml_backend_alloc_ctx_tensors(high_context_.get(), model_.runtime->weights_backend());
-            if (!high_buffer) throw std::runtime_error("failed to allocate tracker high-resolution frame inputs");
-            high_buffer_.reset(high_buffer);
-            ggml_backend_buffer_set_usage(high_buffer_.get(), GGML_BACKEND_BUFFER_USAGE_COMPUTE);
-        }
-        resident_peak_bytes_ = std::max(resident_peak_bytes_, resident_buffer_bytes());
+        frame_storage_.require_frame_buffers();
     }
 
     void ensure_core_resident_uploaded(const ImageFeatures& image) {
-        if (!resident_buffer_) throw std::runtime_error("tracker core resident frame was not allocated");
-        resident_uploads_.ensure_core([&] {
-            upload_tracked(resident_tracker_[2], image.tracker[2]);
-            upload_tracked(resident_position_, image.position);
-            upload_tracked(resident_memory_position_bank_, memory_position_bank_);
-            upload_tracked(resident_dense_position_, dense_position_);
-            upload_tracked(resident_rope_, rope_);
-            upload_tracked(resident_no_point_, no_point_sparse_);
+        frame_storage_.ensure_core_uploaded([&] {
+            upload_tracked(frame_storage_.tracker(2), image.tracker[2]);
+            upload_tracked(frame_storage_.position(), image.position);
+            upload_tracked(frame_storage_.memory_position_bank(), memory_position_bank_);
+            upload_tracked(frame_storage_.dense_position(), dense_position_);
+            upload_tracked(frame_storage_.rope(), rope_);
+            upload_tracked(frame_storage_.no_point(), no_point_sparse_);
         });
     }
 
     void ensure_high_resident_uploaded(const ImageFeatures& image) {
-        if (!high_buffer_) throw std::runtime_error("tracker high-resolution resident frame was not allocated");
-        resident_uploads_.ensure_high([&] {
-            upload_tracked(resident_tracker_[0], image.tracker[0]);
-            upload_tracked(resident_tracker_[1], image.tracker[1]);
+        frame_storage_.ensure_high_uploaded([&] {
+            upload_tracked(frame_storage_.tracker(0), image.tracker[0]);
+            upload_tracked(frame_storage_.tracker(1), image.tracker[1]);
         });
     }
 
-    static void clear_context(ggml_context* context) noexcept {
-        if (!context) return;
-        for (auto* tensor = ggml_get_first_tensor(context); tensor; tensor = ggml_get_next_tensor(context, tensor)) {
-            tensor->data = nullptr;
-            tensor->buffer = nullptr;
-            tensor->extra = nullptr;
-        }
-    }
-
     void demote_high_residency() noexcept {
-        if (!high_resident_) return;
+        if (!frame_storage_.high_resident()) return;
         // Cached propagation/decoder graphs can hold these external tensors as
         // sources, so drop those graphs before releasing their storage.
         graphs_.reset_propagation(); graphs_.reset_decoder();
@@ -581,29 +478,17 @@ private:
             propagation_second_input_ = nullptr;
         decoder_inputs_ = {};
         decoder_masks_ = decoder_iou_ = decoder_object_ = decoder_pointer_ = nullptr;
-        clear_context(high_context_.get());
-        high_buffer_.reset();
-        resident_uploads_.release_high();
-        high_resident_ = false;
-        high_residency_allowed_ = false;
-        ++resident_demotions_;
-        policy_resident_bytes_ = resident_buffer_bytes();
+        frame_storage_.drop_high_residency();
+        policy_resident_bytes_ = frame_storage_.resident_bytes();
     }
 
     void demote_none_residency() noexcept {
-        if (none_resident_) return;
+        if (frame_storage_.none_resident()) return;
         // Flush scheduler references before releasing either resident context.
         // Cached graph metadata remains intact and gets a distinct none-resident
         // key; a later frame reuses the original resident tensor metadata.
         workspace_->release_storage();
-        clear_context(resident_context_.get());
-        clear_context(high_context_.get());
-        resident_buffer_.reset();
-        high_buffer_.reset();
-        resident_uploads_.reset_frame();
-        high_resident_ = false;
-        none_resident_ = true;
-        ++none_resident_fallbacks_;
+        frame_storage_.force_none_residency();
         policy_resident_bytes_ = 0;
         max_fused_batch_ = sam3_tracker_graph_batch_limit;
         fusion_disabled_ = false;
@@ -634,9 +519,9 @@ private:
         value.arithmetic_profile = model_.runtime->arithmetic_profile();
         value.spatial_count = spatial; value.pointer_count = pointers; value.batch = batch;
         value.seed = seed; value.present = present; value.unrounded_output = unrounded;
-        value.high_resident = high_resident_ &&
+        value.high_resident = frame_storage_.high_resident() &&
             (stage == TrackerGraphShape::Stage::propagation || stage == TrackerGraphShape::Stage::decoder);
-        value.none_resident = none_resident_;
+        value.none_resident = frame_storage_.none_resident();
         return value;
     }
 
@@ -710,7 +595,7 @@ private:
             graphs_.pointer().add_build_ms(elapsed_ms(graph_start));
         }
         const auto required = graphs_.pointer().required_workspace_bytes();
-        bool over_budget = required > serial_budget || resident_buffer_bytes() >
+        bool over_budget = required > serial_budget || frame_storage_.resident_bytes() >
             serial_budget - std::min(required, serial_budget);
         if (over_budget && batch > 1) {
             ++batch_splits_;
@@ -719,12 +604,12 @@ private:
             return project_pointer_positions(inputs, frame_count, serial_budget);
         }
         if (over_budget) {
-            if (high_resident_) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
-                over_budget = required > serial_budget || resident_buffer_bytes() >
+                over_budget = required > serial_budget || frame_storage_.resident_bytes() >
                     serial_budget - std::min(required, serial_budget);
             }
-            if (over_budget && !none_resident_) {
+            if (over_budget && !frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, serial_budget);
                 demote_none_residency();
                 return project_pointer_positions(inputs, frame_count, serial_budget);
@@ -742,11 +627,11 @@ private:
                 graphs_.reset_pointer(); pointer_input_ = pointer_output_ = nullptr;
                 return project_pointer_positions(inputs, frame_count, serial_budget);
             }
-            if (high_resident_) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return project_pointer_positions(inputs, frame_count, serial_budget);
             }
-            if (!none_resident_) {
+            if (!frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, serial_budget);
                 demote_none_residency();
                 return project_pointer_positions(inputs, frame_count, serial_budget);
@@ -776,7 +661,7 @@ private:
                                         const std::vector<TrackerPropagationInput>& inputs) const {
         const auto tokens = spatial * 5184 + pointers * 4;
         auto key = shape(TrackerGraphShape::Stage::propagation, spatial, pointers, batch, false, true, true);
-        if (!none_resident_) {
+        if (!frame_storage_.none_resident()) {
             for (const auto& input : inputs) {
                 for (const auto& selected : input.selection->spatial)
                     key.memory_position_order.push_back(selected.position);
@@ -784,7 +669,7 @@ private:
             }
         }
         std::vector<std::array<std::int64_t, 4>> layouts;
-        if (none_resident_) {
+        if (frame_storage_.none_resident()) {
             layouts = {{256, 5184, 1, 1}, {256, 5184, 1, 1}, {64, tokens, batch, 1},
                 {64, tokens, batch, 1}, {2, 128, 5184, 1},
                 {2, 128, static_cast<std::int64_t>(spatial) * 5184, 1},
@@ -813,9 +698,9 @@ private:
             for (const auto& selected : inputs[b].selection->spatial) {
                 if (selected.position < 0 || selected.position > 6)
                     throw std::runtime_error("tracker memory position is outside its resident table");
-                const auto offset = static_cast<std::size_t>(6 - selected.position) * resident_memory_position_bank_->nb[2];
-                auto* view = ggml_view_3d(ctx, resident_memory_position_bank_, 64, 5184, 1,
-                    resident_memory_position_bank_->nb[1], resident_memory_position_bank_->nb[2], offset);
+                const auto offset = static_cast<std::size_t>(6 - selected.position) * frame_storage_.memory_position_bank()->nb[2];
+                auto* view = ggml_view_3d(ctx, frame_storage_.memory_position_bank(), 64, 5184, 1,
+                    frame_storage_.memory_position_bank()->nb[1], frame_storage_.memory_position_bank()->nb[2], offset);
                 object_position = object_position ? ggml_concat(ctx, object_position, view, 1) : view;
             }
             if (pointer_position) {
@@ -835,17 +720,17 @@ private:
         const auto& weights = model_.definition.weights;
         const auto tokens = spatial * 5184 + pointers * 4;
         auto* ctx = graph.context();
-        auto* current = none_resident_ ? input_tensor(ctx, "tracker_current", 256, 5184) :
-            ggml_reshape_3d(ctx, resident_tracker_[2], 256, 5184, 1);
-        auto* current_position = none_resident_ ? input_tensor(ctx, "tracker_current_position", 256, 5184) :
-            ggml_reshape_3d(ctx, resident_position_, 256, 5184, 1);
+        auto* current = frame_storage_.none_resident() ? input_tensor(ctx, "tracker_current", 256, 5184) :
+            ggml_reshape_3d(ctx, frame_storage_.tracker(2), 256, 5184, 1);
+        auto* current_position = frame_storage_.none_resident() ? input_tensor(ctx, "tracker_current_position", 256, 5184) :
+            ggml_reshape_3d(ctx, frame_storage_.position(), 256, 5184, 1);
         auto* memory = input_tensor(ctx, "tracker_memory", 64, tokens, batch);
-        propagation_pointer_position_ = pointers && !none_resident_
+        propagation_pointer_position_ = pointers && !frame_storage_.none_resident()
             ? input_tensor(ctx, "tracker_pointer_position", 64, pointers * 4, batch) : nullptr;
         ggml_tensor* memory_position = nullptr;
         ggml_tensor* rope = nullptr;
         ggml_tensor* key_rope = nullptr;
-        if (none_resident_) {
+        if (frame_storage_.none_resident()) {
             propagation_memory_position_input_ = input_tensor(ctx, "tracker_memory_position", 64, tokens, batch);
             memory_position = propagation_memory_position_input_;
             propagation_rope_input_ = input_tensor(ctx, "tracker_rope", 2, 128, 5184);
@@ -857,11 +742,11 @@ private:
         } else {
             const std::vector<TrackerPropagationInput> request = inputs;
             memory_position = build_memory_positions(ctx, request, propagation_pointer_position_);
-            rope = resident_rope_;
-            key_rope = resident_rope_;
+            rope = frame_storage_.rope();
+            key_rope = frame_storage_.rope();
             if (spatial > 1) {
                 auto* target = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 2, 128, spatial * 5184);
-                key_rope = ggml_repeat(ctx, resident_rope_, target);
+                key_rope = ggml_repeat(ctx, frame_storage_.rope(), target);
             }
         }
         auto* conditioned = sam3_build_mem_attn_graph(ctx, weights, current, current_position, memory,
@@ -871,20 +756,20 @@ private:
         auto* conditioned_spatial = ggml_reshape_4d(ctx, conditioned, 256, 72, 72, batch);
         auto* dense = ggml_repeat(ctx,
             ggml_reshape_4d(ctx, weights.sam_pe.no_mask_embed, 256, 1, 1, 1), conditioned_spatial);
-        ggml_tensor* sparse = none_resident_ ?
-            input_tensor(ctx, "tracker_sparse", 256, 2, batch) : resident_no_point_;
-        if (none_resident_) {
+        ggml_tensor* sparse = frame_storage_.none_resident() ?
+            input_tensor(ctx, "tracker_sparse", 256, 2, batch) : frame_storage_.no_point();
+        if (frame_storage_.none_resident()) {
             propagation_dense_position_input_ = input_tensor(ctx, "tracker_dense_position", 256, 72, 72);
             propagation_sparse_input_ = sparse;
         } else if (batch > 1) {
             auto* target = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 256, 2, batch);
-            sparse = ggml_repeat(ctx, resident_no_point_, target);
+            sparse = ggml_repeat(ctx, frame_storage_.no_point(), target);
         }
-        auto* dense_position = none_resident_ ? propagation_dense_position_input_ : resident_dense_position_;
-        auto* first = high_resident_ ? resident_tracker_[0] : input_tensor(ctx, "tracker_first_neck", 256, 288, 288);
-        auto* second = high_resident_ ? resident_tracker_[1] : input_tensor(ctx, "tracker_second_neck", 256, 144, 144);
-        propagation_first_input_ = high_resident_ ? nullptr : first;
-        propagation_second_input_ = high_resident_ ? nullptr : second;
+        auto* dense_position = frame_storage_.none_resident() ? propagation_dense_position_input_ : frame_storage_.dense_position();
+        auto* first = frame_storage_.high_resident() ? frame_storage_.tracker(0) : input_tensor(ctx, "tracker_first_neck", 256, 288, 288);
+        auto* second = frame_storage_.high_resident() ? frame_storage_.tracker(1) : input_tensor(ctx, "tracker_second_neck", 256, 144, 144);
+        propagation_first_input_ = frame_storage_.high_resident() ? nullptr : first;
+        propagation_second_input_ = frame_storage_.high_resident() ? nullptr : second;
         auto output = sam3_build_sam_dec_graph(ctx, weights, conditioned_spatial,
             dense_position, sparse, dense, first, second);
         propagation_masks_ = output.masks;
@@ -934,7 +819,7 @@ private:
             graphs_.propagation().add_build_ms(elapsed_ms(graph_start));
         }
         const auto required = graphs_.propagation().required_workspace_bytes();
-        const auto resident = resident_buffer_bytes();
+        const auto resident = frame_storage_.resident_bytes();
         bool over_budget = required > serial_budget || resident > serial_budget - std::min(required, serial_budget);
         if (over_budget && batch > 1) {
             ++batch_splits_;
@@ -944,11 +829,11 @@ private:
             return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
         }
         if (over_budget) {
-            if (high_resident_) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
             }
-            if (!none_resident_) {
+            if (!frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, serial_budget);
                 demote_none_residency();
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
@@ -969,11 +854,11 @@ private:
                     propagation_object_ = propagation_pointer_ = nullptr;
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
             }
-            if (high_resident_) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
             }
-            if (!none_resident_) {
+            if (!frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, serial_budget);
                 demote_none_residency();
                 return run_propagation_batch(image, inputs, pointer_positions, spatial, pointers, batch, serial_budget);
@@ -987,7 +872,7 @@ private:
         }
         const auto payload = tracker_make_memory_payload(inputs, pointer_positions, &memory_payload_peak_bytes_);
         upload_tracked(ggml_get_tensor(graph.context(), "tracker_memory"), payload.memory);
-        if (none_resident_) {
+        if (frame_storage_.none_resident()) {
             upload_tracked(propagation_current_input_, image.tracker[2]);
             upload_tracked(propagation_current_position_input_, image.position);
             upload_tracked(propagation_memory_position_input_, tracker_memory_position_payload(inputs, payload, memory_position_bank_));
@@ -1000,13 +885,13 @@ private:
         } else if (pointers) {
             upload_tracked(propagation_pointer_position_, payload.pointer_position);
         }
-        if (!none_resident_ && !high_resident_) {
+        if (!frame_storage_.none_resident() && !frame_storage_.high_resident()) {
             upload_tracked(propagation_first_input_, image.tracker[0]);
             upload_tracked(propagation_second_input_, image.tracker[1]);
         }
-        if (!none_resident_) {
+        if (!frame_storage_.none_resident()) {
             ensure_core_resident_uploaded(image);
-            if (high_resident_) ensure_high_resident_uploaded(image);
+            if (frame_storage_.high_resident()) ensure_high_resident_uploaded(image);
         }
         graph.compute();
         const auto conditioned = download_tracked(conditioned_);
@@ -1093,13 +978,13 @@ private:
     std::runtime_error budget_error(const char* stage, std::size_t arena, std::size_t budget) const {
         std::ostringstream message;
         message << "tracker " << stage << " exceeds serial workspace budget: resident="
-                << resident_buffer_bytes() << " arena=" << arena << " budget=" << budget;
+                << frame_storage_.resident_bytes() << " arena=" << arena << " budget=" << budget;
         return std::runtime_error(message.str());
     }
 
     bool allocate_under_budget(GraphExecution& graph, std::size_t required,
                                std::size_t budget, std::size_t* actual_bytes = nullptr) {
-        const auto resident = resident_buffer_bytes();
+        const auto resident = frame_storage_.resident_bytes();
         if (actual_bytes) *actual_bytes = required;
         if (resident > budget || required > budget - resident) return false;
         const auto arena_limit = budget - resident;
@@ -1117,15 +1002,7 @@ private:
 
     void release_frame_storage_for_probe() noexcept {
         workspace_->release_storage();
-        if (resident_buffer_) {
-            clear_context(resident_context_.get());
-            resident_buffer_.reset();
-        }
-        if (high_buffer_) {
-            clear_context(high_context_.get());
-            high_buffer_.reset();
-        }
-        resident_uploads_.reset_frame();
+        frame_storage_.release_storage();
     }
 
     void configure_batch_policy(int spatial, int pointers, std::size_t resident_bytes,
@@ -1266,17 +1143,17 @@ private:
         if (built) {
             const auto graph_start = std::chrono::steady_clock::now();
             auto* ctx = graph.context();
-            auto* current = none_resident_ ? input_tensor(ctx, "tracker_current", 256, 5184) :
-                ggml_reshape_3d(ctx, resident_tracker_[2], 256, 5184, 1);
-            auto* current_position = none_resident_ ? input_tensor(ctx, "tracker_current_position", 256, 5184) :
-                ggml_reshape_3d(ctx, resident_position_, 256, 5184, 1);
+            auto* current = frame_storage_.none_resident() ? input_tensor(ctx, "tracker_current", 256, 5184) :
+                ggml_reshape_3d(ctx, frame_storage_.tracker(2), 256, 5184, 1);
+            auto* current_position = frame_storage_.none_resident() ? input_tensor(ctx, "tracker_current_position", 256, 5184) :
+                ggml_reshape_3d(ctx, frame_storage_.position(), 256, 5184, 1);
             auto* memory = input_tensor(ctx, "tracker_memory", 64, spatial_count * 5184 + pointer_count * 4);
-            propagation_pointer_position_ = pointer_count && !none_resident_
+            propagation_pointer_position_ = pointer_count && !frame_storage_.none_resident()
                 ? input_tensor(ctx, "tracker_pointer_position", 64, pointer_count * 4) : nullptr;
             ggml_tensor* memory_position = nullptr;
             ggml_tensor* rope = nullptr;
             ggml_tensor* key_rope = nullptr;
-            if (none_resident_) {
+            if (frame_storage_.none_resident()) {
                 propagation_memory_position_input_ = input_tensor(ctx, "tracker_memory_position", 64,
                     spatial_count * 5184 + pointer_count * 4);
                 propagation_rope_input_ = input_tensor(ctx, "tracker_rope", 2, 128, 5184);
@@ -1289,11 +1166,11 @@ private:
             } else {
                 const std::vector<TrackerPropagationInput> request{{nullptr, &selection}};
                 memory_position = build_memory_positions(ctx, request, propagation_pointer_position_);
-                rope = resident_rope_;
-                key_rope = resident_rope_;
+                rope = frame_storage_.rope();
+                key_rope = frame_storage_.rope();
                 if (spatial_count > 1) {
                     auto* target = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, 2, 128, spatial_count * 5184);
-                    key_rope = ggml_repeat(ctx, resident_rope_, target);
+                    key_rope = ggml_repeat(ctx, frame_storage_.rope(), target);
                 }
             }
             conditioned_ = sam3_build_mem_attn_graph(ctx, model_.definition.weights, current, current_position,
@@ -1303,12 +1180,12 @@ private:
             graphs_.propagation().add_build_ms(elapsed_ms(graph_start));
         }
         const auto required = graphs_.propagation().required_workspace_bytes();
-        if (required > budget || resident_buffer_bytes() > budget - std::min(required, budget)) {
-            if (high_resident_) {
+        if (required > budget || frame_storage_.resident_bytes() > budget - std::min(required, budget)) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return condition_one(image, selection, payload, budget_override);
             }
-            if (!none_resident_) {
+            if (!frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, budget);
                 demote_none_residency();
                 return condition_one(image, selection, payload, budget_override);
@@ -1318,11 +1195,11 @@ private:
         }
         std::size_t actual_arena = required;
         if (!allocate_under_budget(graph, required, budget, &actual_arena)) {
-            if (high_resident_) {
+            if (frame_storage_.high_resident()) {
                 demote_high_residency();
                 return condition_one(image, selection, payload, budget_override);
             }
-            if (!none_resident_) {
+            if (!frame_storage_.none_resident()) {
                 remember_none_resident_policy(key, budget);
                 demote_none_residency();
                 return condition_one(image, selection, payload, budget_override);
@@ -1331,7 +1208,7 @@ private:
             throw budget_error("condition", actual_arena, budget);
         }
         upload_tracked(propagation_memory_, payload.memory);
-        if (none_resident_) {
+        if (frame_storage_.none_resident()) {
             upload_tracked(propagation_current_input_, image.tracker[2]);
             upload_tracked(propagation_current_position_input_, image.position);
             const std::vector<TrackerPropagationInput> request{{nullptr, &selection}};
@@ -1341,7 +1218,7 @@ private:
         } else if (pointer_count) {
             upload_tracked(propagation_pointer_position_, payload.pointer_position);
         }
-        if (!none_resident_) ensure_core_resident_uploaded(image);
+        if (!frame_storage_.none_resident()) ensure_core_resident_uploaded(image);
         graph.compute();
         return download_tracked(conditioned_);
     }
@@ -1349,10 +1226,10 @@ private:
     TrackerGraphShape condition_shape(int spatial, int pointers, const MemorySelection& selection) const {
         const auto tokens = spatial * 5184 + pointers * 4;
         auto key = shape(TrackerGraphShape::Stage::condition, spatial, pointers, 1);
-        if (!none_resident_)
+        if (!frame_storage_.none_resident())
             for (const auto& selected : selection.spatial) key.memory_position_order.push_back(selected.position);
         std::vector<std::array<std::int64_t, 4>> layouts;
-        if (none_resident_) {
+        if (frame_storage_.none_resident()) {
             layouts = {{256, 5184, 1, 1}, {256, 5184, 1, 1}, {64, tokens, 1, 1},
                 {64, tokens, 1, 1}, {2, 128, 5184, 1},
                 {2, 128, static_cast<std::int64_t>(spatial) * 5184, 1}};
@@ -1425,18 +1302,8 @@ private:
     ModelState& model_;
     RuntimeStats& stats_;
     std::shared_ptr<GraphWorkspace> workspace_;
+    TrackerFrameStorage frame_storage_;
     GraphDiagnostics probe_diagnostics_{};
-    ContextPtr resident_context_;
-    BufferPtr resident_buffer_;
-    ContextPtr high_context_;
-    BufferPtr high_buffer_;
-    TrackerResidentUploadState resident_uploads_;
-    std::array<ggml_tensor*, 3> resident_tracker_{};
-    ggml_tensor* resident_position_ = nullptr;
-    ggml_tensor* resident_memory_position_bank_ = nullptr;
-    ggml_tensor* resident_dense_position_ = nullptr;
-    ggml_tensor* resident_rope_ = nullptr;
-    ggml_tensor* resident_no_point_ = nullptr;
     const ImageFeatures* active_image_ = nullptr;
 
     TrackerGraphCache graphs_;
@@ -1459,14 +1326,12 @@ private:
     int policy_spatial_ = -1, policy_pointers_ = -1, max_fused_batch_ = sam3_tracker_graph_batch_limit;
     std::size_t policy_resident_bytes_ = 0;
     bool fusion_disabled_ = false;
-    bool high_resident_ = true, high_residency_allowed_ = true, none_resident_ = false;
     std::optional<NoneResidentPolicy> none_resident_policy_;
     std::optional<TrackerNoneSerialPolicy> none_serial_policy_;
     std::size_t serial_budget_ = 0, serial_required_budget_ = 0;
     std::size_t batch_splits_ = 0, serial_fallbacks_ = 0;
     std::size_t frame_serial_budget_ = 0, frame_serial_required_budget_ = 0;
     std::size_t seed_memory_budget_ = 0, seed_memory_required_budget_ = 0;
-    std::size_t resident_peak_bytes_ = 0, resident_demotions_ = 0, none_resident_fallbacks_ = 0;
     std::size_t budget_failures_ = 0;
     std::size_t memory_payload_peak_bytes_ = 0;
     double upload_ms_ = 0, download_ms_ = 0;
