@@ -2,8 +2,9 @@
 #define SAM_CPP_SAM_IMAGE_SESSION_HPP
 
 #include "model.hpp"
-#include "internal/model_interface.hpp"
+#include "sam/export.hpp"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -11,25 +12,25 @@
 
 namespace sam {
 
+namespace internal {
+class TextImageSessionImplementation;
+}
+
 // A session retains its model and owns image/prompt caches. The same session
 // must not be called concurrently; separate sessions may share a Model.
-class ImageSession {
+class SAM_API ImageSession {
 public:
-    explicit ImageSession(const Model& model)
-        : implementation_(model.implementation_->create_text_image_session()) {}
+    explicit ImageSession(const Model& model);
     ImageSession(const ImageSession&) = delete;
     ImageSession& operator=(const ImageSession&) = delete;
+    ~ImageSession();
 
-    void set_image(ImageView image) { implementation_->set_image(image); }
-    Result segment_text(std::string_view prompt, float threshold = 0.5f) {
-        return implementation_->segment_text(prompt, threshold);
-    }
-    Result segment_tokens(const std::vector<std::int32_t>& tokens, float threshold = 0.5f) {
-        return implementation_->segment_tokens(tokens, threshold);
-    }
-    const RuntimeStats& stats() const { return implementation_->stats(); }
-    const std::vector<std::int32_t>& token_ids() const { return implementation_->token_ids(); }
-    const TensorData& tensor(const std::string& name) const { return implementation_->tensor(name); }
+    void set_image(ImageView image);
+    Result segment_text(std::string_view prompt, float threshold = 0.5f);
+    Result segment_tokens(const std::vector<std::int32_t>& tokens, float threshold = 0.5f);
+    const RuntimeStats& stats() const;
+    const std::vector<std::int32_t>& token_ids() const;
+    const TensorData& tensor(const std::string& name) const;
 
 private:
     std::unique_ptr<internal::TextImageSessionImplementation> implementation_;

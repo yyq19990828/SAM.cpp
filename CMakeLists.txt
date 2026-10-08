@@ -10,20 +10,29 @@ option(SAM_BUILD_EXAMPLES "Build the SAM image command-line example" ${SAM_STAND
 option(SAM_BUILD_CUDA_PROBES "Build experimental CUDA quantization probes" OFF)
 set(SAM_REFERENCE_DIR "" CACHE PATH "Optional official reference bundle directory")
 
+# SAM is static by default and follows an explicit parent BUILD_SHARED_LIBS.
+# Capture the value before GGML's own option() creates its cache entry in a
+# fresh build directory; keep the choice stable across reconfigures. When a
+# caller-owned GGML already fixed BUILD_SHARED_LIBS, set SAM_BUILD_SHARED_LIBS
+# directly to pin the SAM library type. Change library type with a clean build
+# directory.
+if(NOT DEFINED SAM_BUILD_SHARED_LIBS)
+    if(DEFINED BUILD_SHARED_LIBS)
+        set(SAM_BUILD_SHARED_DEFAULT "${BUILD_SHARED_LIBS}")
+    else()
+        set(SAM_BUILD_SHARED_DEFAULT OFF)
+    endif()
+    set(SAM_BUILD_SHARED_LIBS "${SAM_BUILD_SHARED_DEFAULT}" CACHE BOOL "Build the SAM library as shared")
+    unset(SAM_BUILD_SHARED_DEFAULT)
+endif()
+
 include(cmake/ggml.cmake)
 
 if(SAM_BUILD_CUDA_PROBES)
     enable_language(CUDA)
 endif()
 
-add_library(sam INTERFACE)
-add_library(sam::sam ALIAS sam)
-target_compile_features(sam INTERFACE cxx_std_17)
-target_include_directories(sam INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>)
-target_link_libraries(sam INTERFACE ggml)
-add_dependencies(sam sam_ggml_api_check)
+add_subdirectory(src)
 
 if(SAM_BUILD_EXAMPLES OR SAM_BUILD_TESTS OR SAM_BUILD_CUDA_PROBES)
     add_subdirectory(examples)

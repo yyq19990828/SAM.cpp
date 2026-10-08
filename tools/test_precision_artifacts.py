@@ -8,7 +8,8 @@ from unittest.mock import patch
 
 from evaluate_precision import load_run, read_outputs, same_inputs
 from precision_acceptance import GATES_SHA256, canonical_hash
-from precision_artifacts import campaign_check, claim_evaluation, phase_samples, verify_export_artifacts
+from precision_artifacts import (archive_sources, campaign_check, claim_evaluation, phase_samples,
+                                 source_snapshot, verify_export_artifacts)
 from prepare_coco_acceptance import make_dataset
 from sam3_artifacts import sha256_file, write_json
 import test_precision_dataset
@@ -120,6 +121,40 @@ class PrecisionArtifactChecks(unittest.TestCase):
             archived.write_text("altered evidence\n")
             with self.assertRaisesRegex(ValueError, "changed"):
                 verify_export_artifacts(root, manifest)
+
+    def test_new_src_identity_changes_and_archive_survives_live_source_removal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "src" / "api").mkdir(parents=True)
+            (root / "examples").mkdir()
+            (root / "tests").mkdir()
+            (root / "CMakeLists.txt").write_text("project(repository)\n")
+            (root / "examples" / "CMakeLists.txt").write_text("# examples\n")
+            (root / "tests" / "CMakeLists.txt").write_text("# tests\n")
+            implementation = root / "src" / "api" / "model.cpp"
+            implementation.write_text("int model() { return 1; }\n")
+            build_file = root / "src" / "CMakeLists.txt"
+            build_file.write_text("add_library(sam)\n")
+            with patch("precision_artifacts.repository_root", return_value=root):
+                before = source_snapshot()
+                self.assertIn(str(implementation.resolve()), before)
+                self.assertIn(str(build_file.resolve()), before)
+                implementation.write_text("int model() { return 2; }\n")
+                after = source_snapshot()
+                self.assertEqual(after[str(build_file.resolve())], before[str(build_file.resolve())])
+                self.assertNotEqual(after[str(implementation.resolve())], before[str(implementation.resolve())])
+                archive = root / "archive"
+                archived = archive_sources(archive, after)
+            self.assertEqual(archived[str(implementation.resolve())], "sources/src/api/model.cpp")
+            self.assertEqual(archived[str(build_file.resolve())], "sources/src/CMakeLists.txt")
+            # The archive must stay verifiable after the live sources are gone.
+            implementation.unlink()
+            build_file.unlink()
+            manifest = {"artifact_sha256": after, "archived_sources": archived}
+            verify_export_artifacts(archive, manifest)
+            (archive / "sources" / "src" / "api" / "model.cpp").write_text("tampered\n")
+            with self.assertRaisesRegex(ValueError, "changed"):
+                verify_export_artifacts(archive, manifest)
 
 
 if __name__ == "__main__":

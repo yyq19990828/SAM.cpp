@@ -10,16 +10,18 @@ if(SAM_BUILD_EXAMPLES)
     target_link_libraries(sam_video PRIVATE sam::sam sam_image_io)
     set_target_properties(sam_video PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
+    # Experimental probes inspect private runtime/model headers; they link the
+    # non-installed sam_private support target instead of the public library.
     add_executable(sam_profile_graph ../tools/profile_graph.cpp)
-    target_link_libraries(sam_profile_graph PRIVATE sam::sam sam_image_io)
+    target_link_libraries(sam_profile_graph PRIVATE sam_private sam_image_io)
     set_target_properties(sam_profile_graph PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
     add_executable(sam_precision_image_probe ../tools/precision_image_probe.cpp)
-    target_link_libraries(sam_precision_image_probe PRIVATE sam::sam sam_image_io)
+    target_link_libraries(sam_precision_image_probe PRIVATE sam_private sam_image_io)
     set_target_properties(sam_precision_image_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
     add_executable(sam_precision_benchmark_probe ../tools/precision_benchmark_probe.cpp)
-    target_link_libraries(sam_precision_benchmark_probe PRIVATE sam::sam sam_image_io)
+    target_link_libraries(sam_precision_benchmark_probe PRIVATE sam_private sam_image_io)
     set_target_properties(sam_precision_benchmark_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
     add_executable(sam_quantize_rows ../tools/quantize_rows.cpp)
@@ -37,11 +39,11 @@ if(SAM_BUILD_CUDA_PROBES)
     endif()
     find_package(CUDAToolkit REQUIRED)
     add_executable(sam_ggml_linear_probe ../tools/ggml_linear_probe.cpp)
-    target_link_libraries(sam_ggml_linear_probe PRIVATE sam::sam)
+    target_link_libraries(sam_ggml_linear_probe PRIVATE sam_private)
     add_executable(sam_cache_codec_probe ../tools/cache_codec_probe.cpp)
-    target_link_libraries(sam_cache_codec_probe PRIVATE sam::sam)
+    target_link_libraries(sam_cache_codec_probe PRIVATE sam_private)
     add_executable(sam_cache_image_probe ../tools/cache_image_probe.cpp)
-    target_link_libraries(sam_cache_image_probe PRIVATE sam::sam sam_image_io)
+    target_link_libraries(sam_cache_image_probe PRIVATE sam_private sam_image_io)
     # The numerical cache oracle needs the exact private CUDA encoder. A
     # caller-owned GGML target can expose only public headers, so it need not
     # provide this diagnostic bridge; the cache probe still builds there.

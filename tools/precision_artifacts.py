@@ -59,12 +59,19 @@ def load_inputs(directory, dataset_path, phase):
     return dataset, samples, {row["sample_id"]: row for row in value["images"]}
 
 
+def repository_root():
+    return Path(__file__).resolve().parents[1]
+
+
 def source_snapshot():
     # Freeze shared contracts as well as the entry point. Future mutations are
     # allowed only before a new campaign, not while its batches are running.
-    root = Path(__file__).resolve().parents[1]
+    # Compiled src/ implementations and their build files belong to the same
+    # identity as the remaining tools and headers.
+    root = repository_root()
     paths = {GATES_PATH, root / "CMakeLists.txt", root / "examples/CMakeLists.txt", root / "tests/CMakeLists.txt"}
     for pattern in ("tools/*.py", "tools/*.cpp", "tools/*.hpp", "tools/*.cu", "tools/*.json", "include/**/*.hpp",
+                    "src/**/*.cpp", "src/**/*.hpp", "src/**/*.cu", "src/**/CMakeLists.txt",
                     "examples/*.cpp", "examples/*.hpp", "tests/data/*.json", "cmake/**/*.cmake",
                     "cmake/**/*.patch", "tools/requirements*.lock"):
         paths.update(root.glob(pattern))
@@ -72,7 +79,7 @@ def source_snapshot():
 
 
 def archive_sources(directory, identities):
-    root = Path(__file__).resolve().parents[1]
+    root = repository_root()
     archived = {}
     for name, expected in identities.items():
         path = Path(name)
@@ -80,7 +87,7 @@ def archive_sources(directory, identities):
             relative = path.relative_to(root)
         except ValueError:
             continue
-        if relative.parts[0] not in ("include", "tools", "cmake", "tests", "examples") and relative.as_posix() != "CMakeLists.txt":
+        if relative.parts[0] not in ("include", "src", "tools", "cmake", "tests", "examples") and relative.as_posix() != "CMakeLists.txt":
             continue
         if path.suffix not in (".py", ".hpp", ".cpp", ".cu", ".cmake", ".patch", ".json", ".txt", ".lock"):
             continue

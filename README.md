@@ -2,8 +2,9 @@
 
 A C++17 inference library for the Segment Anything model families. The project
 is designed for multiple SAM variants and platforms, with task-specific model
-adapters and shared execution backends. The integration layer is header-only;
-GGML is a compiled dependency and model weights remain external.
+adapters and shared execution backends. The public API compiles into a real
+`sam` library (static by default); GGML is a private compiled dependency and
+model weights remain external.
 
 The current implementation provides SAM 3 text-prompted image segmentation and
 experimental forward video tracking on CPU, Apple Metal and NVIDIA CUDA.
@@ -121,7 +122,14 @@ add_subdirectory(external/SAM.cpp)
 target_link_libraries(my_application PRIVATE sam::sam)
 ```
 
-The `sam::sam` INTERFACE target propagates C++17, includes, and GGML linkage. A
+The `sam::sam` target is a compiled library: the public wrappers and model
+factory build in `src/`, and only the public include directory is part of the
+consumer interface. It links statically by default and honors a parent project's
+`BUILD_SHARED_LIBS`; set `SAM_BUILD_SHARED_LIBS=ON|OFF` to pin the type, for
+example with a caller-owned GGML target. GGML remains a private compile
+dependency whose static link requirement is still propagated to final
+consumers. Internal tests and experimental probes use the non-installed
+`sam_private` support target, which is not part of the application interface. A
 parent-provided `ggml` target must expose the compatible API and required
 precision behavior. Applications handle decoding and provide RGB pixels.
 

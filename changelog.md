@@ -8,6 +8,7 @@ No releases have been published.
 
 ### Added
 
+- Compiled-library source identity: `source_snapshot()` and `archive_sources()` now recursively cover `src/` implementations and build files, with behavior tests proving that changing a new implementation changes its identity, that an archive verifies after the live sources are removed, and that archive tampering fails.
 - Experimental v2 precision acceptance tools with separate quality budgets, one-to-one object matching, ranked COCO mask AP, paired confidence bounds, independent data splits and frozen performance comparisons. Native F16 codec bit patterns and the seven fixed image cases have separate checks. Results distinguish failure, insufficient evidence and untested configurations; existing model support and v1 receipts retain their original scope.
 - Experimental image-feature cache tools and typed host storage, with native GGML F16/Q8_0 codec checks and a mixed Q8_0 recipe that preserves the F32 detection feature. Public model loading continues to use the existing cache precision.
 - Original-model COCO screening for calibrated vision linears, with separate weight/activation ablations, frozen per-object gates, prompted mask AP, positive-mask mIoU and negative-prompt counts. These tools do not qualify a runtime W8A8 profile.
@@ -29,6 +30,7 @@ No releases have been published.
 
 ### Changed
 
+- `sam::sam` is now a real compiled library instead of an INTERFACE target. The public `Model`, `ImageSession` and `VideoSession` wrappers and the explicit model factory build in `src/`; public headers depend only on the standard library, public values and forward declarations, and no longer expose GGML or private implementation headers. The library is static by default, honors a parent `BUILD_SHARED_LIBS`, marks public symbols through a generated export header, and propagates the required GGML link dependency to final consumers. Internal tests, private header checks and experimental probes now use the non-installed `sam_private` support target.
 - Reduce CUDA F16 convolution workspace and scratch memory in image segmentation and shared video encoding/detection by producing F16 expanded columns directly for the existing F16-input/F32-output arithmetic.
 - Focus routine performance tables on GPU and CPU/BLAS; retain native CPU measurements in the historical record and keep native CPU correctness coverage.
 - Reduce CUDA image/video latency with batched cuBLAS attention products, bounded query tiles and direct output assembly, preserving default numerical qualification and existing GGUF conversion receipts.

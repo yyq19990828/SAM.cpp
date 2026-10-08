@@ -1,14 +1,16 @@
 # 编译库架构、模型扩展与 C/Python 接口计划
 
 创建时间：2026-10-08 18:13:12 Asia/Shanghai。
-状态：已规划，实施尚未开始。本次提交仅新增计划文档。
-源码基线：`54b1df74669ff3e4be5c75b9399bc588cade4ae0`（main）。
+状态：已按新合入基线修订，实施尚未开始。
+初稿源码基线：`54b1df74669ff3e4be5c75b9399bc588cade4ae0`（main）。
+当前实施基线：`113e165e78970cab3713e6e7b3b325c8a16c7561`（main）。
+执行分配与结果：[Orca 任务计划](20261008-211718-compiled-library-orca-dag.md)。
 
 ## 目标与范围
 
 将 SAM.cpp 从 SAM 层 header-only 交付迁移为默认编译库，建立公共 API、任务契约、模型实现、组合流程和 GGML 设备后端的依赖边界。保持现有 C++ 调用方式，并为 SAM 3.1、GroundingDINO + SAM、DART 及后续 C/Python 接口提供明确的接入位置。
 
-GPU 开发分支正在另一台服务器上基于 GGML 增加 CUDA 等设备支持。本计划按上述 main 基线编写，未检查该分支；迁移安排保留后端路径的独立调整窗口，不将已有开发工作视为已合并或已通过硬件验收。
+当前基线已合入 CUDA 后端、计算与传输优化、运行时量化、压缩缓存及 v2 精度验收工具。迁移不再等待 GPU 分支；CPU、Metal、CUDA 均作为已有实现保留。从第一批开始执行 CPU/CUDA 回归，Metal 在匹配硬件上验证，缺少环境时明确记录未验证。保留已有精度结论及实验边界，不因结构迁移扩大支持声明。
 
 本轮结构迁移包括编译边界、私有代码组织、工具/测试归属和 SDK 安装消费。新模型算法移植、GPU 算子实现和语言绑定分别按后续能力增量交付；模型文件格式、现有数值契约及会话并发语义不在结构迁移中变更。
 
@@ -27,7 +29,7 @@ GPU 开发分支正在另一台服务器上基于 GGML 增加 CUDA 等设备支�
 
 当前最小可行方案是只将模型加载入口移到一个 `.cpp`，先形成编译边界。推荐完整方案在此基础上继续划分职责，主要收益是限制修改影响范围，并降低大型跟踪文件的维护风险。
 
-这次调整会涉及超过 8 个文件，覆盖现有 43 个库头文件中的多数，以及构建、测试和说明文档，属于中等规模结构重构。
+这次调整会涉及超过 8 个文件，覆盖当前 46 个库头文件中的多数，以及构建、测试和说明文档，属于中等规模结构重构。
 
 ## 2. 当前需要解决的具体问题
 
@@ -100,7 +102,7 @@ SAM.cpp/
 │               ├── backend.hpp
 │               ├── cpu.cpp
 │               ├── metal.cpp
-│               └── cuda.cpp   # 规划：接入服务器上的 GPU 分支
+│               └── cuda.cpp   # 迁移已有 CUDA 后端
 ├── bindings/                   # 随语言接口阶段交付
 │   ├── c/                      # C ABI 实现，编译进同一个 sam 库
 │   └── python/                 # Python 包、pybind11 模块、NumPy 转换
@@ -160,7 +162,7 @@ C++ app / CLI     C application      Python application
                       |
                 runtime/ggml
                       |
-      GGML CPU / Metal / GPU branch backend
+      GGML CPU / Metal / CUDA backend
 
 Shared leaves:
   include/sam/types.hpp   values, no runtime dependency
@@ -215,7 +217,7 @@ Weight path:
 | 扩展类型 | 归属 | 需要验证的内容 |
 | --- | --- | --- |
 | SAM 3.1 | `src/models/sam3_1/`，登记到模型工厂 | 独立 checkpoint schema、图、对象桶、共享记忆与视频行为 |
-| GPU 开发分支 | 按已确定的 GGML 路线进入 `src/runtime/ggml/backends/` | 设备初始化、算子覆盖、精度、传输、回退策略和实际硬件结果 |
+| 已有 CUDA 后端及后续设备 | 沿 GGML 路线组织在 `src/runtime/ggml/backends/` | 保留现有设备初始化、算子、精度、传输、回退策略和硬件验收边界 |
 | GroundingDINO + SAM | 检测器属于 models；流程属于 `src/pipelines/grounded_sam/` | 两套权重、坐标转换、类别/短语、提示分割能力及生命周期 |
 | DART | `src/pipelines/dart/`，使用明确的 SAM 3 内部阶段接口 | 检测阶段复用、类别缓存、多类别执行和检测输出；首版采用原始 SAM 3 backbone |
 | ONNX Runtime / TensorRT 等其他引擎 | 单独的执行实现及对应模型适配 | 各引擎模型表示、算子和数值，不能把它们当作 GGML 的普通设备 |
@@ -223,7 +225,7 @@ Weight path:
 
 以上是已知路线的扩展位置，不是本次已交付的新能力；不创建空目录、空类或未经实现的后端枚举。SAM 2/2.1 可沿同一模型目录约定接入，但不属于本计划的优先模型范围。
 
-GPU 分支采用 GGML 设备扩展，因此本轮不用增加通用 engine 抽象层。CPU、Metal、CUDA 共用模型图，后端负责设备和执行政策；模型图所用算子是否在各设备上可用、精度是否满足要求仍需逐项验证。
+已有 CUDA 后端采用 GGML 设备扩展，因此本轮不用增加通用 engine 抽象层。CPU、Metal、CUDA 共用模型图，后端负责设备和执行政策；模型图所用算子是否在各设备上可用、精度是否满足要求仍需逐项验证。
 
 方案最容易失效的假设转为：SAM 3 与 SAM 3.1 的组件能够直接共享。对此采用独立 adapter，只有经过数值与形状验证的模块才提取复用，确保复用不成立时不推翻整体结构。如果以后真正引入 TensorRT/ONNX Runtime，再在私有模型执行边界增加对应实现，不把它们硬塞进 GGML 的设备驱动目录。
 
@@ -276,7 +278,7 @@ DART 上游还包含学生 backbone 和 TensorRT 等路线；本方案明确只�
 - 由 SAM 准备 GGML 时，安装包同时正确提供其依赖 target/二进制；复用外部 GGML 时，安装包要求依赖的包配置可被解析。若外部 target 不可导出，配置 SAM 安装时明确报告，不产生看似可安装但无法消费的包。
 - 共享库验收包括动态依赖可定位、导出符号和卸载生命周期；源码兼容不等于跨编译器的 C++ ABI 兼容，不承诺后者。
 - 保留现有 `SAM_BUILD_TESTS`、`SAM_BUILD_EXAMPLES` 的 standalone/embedded 默认行为和 `GGML_METAL`、`GGML_BLAS` 配置。迁移期间 `SAM_BUILD_EXAMPLES` 继续构建原有两个 CLI，保持脚本行为。
-- CUDA 分支接入时沿用对应固定版本 GGML 的 `GGML_CUDA` 构建能力，SAM 层只补上已经实现的设备选择、可用性检查和执行策略，不另造一套容易与 GGML 状态分离的 CUDA 开关。CPU-only 构建不应要求 CUDA toolkit。
+- 保留固定版本 GGML 的 `GGML_CUDA` 构建能力及已有设备选择、可用性检查和执行策略，不另造 CUDA 后端开关。`SAM_BUILD_CUDA_PROBES` 只控制专项探针；`GGML_CUDA=ON` 且 probes OFF 的正常后端构建必须通过。两者均 OFF 的 CPU-only 构建不要求 CUDA toolkit，也不启用 CUDA language。
 - 新增一个 `SAM_BUILD_TOOLS` 开关，将量化可执行程序与 examples 分离，默认沿用 standalone 开启、embedded 关闭。暂不增加模型、视频或任意后端插件开关。
 - 工具整理期间保留旧 Python 命令入口和现有 CLI 输出路径；兼容入口只转发到新实现，不保存两份逻辑。权重、GGUF schema 和模型下载流程不因目录调整改变。
 
@@ -288,29 +290,31 @@ DART 上游还包含学生 backbone 和 TensorRT 等路线；本方案明确只�
 
 将公共类的实现与模型工厂移入 `src/`，私有模型头暂时留在原位置。将 `sam` 从 INTERFACE 改成真实编译库，保留公共头路径和调用签名。更新 header-only 指令及测试假设。
 
-这一批特别保留 runtime 和 backend 文件的原路径、命名与行为，让服务器上的 GPU 分支继续按原路径开发；不与 CUDA 内核、精度策略或调度优化混在同一提交中。
+在收紧 `sam::sam` 的 GGML 编译依赖的同一批，建立不安装的私有测试/探针 target，调整内部 tests、私有头检查和全部现有实验探针的显式依赖。公共头检查只用公共 include；内部 target 获得私有路径、GGML 宏及链接依赖，不能等第二批再修复默认构建。
 
-验收：现有例子与 consumer 能编译链接；公共头无需 GGML 即可独立解析；双 TU 链接通过；现有 CPU/Metal 行为检查与选定数值基线通过。
+本批保留 runtime 和 backend 文件的原路径、命名与行为，以单独验证编译边界；不与 CUDA 内核、精度策略或调度优化混在同一提交中。首次新增 `src/*.cpp` 时同步扩展 `source_snapshot()` 与 `archive_sources()` 的递归采集、目录及后缀规则，覆盖新实现和构建文件；新增回归检查证明源码变更会改变身份，且归档副本可脱离活动源码校验。
+
+验收：现有 CLI、内部 tests、头检查及探针能编译链接；公共头无需 GGML 即可独立解析；双 TU 链接通过；CPU Release 和启用 `SAM_REQUIRE_CUDA_TESTS=ON` 的 CUDA Release 行为检查及选定数值基线通过。CUDA 后端分别验证 probes OFF 和 ON；CPU-only 验证无需 CUDA toolkit。Metal 有硬件时运行，缺少环境则明确保留未验证项。
 
 独立价值：调用方获得真实编译隔离，即使后续目录整理不进行也能长期使用。
 
 ### 第二批：整理私有实现与测试归属
 
-迁移 `internal` 到上述 `src` 目录，保留 `sam::internal` 命名空间以控制修改范围。先做机械移动，再按独立提交提取视频执行职责。内部 tests 获得私有 test target，SDK 消费者不获得这些路径。
+迁移 `internal` 到上述 `src` 目录，保留 `sam::internal` 命名空间以控制修改范围。先做机械移动，再按独立提交提取视频执行职责。更新第一批已建立的私有 target 与 tests 路径，SDK 消费者不获得这些路径。
 
-runtime 的路径迁移放到单独提交：优先在 GPU 分支接入后执行。如果 GPU 工作届时仍未完成，先迁移 API、契约、模型和测试，runtime 暂留旧路径；编译隔离仍然成立。交接时提供旧路径到新路径的映射，避免两边同时大规模改名。
+runtime 的路径迁移放到单独提交，覆盖已经合入的 CPU、Metal、CUDA 及 host tensor、精度、workspace 等实现，不设置 GPU 分支等待条件。提供旧路径到新路径的映射；每次移动同步更新源码快照、归档和相关 consumer，保持中间提交可构建。
 
-验收：全部既有契约、图、后端、量化、跟踪、workspace 和工具检查通过；相同模型/输入/后端对比图像及视频结果；实际权重 session 生命周期与长视频检查通过。
+验收：重复第一批 CPU/CUDA 构建与 CTest 门槛；全部既有契约、图、后端、量化、跟踪、workspace 和工具检查通过；相同模型/输入/后端对比图像及视频结果；实际权重 session 生命周期与长视频检查通过；迁移后真实实现纳入源码身份与归档。
 
 独立价值：库自身更容易修改和定位问题，不依赖工具目录迁移。
 
 ### 第三批：整理工具与交付目录
 
-迁移 apps、support、tools、third_party 与 tests；保留命令兼容入口。补全静态/动态安装导出、干净 consumer 测试和架构说明。新增一份与实际目录一致的开发者导航文档。
+迁移 apps、support、tools、third_party 与 tests；保留命令兼容入口。补全静态/动态安装导出、干净 consumer 测试和架构说明。同步更新源码身份与归档对工具子目录、apps/support、实际编译的 vendor 文件及子目录构建文件的覆盖。新增一份与实际目录一致的开发者导航文档。
 
-验收：只构建 SDK 不带入图像解码库、STB、Python 和测试依赖；examples 关闭时工具仍可独立构建；源码集成与安装消费都能运行；移动安装前缀后 consumer 仍能找到包；旧工具入口的实质结果保持一致。
+验收：重复 CPU/CUDA 回归；只构建 SDK 不带入图像解码库、STB、Python 和测试依赖；examples 关闭时工具仍可独立构建；源码集成与安装消费都能运行；移动安装前缀后 consumer 仍能找到包；旧工具入口的实质结果保持一致；嵌套工具的变更可被身份检查发现，归档可只读校验。
 
-这三批均不改 GGUF schema，不迁移用户模型或其他数据。回退对应代码和构建提交即可，不触碰现有数据。历史计划和不可变验收记录保持原样。
+这三批均不改 GGUF schema，不迁移用户模型或其他数据。回退对应代码和构建提交即可，不触碰现有数据。其他历史计划和不可变验收记录保持原样；本计划追加修订与实施结果。旧冻结 campaign 不重写或重新打开最终评估/储备集；结构回归使用新身份、新目录及开发/固定回归输入。
 
 ### 结构落地后的能力增量
 
@@ -330,7 +334,7 @@ runtime 的路径迁移放到单独提交：优先在 GPU 分支接入后执行�
 基础 CPU 检查命令沿用当前入口：
 
 ```sh
-cmake -S . -B build/structure-cpu -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF -DGGML_BLAS=OFF
+cmake -S . -B build/structure-cpu -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=OFF -DGGML_CUDA=OFF -DGGML_BLAS=OFF
 cmake --build build/structure-cpu --parallel
 ctest --test-dir build/structure-cpu --output-on-failure
 python3 tools/check_docs.py
@@ -350,14 +354,15 @@ Python 数值工具测试继续使用仓库指定的隔离参考环境执行 `to
 | 边界 | 空检测、重复提示缓存、阈值变化、新图像缓存失效、reset、最后一帧结果排空、多对象与长序列状态 |
 | 数值 | 固定权重和输入的 tensor、框、分数、mask、视频 ID/关联；原门槛不放宽 |
 | 构建 | 公共头独立/重复包含、双 TU、静态/动态、源码/安装消费、内部依赖不泄漏 |
-| GPU 分支接入 | CPU-only 不依赖 CUDA toolkit；显式 CUDA 请求失败时不静默改后端；匹配硬件上检验算子、精度、传输和设备统计 |
+| 已有 CUDA 回归 | 从第一批开始运行 `SAM_REQUIRE_CUDA_TESTS=ON`；CPU-only 不依赖 CUDA toolkit；CUDA probes OFF/ON 均能构建；显式 CUDA 请求失败时不静默改后端；匹配硬件上检验算子、精度、传输和设备统计 |
+| 源码与归档身份 | 每批新增/移动的实现与构建文件均被采集；变更会改变身份；归档不依赖活动源码路径；旧冻结凭据保持不变 |
 | 新任务 | DART 的检测结果和类别缓存；Grounded SAM 的坐标映射/空框/多框；SAM 3.1 的对象桶边界、增删与 ID 连续性 |
 | 语言绑定 | C 纯 C 编译器消费、错误/释放协议；Python dtype/stride、结果生命周期、session 并发防护、与 C++ 相同输入输出；干净环境 wheel 安装 |
 | 性能 | 相同硬件/编译选项下的完整图像与视频时延、峰值内存、构建时间；不把调用方编译提速当推理提速 |
 
 纯文件迁移和入口外置优先要求相同环境下输出完全相同。如果仅因为翻译单元变化出现数值差异，必须定位优化或执行差异，并按既有数值门槛单独记录差异与验收结论，不能直接以“重构正常波动”解释。
 
-本次规划只核实了源码结构、既有测试入口和构建约定，未运行新的模型验收。CPU/Metal 实机、原始 checkpoint 和已接受参考样本是实施验收前置条件；缺少条件时只能报告完成了对应结构或构建检查，不能宣布该平台数值通过。仓库现有 CI 配置也不等于本次已在这些平台执行。
+本次规划只核实了源码结构、既有测试入口和构建约定，未运行新的模型验收。CPU/CUDA 实机、原始 checkpoint 和已接受参考样本是本轮实施验收前置条件；Metal 需要另有匹配硬件。缺少条件时只能报告完成了对应结构或构建检查，不能宣布该平台数值通过。仓库现有 CI 配置也不等于本次已在这些平台执行。
 
 结构重构本身不需要新的账户、服务或 API key。若实施环境尚无原始模型，下载使用既有授权与凭据流程；GGML 网络不可用时可复用已核验的本地固定版本，不能自动改用未经核验的版本。
 
@@ -383,3 +388,88 @@ Python 数值工具测试继续使用仓库指定的隔离参考环境执行 `to
 - 文档检查：新增计划的本地链接、代码块闭合及差异空白检查通过；现有双语测量表一致性检查通过。
 - 全量 `tools/check_docs.py` 未通过：既有 `docs/plans/20261004-214547-latest-complete-model-performance-records.md` 引用了当前检出缺少的 `build/rope-optimization/20261004/native-image-qualification-summary-v1.json`。已确认该计划与 HEAD 内容一致，失败不由新增文档引入；本次不修改历史验收记录。
 - 各实现批次须追加涉及提交、执行环境、检查结果和未验证的模型/后端组合，不以计划中列出的检查代替实际结果。
+
+### 2026-10-08 新基线复审与修订
+
+- 在 `113e165` 上复审，纳入原基线之后合入的 CUDA、量化、压缩缓存和 v2 验收工具；取消 GPU 分支等待条件，明确每批 CPU/CUDA 验收与 Metal 未验证边界。
+- 私有测试/探针 target 前移到第一批；源码身份采集与 `archive_sources()` 适配随每批目录变化交付；明确 CUDA 后端开关与探针开关相互独立。
+- 复审证据：只给公共 include 编译 `test_graph.cpp` 会缺少 `ggml.h`，补上 GGML include 后语法检查通过；临时目录调用真实工具函数证明旧规则漏采新 `src/`、嵌套工具并跳过 `src/` 归档。此为迁移约束验证，不表示当前默认构建失败。
+- 复审时 70 份文档检查与空白检查通过；未执行完整构建或新模型验收。修订后的文档与 DAG 检查结果记录在上述 Orca 任务计划。
+
+### 2026-10-08 节点 A 实施结果（编译边界、私有依赖与源码归档）
+
+实施基线：`113e165e78970cab3713e6e7b3b325c8a16c7561`（main）。本节点未迁移 apps/tools，
+未改动 runtime/backend 与私有模型头路径，未改变数值算法。
+
+**迁移前身份与行为基线**（新目录 `build/structure-baseline-a-v1/`，索引 `baseline-identity.json`、
+`tool-environment.json`）：
+
+- 旧 `source_snapshot()` 137 项，汇总 sha256 `45f2739da395c453a7a862d6e662bf7fcf762a62a632b35d00d9d8679a5ea6f2`。
+- GGML `353b63b439f27ab2cc19dac97ab1681ba6d2d084`；Metal 补丁
+  `0a0b80dd15c2a8b5a05d148a31e9e53f8df4d0555852ef301da336a9d97b7c48`；CUDA 补丁
+  `28b1260af845c338755d25214e336d697152ad01ceed5322fc6803834d9a76a9`；未升级、未改补丁。
+- 硬件/工具：12th Gen Intel Core i7-12700KF（20 线程）；NVIDIA RTX 4090 24564 MiB（驱动 610.57.04，
+  计算能力 8.9）；CUDA 13.3；CMake 4.2.3；GCC 15.2.0；`.venv-reference` 版本见 `tool-environment.json`。
+- 模型/固定回归输入：`models/sam3-f32.gguf`（sha256 `cb13ecd5...`）、`models/sam3-video-f32.gguf`、
+  `models/reference/sam3-f32-cuda`、`models/reference/sam3-video-f32-cuda` 与
+  `models/fixtures/{truck,groceries}.jpg`；完整哈希见基线索引。未使用冻结最终评估/储备集。
+- 迁移前 CPU Release（`GGML_METAL=OFF`、`GGML_CUDA=OFF`、`GGML_BLAS=OFF`）：17/17 通过。
+  CUDA Release（`GGML_METAL=OFF`、`GGML_BLAS=OFF`、`GGML_CUDA=ON`、probes OFF、
+  `SAM_REQUIRE_CUDA_TESTS=ON`）：30/30 通过。CUDA 首次构建因构建期间工作树被并发修改而失败
+  （编译期读到新公共头，非源码缺陷）；恢复 HEAD 后在同一目录增量重跑，以上述结果为准，两次日志均保留。
+- 迁移前参考运行（官方 checkpoint 门槛）：CPU 图像 7/7、CUDA 图像 7/7、CUDA 视频 5/5。CPU 完整视频
+  套件（216 帧）在本机吞吐下需数小时，运行至 motion 第 14 帧后终止，`cpu-video-validate.log` 记录
+  `VIDEO_EXIT=143`，输出不完整、不作通过证据；CPU 视频固定回归改用官方 reference 的 `negative`
+  （16 帧）用例，CUDA 运行完整套件。这是本节点明确的验证范围缩小，后继节点沿用同一清单复核。
+
+**实施**：
+
+- 公共 `include/sam/{model,image_session,video_session}.hpp` 只保留声明、公共值类型、标准库与前置
+  声明；默认参数与异常语义不变。`Model` 保持可复制/可移动共享句柄，`ImageSession`/`VideoSession`
+  保持不可复制、不可移动（双 TU 测试静态断言）。
+- 新增 `src/api/{model,image_session,video_session}.cpp`、`src/model_factory.{hpp,cpp}` 与
+  `src/CMakeLists.txt`；工厂为显式分支，无全局可变注册表。
+- `sam` 由 INTERFACE 改为真实库：默认静态并按配置入口的 `BUILD_SHARED_LIBS` 选择共享，
+  可用 `SAM_BUILD_SHARED_LIBS` 在 caller-owned GGML 场景固定类型；共享构建生成 `sam/export.hpp`
+  （`SAM_API`）并隐藏内部符号；GGML include/macros 保持 PRIVATE，静态最终链接依赖继续传递。
+- 新增不安装的 `sam_private` INTERFACE target，向内部 tests、私有头检查和 profile/precision/cache/
+  linear 探针提供私有 include、GGML 编译依赖与链接；公共 `sam::sam` 只暴露公共 include。
+- 双 TU 测试更名 `test_two_tu`；consumer 断言由 INTERFACE 改为真实库，覆盖静态/动态、双 TU 与
+  caller-owned GGML 复用。
+- `tools/precision_artifacts.py` 抽出 `repository_root()`；`source_snapshot()` 递归纳入
+  `src/**/*.{cpp,hpp,cu}` 与 `src/**/CMakeLists.txt`（旧路径保留），`archive_sources()` 目录白名单
+  加入 `src`；新增临时目录行为测试覆盖“改源码→身份变化”“移除活动源码→归档仍可验证”“篡改归档→
+  校验失败”。
+- AGENTS.md 的 Header-Only 规则更新为 Compiled Library Architecture；README 更新构建、集成、
+  `SAM_BUILD_SHARED_LIBS` 与 `sam_private` 说明；changelog 记录 Added/Changed。
+
+**实测结果**（迁移后证据在 `build/structure-a-evidence-v1/`，索引 `index.json`）：
+
+| 检查 | 配置/命令 | 结果 |
+| --- | --- | --- |
+| CPU Release | `build/structure-cpu-a`；`GGML_METAL=OFF GGML_CUDA=OFF GGML_BLAS=OFF` | 构建 0；CTest 17/17 |
+| CUDA probes OFF | `build/structure-cuda-a`；`GGML_CUDA=ON SAM_REQUIRE_CUDA_TESTS=ON` | 构建 0；CTest 30/30 |
+| CUDA probes ON | `build/structure-cuda-probes-a`；`SAM_BUILD_CUDA_PROBES=ON -DCMAKE_CUDA_ARCHITECTURES=89` | 5 个探针全部构建；线性探针回归 45/45 |
+| 共享构建 | `build/structure-shared-a`；`BUILD_SHARED_LIBS=ON` | 构建 0；CTest 17/17；内部测试经 `libsam.so` 运行 |
+| 源码 consumer | `build/consumer-{static,shared}-a`，caller-owned GGML | 各 2/2；static 链 `libsam.a`，shared 链 `libsam.so` |
+| 公共头隔离 | `sam_public_header_checks` 无 defines、仅 generated+`include/` | 编译通过；CUDA 构建同样无 GGML/CUDA include |
+| 双 TU | `sam_two_tu` | 通过；复制/移动静态断言成立 |
+| 图像迁移前后 | CPU 97 文件、CUDA 83 文件对比 | 除计时/运行元数据外一致（CUDA 图像为纯字节一致） |
+| 视频迁移前后 | CUDA 完整套件 1275 文件（计时归一化）；CPU `negative` 88 文件 | 输出与轨迹一致 |
+| Python | `.venv-reference/bin/python -B tools/test_tools.py` | 145 测试通过 |
+| 文档/空白 | `tools/check_docs.py`、`git diff --check` | 70 份文档通过、无空白问题 |
+
+第一次 probes ON 配置未传 `CMAKE_CUDA_ARCHITECTURES`，在 `.cu` 探针 target 上报空架构错误；
+按 README 已有示例补 `-DCMAKE_CUDA_ARCHITECTURES=89` 后配置、构建与回归均通过。既有 probes 构建
+同样显式指定该选项，这不是本迁移引入的回归。
+
+`sam_private` 说明：不安装、不导出、不属于应用接口；内部 target 经它获得私有 include 与 GGML 依赖，
+共享构建下内部实现保持隐藏符号；`BUILD_SHARED_LIBS=ON` 时 GGML 同为共享库，一个进程不加载两份
+GGML runtime。公共库的动态导出符号只含 `SAM_API` 标记的包装器/工厂，抽样 `nm -D` 未见
+`sam::internal::sam3` 实现符号。
+
+未验证：Metal（当前主机无匹配硬件）；CPU 完整视频套件（吞吐原因，替代固定 `negative` 用例）。
+
+交接 B：从本节点本地提交继续（提交信息 `refactor: build sam as a compiled library with private tests and src identity`）。
+`src/` 已纳入 `source_snapshot()`/`archive_sources()`；私有文件迁移后保持每批同步覆盖。基线与迁移后证据
+路径、编译选项与固定输入清单见上，后继节点沿用，不重新挑选有利样本；不修改旧冻结证据。

@@ -2,18 +2,19 @@
 
 ## Project Structure
 
-Header-only C++17 inference for multiple SAM variants and platforms. SAM 3 is the current model adapter; CPU and Metal are the current backends. Keep repository goals distinct from implemented and hardware-validated combinations.
+Compiled C++17 inference library for multiple SAM variants and platforms. SAM 3 is the current model adapter; CPU, Metal and CUDA are the current backends. Keep repository goals distinct from implemented and hardware-validated combinations.
 
-- `include/sam/sam.hpp`: public entry; `types.hpp`: backend-independent values.
-- `include/sam/internal/models/<family>/`: model adapters/graphs; `internal/runtime/ggml/backends/`: device drivers; `internal/runtime/ggml/`: shared execution. See [architecture](docs/architecture.md).
+- `include/sam/sam.hpp`: public entry; `types.hpp`: backend-independent values. Public headers depend only on the standard library, public value types and forward declarations.
+- `src/api/`: compiled public wrapper implementations; `src/model_factory.cpp`: explicit model assembly point. The `sam` target is a real library.
+- `include/sam/internal/models/<family>/`: model adapters/graphs; `internal/runtime/ggml/backends/`: device drivers; `internal/runtime/ggml/`: shared execution. These private paths move into `src/` during the compiled-library migration. See [architecture](docs/architecture.md).
 - `internal/io/gguf_reader.hpp`: bounded common GGUF reading; model-specific metadata and tensor contracts follow [GGUF schema](docs/gguf.md).
 - `tools/`: converters; `examples/`: CLI applications.
 - `tests/`: checks; `tests/data/`: redistributable fixtures.
 - Ignore `models/` checkpoints and `build/` output.
 
-## Header-Only Architecture
+## Compiled Library Architecture
 
-Inline non-template functions; avoid mutable globals. GGML remains compiled; weights stay external. The `sam::sam` INTERFACE target propagates includes/linkage. Hosts/examples handle decoding.
+The `sam::sam` target is a real library, static by default and shared when the parent project sets `BUILD_SHARED_LIBS`. Public headers expose declarations only; wrapper definitions compile in `src/api/`, the model factory compiles in `src/model_factory.cpp`, and GGML include paths plus implementation macros stay private. Internal tests, private header checks and experimental probes use the non-installed `sam_private` target; do not expose private paths through `sam::sam` or re-inline public wrapper definitions. GGML remains a compiled dependency; weights stay external. Hosts/examples handle decoding.
 
 Allow justified abstractions for future backends/models, even with one implementation; document extension scenarios and maintenance costs.
 
