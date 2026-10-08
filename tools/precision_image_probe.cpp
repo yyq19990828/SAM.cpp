@@ -1,6 +1,6 @@
 #include "../examples/image_support.hpp"
 #include "precision_output.hpp"
-#include <sam/internal/models/sam3/model.hpp>
+#include <models/sam3/model.hpp>
 
 #include <atomic>
 #include <exception>

@@ -1,4 +1,4 @@
-#include <sam/internal/models/sam3/vision.hpp>
+#include <models/sam3/vision.hpp>
 #include <sam/internal/runtime/ggml.hpp>
 #include "backend_test_support.hpp"
 

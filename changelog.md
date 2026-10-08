@@ -30,6 +30,7 @@ No releases have been published.
 
 ### Changed
 
+- Move the private task contracts, input validation, GGUF reader and SAM 3 adapter from `include/sam/internal/` into `src/{contracts,common,io,models/sam3}/`, with the tracking sources renamed to `src/models/sam3/video/`. Internal tests and probes reach them through the non-installed `sam_private` target; public headers, model behavior and the installed interface are unchanged.
 - `sam::sam` is now a real compiled library instead of an INTERFACE target. The public `Model`, `ImageSession` and `VideoSession` wrappers and the explicit model factory build in `src/`; public headers depend only on the standard library, public values and forward declarations, and no longer expose GGML or private implementation headers. The library is static by default, honors a parent `BUILD_SHARED_LIBS`, marks public symbols through a generated export header, and propagates the required GGML link dependency to final consumers. Internal tests, private header checks and experimental probes now use the non-installed `sam_private` support target.
 - Reduce CUDA F16 convolution workspace and scratch memory in image segmentation and shared video encoding/detection by producing F16 expanded columns directly for the existing F16-input/F32-output arithmetic.
 - Focus routine performance tables on GPU and CPU/BLAS; retain native CPU measurements in the historical record and keep native CPU correctness coverage.

@@ -1,4 +1,4 @@
-#include <sam/internal/models/sam3/tracking/session.hpp>
+#include <models/sam3/video/session.hpp>
 #include <iostream>
 
 namespace {

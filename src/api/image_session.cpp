@@ -1,6 +1,6 @@
 #include "sam/image_session.hpp"
 
-#include "sam/internal/model_interface.hpp"
+#include "contracts/model.hpp"
 
 namespace sam {
 

@@ -6,8 +6,9 @@ Compiled C++17 inference library for multiple SAM variants and platforms. SAM 3 
 
 - `include/sam/sam.hpp`: public entry; `types.hpp`: backend-independent values. Public headers depend only on the standard library, public value types and forward declarations.
 - `src/api/`: compiled public wrapper implementations; `src/model_factory.cpp`: explicit model assembly point. The `sam` target is a real library.
-- `include/sam/internal/models/<family>/`: model adapters/graphs; `internal/runtime/ggml/backends/`: device drivers; `internal/runtime/ggml/`: shared execution. These private paths move into `src/` during the compiled-library migration. See [architecture](docs/architecture.md).
-- `internal/io/gguf_reader.hpp`: bounded common GGUF reading; model-specific metadata and tensor contracts follow [GGUF schema](docs/gguf.md).
+- `src/contracts/`: private task contracts; `src/common/`: backend-independent input validation; `src/models/<family>/`: model adapters/graphs and video responsibilities. These private paths are not installed and are consumed through the non-installed `sam_private` test support target.
+- `include/sam/internal/runtime/ggml/backends/`: device drivers; `internal/runtime/ggml/`: shared execution. The runtime paths move to `src/runtime/ggml/` in this migration batch. See [architecture](docs/architecture.md).
+- `src/io/gguf_reader.hpp`: bounded common GGUF reading; model-specific metadata and tensor contracts follow [GGUF schema](docs/gguf.md).
 - `tools/`: converters; `examples/`: CLI applications.
 - `tests/`: checks; `tests/data/`: redistributable fixtures.
 - Ignore `models/` checkpoints and `build/` output.

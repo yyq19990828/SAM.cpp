@@ -1,5 +1,5 @@
-#include "sam/internal/models/sam3/weights.hpp"
-#include "sam/internal/models/sam3/tensors.hpp"
+#include "models/sam3/weights.hpp"
+#include "models/sam3/tensors.hpp"
 #include "sam/internal/runtime/ggml.hpp"
 #include "sam/internal/runtime/ggml/backends/cpu.hpp"
 #include "sam/internal/runtime/ggml/backends/metal.hpp"

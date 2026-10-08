@@ -1,7 +1,7 @@
 #include "sam/model.hpp"
 
 #include "model_factory.hpp"
-#include "sam/internal/model_interface.hpp"
+#include "contracts/model.hpp"
 
 #include <utility>
 

@@ -1,9 +1,9 @@
-#include "sam/internal/models/sam3/image_ops.hpp"
-#include "sam/internal/models/sam3/model.hpp"
-#include "sam/internal/models/sam3/tokenizer.hpp"
-#include "sam/internal/models/sam3/weights.hpp"
-#include "sam/internal/input_validation.hpp"
-#include "sam/internal/io/gguf_reader.hpp"
+#include "models/sam3/image_ops.hpp"
+#include "models/sam3/model.hpp"
+#include "models/sam3/tokenizer.hpp"
+#include "models/sam3/weights.hpp"
+#include "common/input_validation.hpp"
+#include "io/gguf_reader.hpp"
 #include "../examples/image_support.hpp"
 
 #include <array>

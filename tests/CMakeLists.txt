@@ -17,7 +17,11 @@ add_test(NAME sam_two_tu COMMAND test_two_tu)
 # checked separately through the non-installed sam_private support target.
 # Every header starts its own translation unit and is included twice.
 file(GLOB sam_public_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/sam/*.hpp")
-file(GLOB_RECURSE sam_internal_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/include/sam/internal/*.hpp")
+# Private implementation headers moved into src/ in the second migration batch;
+# the runtime headers are still under include/sam/internal/ until their move.
+file(GLOB_RECURSE sam_internal_headers CONFIGURE_DEPENDS
+    "${PROJECT_SOURCE_DIR}/include/sam/internal/*.hpp"
+    "${PROJECT_SOURCE_DIR}/src/*.hpp")
 file(GLOB example_headers CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/examples/*.hpp")
 set(sam_checked_headers ${sam_public_headers} ${sam_internal_headers} ${example_headers})
 set(public_header_sources)
@@ -70,7 +74,7 @@ target_link_libraries(sam_example_header_checks PRIVATE sam::sam sam_image_io)
 # contract must stand alone without the compiled execution stack.
 add_executable(test_task_contract test_task_contract.cpp)
 target_compile_features(test_task_contract PRIVATE cxx_std_17)
-target_include_directories(test_task_contract PRIVATE ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(test_task_contract PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME sam_task_contract COMMAND test_task_contract)
 
 add_executable(test_graph test_graph.cpp)

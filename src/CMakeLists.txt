@@ -1,7 +1,7 @@
 # Public SAM library: the public headers in include/sam/ expose the task API,
-# and this target compiles the wrapper implementations and the model factory.
-# Private model/runtime headers still live under include/sam/internal/ until
-# the second migration batch moves them into src/.
+# and this target compiles the wrapper implementations, the model factory and
+# the private model implementation under src/. Private runtime headers still
+# live under include/sam/internal/ until the runtime move lands.
 include(GenerateExportHeader)
 
 set(SAM_LIBRARY_SOURCES
@@ -49,6 +49,8 @@ endif()
 # experimental probes obtain the private include paths, GGML compile
 # dependencies and link libraries here. Applications use sam::sam only.
 add_library(sam_private INTERFACE)
-target_include_directories(sam_private INTERFACE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>)
+target_include_directories(sam_private INTERFACE
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src>)
 target_compile_features(sam_private INTERFACE cxx_std_17)
 target_link_libraries(sam_private INTERFACE sam::sam ggml)

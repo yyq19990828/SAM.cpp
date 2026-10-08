@@ -2,7 +2,7 @@
 #define SAM_CPP_INTERNAL_RUNTIME_GGML_HOST_TENSOR_HPP
 
 #include "graph.hpp"
-#include "sam/internal/input_validation.hpp"
+#include "common/input_validation.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>

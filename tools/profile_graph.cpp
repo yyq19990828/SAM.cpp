@@ -1,7 +1,7 @@
 #include "graph_profile.hpp"
 #include "image_support.hpp"
-#include <sam/internal/models/sam3/image_session.hpp>
-#include <sam/internal/models/sam3/model.hpp>
+#include <models/sam3/image_session.hpp>
+#include <models/sam3/model.hpp>
 #include <iostream>
 #include <memory>
 #include <utility>

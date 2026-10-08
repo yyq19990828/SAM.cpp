@@ -1,7 +1,7 @@
 #ifndef SAM_CPP_TOOLS_PRECISION_OUTPUT_HPP
 #define SAM_CPP_TOOLS_PRECISION_OUTPUT_HPP
 
-#include <sam/internal/models/sam3/image_ops.hpp>
+#include <models/sam3/image_ops.hpp>
 
 #include <algorithm>
 #include <cstdint>

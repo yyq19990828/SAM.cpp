@@ -1,6 +1,6 @@
 #include "model_factory.hpp"
 
-#include "sam/internal/models/sam3/model.hpp"
+#include "models/sam3/model.hpp"
 
 namespace sam::internal {
 

@@ -6,7 +6,7 @@
 #include "backends/cpu.hpp"
 #include "backends/metal.hpp"
 #include "backends/cuda.hpp"
-#include "sam/internal/input_validation.hpp"
+#include "common/input_validation.hpp"
 #include "sam/types.hpp"
 #include "ggml-backend.h"
 #include <cstddef>

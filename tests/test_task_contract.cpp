@@ -1,7 +1,7 @@
 #include <sam/types.hpp>
 #include <sam/types.hpp>
-#include <sam/internal/model_interface.hpp>
-#include <sam/internal/model_interface.hpp>
+#include <contracts/model.hpp>
+#include <contracts/model.hpp>
 
 #if defined(GGML_H) || defined(GGML_BACKEND_H) || defined(GGML_ALLOC_H) || defined(GGML_CPU_H)
 #error "Public values and task contracts must not include GGML"

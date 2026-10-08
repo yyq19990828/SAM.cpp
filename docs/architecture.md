@@ -20,15 +20,15 @@ Application / example / composed pipeline
                |
 sam/{types,model,image_session,video_session,sam}.hpp
                |
-internal/model_interface.hpp       model and task contracts
+src/contracts/                     model and task contracts
                |
-internal/models/<family>/          model-specific schema, graphs, sessions
+src/models/<family>/               model-specific schema, graphs, sessions
                |
-internal/runtime/<engine>/         execution integration
+src/runtime/<engine>/              execution integration
                |
 runtime backends                   devices, buffers, scheduling, statistics
 
-Shared leaves: internal/input_validation.hpp, internal/io/gguf_reader.hpp
+Shared leaves: src/common/input_validation.hpp, src/io/gguf_reader.hpp
 ```
 
 `types.hpp` contains owned results, borrowed input views, model information,
@@ -52,7 +52,7 @@ text-prompt contract does not promise point/box prompts, temporal memory or
 object discovery. A future adapter may expose those through a different session
 interface instead of adding empty methods to every model.
 
-The SAM 3 adapter lives under `internal/models/sam3/` and uses the private
+The SAM 3 adapter lives under `src/models/sam3/` and uses the private
 namespace `sam::internal::sam3`. It owns SAM 3 GGUF validation, tokenizer
 semantics, image transforms, prompt and image caches, postprocessing and
 diagnostic tensor names. Keeping symbols within the model namespace lets other
@@ -68,7 +68,7 @@ families use names such as `ModelState` without collisions.
 | Pixel features, masks and stage execution | `mask_decoder.hpp`, `execution.hpp` |
 | Tokenizer, image transforms and model resources | `tokenizer.hpp`, `image_ops.hpp`, `state.hpp` |
 | Loading, task dispatch and image-session cache | `model.hpp`, `image_session.hpp` |
-| Temporal memory and video session | `tracking/` |
+| Temporal memory and video session | `src/models/sam3/video/` |
 
 The image execution path separates prompt preparation, fusion, detection and
 mask decoding. The detector exposes query features so a future detection-only
@@ -105,7 +105,7 @@ nodes prepare `MUL_MAT` operands. Quantized Metal and CUDA use native packed-wei
 kernels with separate staging and arithmetic profiles; see the
 [quantization guide](quantization.md) for the profile contract.
 
-The common GGUF reader in `internal/io/gguf_reader.hpp` performs bounded
+The common GGUF reader in `src/io/gguf_reader.hpp` performs bounded
 container metadata reads and file-range checks before backend weight allocation.
 Model-specific metadata, tensor inventory and precision checks belong to the
 selected adapter. Another family can reuse the reader while defining its own
