@@ -4,7 +4,12 @@
 import argparse
 import math
 from pathlib import Path
+import sys
 import subprocess
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.validation.export_video_reference import CASES, OFFICIAL_SHA256
 from tools.convert.sam3_artifacts import (BPE_SHA256, SAM3_REVISION, artifact_path, read_array, read_json, sha256_file, write_json,

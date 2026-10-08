@@ -11,6 +11,10 @@ import time
 
 import numpy as np
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.benchmark.prepare_linear_probe import write_case
 from tools.convert.sam3_artifacts import read_json, sha256_file
 from tools.validation.verify_linear_probe import verify

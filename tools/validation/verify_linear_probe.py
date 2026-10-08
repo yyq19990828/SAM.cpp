@@ -9,6 +9,10 @@ import sys
 
 import numpy as np
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.convert.sam3_artifacts import read_json, sha256_file
 
 

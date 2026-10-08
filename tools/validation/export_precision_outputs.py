@@ -9,6 +9,10 @@ import subprocess
 import sys
 import time
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.validation.precision_acceptance import GATES_SHA256, canonical_hash, required_queries, validate_output
 from tools.maintenance.precision_artifacts import (archive_sources, campaign_check, claim_evaluation, load_inputs, native_recipe,
                                  native_snapshot, packages, runtime_environment, source_snapshot)

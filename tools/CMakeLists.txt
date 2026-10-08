@@ -21,13 +21,13 @@ if(SAM_BUILD_TOOLS)
     target_compile_features(sam_quantize_rows PRIVATE cxx_std_17)
     target_compile_definitions(sam_quantize_rows PRIVATE
         SAM_GGML_REVISION=\"353b63b439f27ab2cc19dac97ab1681ba6d2d084\"
-        SAM_GGML_LIBRARY_PATH=\"$<TARGET_FILE:ggml>\")
+        SAM_GGML_LIBRARY_PATH=\"$<TARGET_FILE:${SAM_GGML_LINK_TARGET}>\")
     target_link_libraries(sam_quantize_rows PRIVATE ${SAM_GGML_LINK_TARGET} ${CMAKE_DL_LIBS})
     set_target_properties(sam_quantize_rows PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/examples)
 endif()
 
 if(SAM_BUILD_CUDA_PROBES)
-    if(NOT TARGET ggml-cuda)
+    if(NOT SAM_GGML_CUDA_TARGET)
         message(FATAL_ERROR "SAM_BUILD_CUDA_PROBES requires GGML_CUDA")
     endif()
     find_package(CUDAToolkit REQUIRED)

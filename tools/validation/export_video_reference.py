@@ -16,6 +16,10 @@ import shutil
 import sys
 import time
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.validation.export_reference import configure_cuda_oracle, install_unfused_fp32, validate_source
 from tools.validation.prepare_reference_source import video_adaptations
 from tools.convert.sam3_artifacts import (BPE_SHA256, SAM3_REVISION, artifact_path, dump_array,

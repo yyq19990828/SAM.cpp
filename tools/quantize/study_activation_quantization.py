@@ -17,6 +17,10 @@ import tempfile
 
 import numpy as np
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.quantize.calibration import validate_dataset
 from tools.convert.convert_sam3 import rename_key
 from tools.convert.sam3_artifacts import BPE_SHA256, SAM3_REVISION, artifact_path, read_json, sha256_file, write_json

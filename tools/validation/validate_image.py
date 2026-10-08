@@ -4,11 +4,16 @@
 import argparse
 import math
 from pathlib import Path
+import sys
 import re
 import subprocess
 import tempfile
 
 import gguf
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.convert.sam3_artifacts import (BPE_SHA256, PAB_REVISION, REQUIRED_TENSORS, SAM3_REVISION,
                            artifact_path, load_case_manifest, read_array, read_json, read_tensor_index,

@@ -19,10 +19,15 @@ import subprocess
 import sys
 import time
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.convert.sam3_artifacts import (artifact_path, freeze_output_files, freeze_run_artifacts,
                            read_array, read_json, sha256_file, verify_output_files,
                            verify_run_artifacts, write_json)
 from tools.convert.sam3_gguf import HYBRID_PROFILE
+from tools.maintenance.precision_artifacts import source_snapshot
 from tools.validation.validate_video import check_provenance, read_objects
 from tools.validation.validate_image import CUDA_F16_ARITHMETIC_PROFILE, validate_cuda_compute_mode
 
@@ -289,18 +294,9 @@ def run(args):
     verify_run_artifacts(qualification["source_sha256"])
     verify_run_artifacts({fixture["source"]: fixture["source_sha256"]})
     artifacts = freeze_run_artifacts(args.build_dir, executable, args.model, expected_model)
-    project = Path(__file__).resolve().parents[2]
-    sources = [*project.glob("include/**/*.hpp"), *project.glob("apps/**/*.cpp"),
-               *project.glob("support/**/*.cpp"), *project.glob("support/**/*.hpp"),
-               project / "cmake/patches/ggml-precise-metal.patch", project / "cmake/patches/ggml-precise-cuda.patch",
-               project / "cmake/ggml.cmake", project / "cmake/prepare_ggml.cmake",
-               project / "tools/convert/sam3_tensor_schema.json",
-               *[project / "tools" / group / name for group, name in (
-                   ("benchmark", "benchmark_video.py"), ("convert", "sam3_artifacts.py"),
-                   ("convert", "sam3_gguf.py"), ("validation", "validate_video.py"),
-                   ("validation", "validate_image.py"))],
-               args.fixture_manifest, args.qualification, args.validation, args.recipe_script]
-    source_hashes = {str(path.absolute()): sha256_file(path) for path in sources}
+    source_hashes = source_snapshot()
+    source_hashes.update({str(path.resolve()): sha256_file(path) for path in (
+        args.fixture_manifest, args.qualification, args.validation, args.recipe_script)})
     args.output.mkdir(parents=True, exist_ok=False)
     actual = args.output / "run"
     time_arguments = ["-f", "SAM_TIME %M %e %U %S"] if sys.platform == "linux" else ["-l"]

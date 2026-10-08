@@ -1,9 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
-project(sam_install_consumer LANGUAGES C CXX)
 
 # Installed-package consumer: no add_subdirectory, no source-tree path. Copy
 # this directory outside the SAM checkout, point CMAKE_PREFIX_PATH at the
-# installed prefix and configure.
+# installed prefix and configure. The default consumer enables only CXX: the
+# installed final-link dependencies must resolve without a C compiler. Pass
+# -DSAM_INSTALL_CONSUMER_LANGUAGES="C;CXX" to also cover a C-enabled consumer.
+set(SAM_INSTALL_CONSUMER_LANGUAGES "CXX" CACHE STRING
+    "Languages enabled by the installed-package consumer")
+project(sam_install_consumer LANGUAGES ${SAM_INSTALL_CONSUMER_LANGUAGES})
+
 find_package(sam CONFIG REQUIRED)
 
 get_target_property(sam_type sam::sam TYPE)

@@ -12,6 +12,10 @@ import sys
 import tempfile
 import time
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.quantize.calibration import ChannelStats, layer_seed, load_dataset
 from tools.convert.convert_sam3 import rename_key
 from tools.validation.export_reference import (configure_cuda_oracle, install_unfused_fp32,

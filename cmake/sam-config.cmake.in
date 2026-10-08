@@ -7,6 +7,7 @@ include(CMakeFindDependencyMacro)
 # GGML must provide an importable CMake package defining ggml::ggml.
 @SAM_GGML_DEPENDENCY_FINDS@
 @SAM_GGML_PACKAGE_FIND@
+@SAM_GGML_OPENMP_TARGET_CHECK@
 
 if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/samDependencies.cmake")
     include("${CMAKE_CURRENT_LIST_DIR}/samDependencies.cmake")

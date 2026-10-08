@@ -19,6 +19,13 @@ entry points. Running them as scripts and importing them both keep working;
 each one forwards to `tools/<group>/<name>.py`, which is the only copy of the
 implementation.
 
+Grouped commands can be executed directly, for example
+`.venv-reference/bin/python tools/convert/convert_sam3.py --help`, or as modules
+from the repository root with
+`.venv-reference/bin/python -m tools.convert.convert_sam3 --help`.
+Direct execution also works from another working directory when the Python
+interpreter and script are given absolute paths; no `PYTHONPATH` setup is needed.
+
 `tools/test_tools.py` is the compatibility entry point for the Python test
 suite; the tests themselves live in `tests/tools/`. Python dependencies are
 pinned in `requirements.lock` and `requirements-linux-cuda.lock` and are

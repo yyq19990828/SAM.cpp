@@ -45,6 +45,17 @@ else()
     message(FATAL_ERROR "SAM requires either the ggml target or the namespaced ggml::ggml target")
 endif()
 
+# A CUDA-capable GGML backend is exposed as the build-tree ggml-cuda target or
+# as the imported ggml::ggml-cuda target from a caller-owned package. Tools and
+# tests use this resolved name instead of assuming the build-tree target.
+if(TARGET ggml-cuda)
+    set(SAM_GGML_CUDA_TARGET ggml-cuda)
+elseif(TARGET ggml::ggml-cuda)
+    set(SAM_GGML_CUDA_TARGET ggml::ggml-cuda)
+else()
+    set(SAM_GGML_CUDA_TARGET "")
+endif()
+
 # Check the actual supplied headers at build time, including host targets whose
 # generated include paths cannot be resolved during CMake configuration.
 add_library(sam_ggml_api_check OBJECT ${CMAKE_CURRENT_LIST_DIR}/check_ggml.cpp)

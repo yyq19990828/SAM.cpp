@@ -7,6 +7,10 @@ import io
 from pathlib import Path
 import sys
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.validation.coco_acceptance import evaluate_ranked, paired_bootstrap, quality_gates
 from tools.validation.evaluate_coco_screening import prompted_ground_truth
 from tools.validation.precision_acceptance import (GATES_SHA256, canonical_hash, combine_statuses, compare_objects,

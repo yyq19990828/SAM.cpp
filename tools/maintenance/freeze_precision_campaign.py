@@ -4,7 +4,12 @@
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 import re
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.validation.evaluate_precision import load_run, same_inputs
 from tools.validation.precision_acceptance import GATES_SHA256, canonical_hash, load_gates, quality_profile

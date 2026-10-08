@@ -4,10 +4,15 @@
 import argparse
 import math
 from pathlib import Path
+import sys
 import tempfile
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.convert.sam3_artifacts import artifact_path, read_array, read_json, sha256_file, write_json
 

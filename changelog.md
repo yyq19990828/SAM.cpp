@@ -56,6 +56,10 @@ No releases have been published.
 
 ### Fixed
 
+- Restore direct execution of grouped Python commands from any working directory, including reference-export child processes, while preserving flat compatibility entry points and module invocation.
+- Resolve the fully static SDK's OpenMP runtime dependencies for consumers that enable only C++, without requiring a C compiler in the consuming project.
+- Build conversion tools with caller-provided `ggml::ggml` packages and recognize namespaced CUDA backend targets in tools and tests.
+- Include compiled implementation and build sources in video benchmark receipts, and reject runs whose implementation changes during measurement.
 - Install the pinned COCO dependency in Quick checks so mask and precision acceptance tests can run in CI.
 - Preserve the original Linear bias operation in numerical reparameterization studies; add explicit mixed-layer selection and exactly representable channel-scale experiments without changing runtime defaults.
 - Bind CUDA validation and video benchmark receipts to their compute mode, and report the selected quantization tensor gate identity correctly.

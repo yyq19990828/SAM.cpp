@@ -9,7 +9,12 @@ import argparse
 import ast
 import hashlib
 from pathlib import Path
+import sys
 from types import SimpleNamespace
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.convert.sam3_artifacts import sha256_file
 

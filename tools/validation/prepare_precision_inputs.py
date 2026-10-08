@@ -3,6 +3,11 @@
 
 import argparse
 from pathlib import Path
+import sys
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.maintenance.precision_artifacts import phase_samples
 from tools.validation.prepare_coco_acceptance import load_precision_dataset

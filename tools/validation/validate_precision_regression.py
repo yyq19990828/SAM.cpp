@@ -14,6 +14,10 @@ import sys
 
 import numpy as np
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.validation.precision_acceptance import (GATES_SHA256, canonical_hash, combine_statuses, compare_objects,
                                   load_gates, object_gates, quality_profile, validate_output)
 from tools.maintenance.precision_artifacts import (archive_sources, native_recipe, native_snapshot, packages,

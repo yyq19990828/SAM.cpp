@@ -9,6 +9,10 @@ import shutil
 import sys
 import time
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.quantize.calibration import load_dataset
 from tools.quantize.cache_quantization import CACHE_MODES, CacheQuantization, CudaCacheEncoder
 from tools.convert.convert_sam3 import rename_key

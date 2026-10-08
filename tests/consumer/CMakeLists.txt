@@ -12,6 +12,31 @@ if(NOT DEFINED SAM_CONSUMER_SHARED)
         set(SAM_CONSUMER_SHARED OFF CACHE INTERNAL "Consumer library type captured at configure entry")
     endif()
 endif()
+# An installed GGML package on CMAKE_PREFIX_PATH exercises the imported
+# ggml::ggml interface from a parent project. SAM_BUILD_TOOLS=ON then has to
+# resolve that same imported target instead of assuming a build-tree ggml
+# target.
+option(SAM_CONSUMER_IMPORTED_GGML
+    "Resolve ggml through find_package(ggml CONFIG) and force SAM_BUILD_TOOLS=ON" OFF)
+if(SAM_CONSUMER_IMPORTED_GGML)
+    if(FETCHCONTENT_SOURCE_DIR_GGML)
+        message(FATAL_ERROR
+            "SAM_CONSUMER_IMPORTED_GGML resolves ggml with find_package; do not also set FETCHCONTENT_SOURCE_DIR_GGML")
+    endif()
+    find_package(ggml CONFIG REQUIRED)
+    if(NOT TARGET ggml::ggml)
+        message(FATAL_ERROR "The ggml package must define the ggml::ggml target")
+    endif()
+    get_target_property(sam_consumer_ggml_imported ggml::ggml IMPORTED)
+    if(NOT sam_consumer_ggml_imported)
+        message(FATAL_ERROR "SAM_CONSUMER_IMPORTED_GGML requires an imported ggml::ggml target")
+    endif()
+    # This mode exists to cover the imported-target tool build; force the
+    # effective value so a stale or explicit SAM_BUILD_TOOLS=OFF cannot leave
+    # the mode half-configured.
+    set(SAM_BUILD_TOOLS ON CACHE BOOL "Build the SAM tools against the imported ggml::ggml" FORCE)
+endif()
+
 # An existing source override also exercises reuse of a caller-owned target.
 if(FETCHCONTENT_SOURCE_DIR_GGML)
     include("${SAM_SOURCE_DIR}/cmake/prepare_ggml.cmake")
@@ -34,6 +59,9 @@ if(SAM_CONSUMER_SHARED AND NOT sam_type STREQUAL "SHARED_LIBRARY")
 endif()
 if(NOT SAM_CONSUMER_SHARED AND NOT sam_type STREQUAL "STATIC_LIBRARY")
     message(FATAL_ERROR "The default source consumer must link the static sam library")
+endif()
+if(SAM_CONSUMER_IMPORTED_GGML AND NOT TARGET sam_quantize_rows)
+    message(FATAL_ERROR "SAM_BUILD_TOOLS=ON must define the sam_quantize_rows tool with an imported ggml::ggml")
 endif()
 
 add_executable(sam_consumer main.cpp)

@@ -13,6 +13,10 @@ import sys
 import tempfile
 import time
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.convert.convert_sam3 import unused_tracker_key
 from tools.convert.sam3_artifacts import (BPE_SHA256, REQUIRED_TENSORS, SAM3_REVISION,
                            artifact_path, dump_array, load_case_manifest, read_json, read_tensor_index,

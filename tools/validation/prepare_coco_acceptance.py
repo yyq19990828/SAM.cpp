@@ -5,7 +5,12 @@ import argparse
 from collections import Counter, defaultdict
 import hashlib
 from pathlib import Path
+import sys
 import re
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.quantize.calibration import validate_dataset
 from tools.convert.sam3_artifacts import SAM3_REVISION, artifact_path, read_json, sha256_file, write_json

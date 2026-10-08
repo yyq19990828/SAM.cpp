@@ -9,8 +9,13 @@ import argparse
 import hashlib
 import os
 from pathlib import Path
+import sys
 import shutil
 import tempfile
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.validation.export_reference import validate_source
 from tools.convert.sam3_artifacts import SAM3_REVISION, sha256_file, write_json

@@ -31,6 +31,36 @@ if(SAM_GGML_DEPENDENCY_MODE STREQUAL "prepared")
             list(APPEND SAM_GGML_INSTALL_TARGETS ${backend})
         endif()
     endforeach()
+    # GGML links the language-specific OpenMP targets privately; static
+    # archives keep them in the exported final-link interface. A consumer that
+    # enables only CXX creates only OpenMP::OpenMP_CXX from
+    # find_dependency(OpenMP), so each OpenMP target is referenced through
+    # $<TARGET_NAME_IF_EXISTS:...> and resolves exactly when the consuming
+    # project defines it.
+    function(sam_resolve_openmp_link_targets target)
+        get_target_property(link_libraries ${target} INTERFACE_LINK_LIBRARIES)
+        if(NOT link_libraries)
+            return()
+        endif()
+        set(resolved)
+        foreach(item IN LISTS link_libraries)
+            foreach(openmp_target IN ITEMS OpenMP::OpenMP_C OpenMP::OpenMP_CXX)
+                if(item STREQUAL "$<LINK_ONLY:${openmp_target}>")
+                    set(item "$<LINK_ONLY:$<TARGET_NAME_IF_EXISTS:${openmp_target}>>")
+                elseif(item STREQUAL "${openmp_target}")
+                    set(item "$<TARGET_NAME_IF_EXISTS:${openmp_target}>")
+                endif()
+            endforeach()
+            list(APPEND resolved "${item}")
+        endforeach()
+        set_target_properties(${target} PROPERTIES INTERFACE_LINK_LIBRARIES "${resolved}")
+    endfunction()
+    if(GGML_OPENMP_ENABLED)
+        foreach(ggml_target IN LISTS SAM_GGML_INSTALL_TARGETS)
+            sam_resolve_openmp_link_targets(${ggml_target})
+        endforeach()
+    endif()
+
     # PUBLIC_HEADER entries are relative to the directory that created them.
     # Resolve them against the prepared GGML source before this additional
     # install command re-reads the property, and keep GGML's own public-header
@@ -61,8 +91,21 @@ if(SAM_GGML_DEPENDENCY_MODE STREQUAL "prepared")
 
     set(SAM_GGML_PACKAGE_FIND "")
     set(SAM_GGML_DEPENDENCY_FINDS "find_dependency(Threads)")
+    set(SAM_GGML_OPENMP_TARGET_CHECK "")
     if(GGML_OPENMP_ENABLED)
         string(APPEND SAM_GGML_DEPENDENCY_FINDS "\nfind_dependency(OpenMP)")
+        # The exported prepared-GGML link interface resolves each
+        # language-specific OpenMP target only when the consuming project
+        # defines it, so at least one target must exist for the static final
+        # link to carry the OpenMP runtime. find_dependency() already fails
+        # when OpenMP is unavailable; this guard rejects a finder that reports
+        # success without defining any language target.
+        set(SAM_GGML_OPENMP_TARGET_CHECK [=[
+# At least one OpenMP language target must exist in the consuming project:
+# otherwise the final link would silently omit the OpenMP runtime.
+if(NOT TARGET OpenMP::OpenMP_C AND NOT TARGET OpenMP::OpenMP_CXX)
+    message(FATAL_ERROR "SAM: find_dependency(OpenMP) defined neither OpenMP::OpenMP_C nor OpenMP::OpenMP_CXX; the static final link would omit the OpenMP runtime")
+endif()]=])
     endif()
     if(GGML_CUDA)
         string(APPEND SAM_GGML_DEPENDENCY_FINDS "\nfind_dependency(CUDAToolkit)")
@@ -81,6 +124,7 @@ elseif(SAM_GGML_DEPENDENCY_MODE STREQUAL "imported")
     # package; its package defines ggml::ggml for the exported SAM target.
     set(SAM_GGML_PACKAGE_FIND "find_dependency(${SAM_GGML_PACKAGE_NAME} CONFIG)")
     set(SAM_GGML_DEPENDENCY_FINDS "")
+    set(SAM_GGML_OPENMP_TARGET_CHECK "")
 else()
     message(FATAL_ERROR
         "SAM_ENABLE_INSTALL cannot export a caller-owned build-tree GGML target. "

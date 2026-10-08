@@ -10,6 +10,10 @@ import tempfile
 
 import numpy as np
 
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.convert.sam3_artifacts import BPE_SHA256, SAM3_REVISION, read_json, sha256_file, write_json
 from tools.convert.sam3_gguf import inspect_tensors, read_gguf, tensor_schema, validate_metadata
 from tools.validation.validate_image import (QUANTIZED_PRECISIONS, quantization_selection,

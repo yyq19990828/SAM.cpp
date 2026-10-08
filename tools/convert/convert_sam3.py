@@ -12,11 +12,16 @@ import importlib.metadata
 import json
 import os
 from pathlib import Path
+import sys
 import shutil
 import subprocess
 import tempfile
 
 import gguf
+
+# Allow direct execution from any working directory.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.convert.sam3_artifacts import BPE_SHA256, PAB_REVISION, SAM3_REVISION, sha256_file, write_json
 from tools.convert.sam3_gguf import (KEEP_F32, HYBRID_PROFILE, HYBRID_F32_PREFIXES, QUANTIZATION_PROFILES,
