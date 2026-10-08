@@ -587,3 +587,77 @@ TU（`src/model_factory.cpp`、`src/api/*.cpp`）编译进 `sam`，公共 target
 
 交接 D：从本节点提交继续。安装/消费命令、证据目录、固定输入清单及未运行项见上；数值门槛沿用
 A/B 清单，不重新挑选样本。
+
+### 2026-10-09 节点 D 实施结果（最终回归、性能与交付记录）
+
+实施基线：继承节点 C 提交 `a78d5fd`；本节点以单个可独立保留的本地提交结束
+（`docs: record compiled-library migration final acceptance`，哈希见 Orca 完成报告）。
+公共 API、所有权与会话语义、GGUF schema、权重、tokenizer、精度边界、缓存与计算顺序未变；
+未实现新模型、语言绑定或量化优化，未改动 runtime/backend 数值路径；最终验收未发现需要
+修复的迁移回归（一次 `test_session` 失败由本节点脚本漏加引号导致，修正后原样通过，不是
+产品缺陷）。输入身份复核：`models/sam3-f32.gguf` `cb13ecd5…`、`models/sam3-video-f32.gguf`
+`02513232…`、GGML `353b63b4` 与两个补丁哈希均与 A 基线一致。
+
+**证据组织**：新证据目录 `build/structure-d-evidence-v1/`（索引 `index.json`、日志 `logs/`、
+脚本 `scripts/`、性能 `performance-d.json`）。与当前提交、选项和输入严格一致的构建复用
+C 证据并记录来源（`build/structure-cuda-probes-c` probes-ON 构建、`build/consumer-*-c`
+源码 consumer、`build/structure-c-install-*` 与 `/tmp/opencode/install-consumer-*` 安装/父工程
+基线）；D 在最终树重新执行对应 CTest、消费运行与全部数值/性能检查。新增全新构建目录：
+`build/structure-{cpu,cuda,shared}-d`、`build/{sdk,tools}-d`、`build/structure-d-*`。
+
+**构建与工具矩阵**（D 实测；CUDA probes OFF 与 ON 均覆盖）：
+
+| 检查 | 配置/命令 | 结果 |
+| --- | --- | --- |
+| CPU Release（新构建） | `build/structure-cpu-d`；`GGML_METAL=OFF GGML_CUDA=OFF GGML_BLAS=OFF` | 配置 1s、构建 47s；CTest 17/17 |
+| CUDA Release probes OFF（新构建） | `build/structure-cuda-d`；`GGML_METAL=OFF GGML_BLAS=OFF GGML_CUDA=ON SAM_BUILD_CUDA_PROBES=OFF SAM_REQUIRE_CUDA_TESTS=ON arch 89` | 配置 3s、构建 252s；CTest 30/30 |
+| CUDA probes ON | `build/structure-cuda-probes-c`（复用构建）→ D 线性探针回归 | 45/45 通过 |
+| 共享构建（新构建） | `build/structure-shared-d`；`BUILD_SHARED_LIBS=ON` | 构建 52s；CTest 17/17；`nm -D` 无 `sam::internal` 符号 |
+| SDK-only | `build/sdk-d`；TESTS/EXAMPLES/TOOLS=OFF | 构建 29s；无 STB、image_io、CLI 产物 |
+| examples OFF / tools ON | `build/tools-d` | 构建 37s；4 个工具产物；无 `sam_image` |
+| 静态/共享/CUDA 安装导出 | `build/structure-d-install-{static,shared,cuda}/prefix(-moved)` | 仅公共头、库、package、许可；私有路径与构建树路径泄漏 0 |
+| 隔离安装 consumer + 移动前缀 | `/tmp/opencode/d-install-{static,shared,cuda}-d`（static/shared 针对 `prefix-moved`） | 各 1/1；shared `ldd` 从移动前缀解析 `libsam.so`/GGML |
+| 父工程 GGML 包复用 | 已安装 ggml CONFIG 的父工程 → SAM 安装包 → 隔离 consumer | 配置/构建/CTest/安装全 0；config 含 `find_dependency(ggml CONFIG)` |
+| caller-owned 构建树 GGML | `tests/consumer` + `FETCHCONTENT_SOURCE_DIR_GGML` + `SAM_ENABLE_INSTALL=ON` | 配置失败并给出明确拒绝信息 |
+| 源码 consumer | `build/consumer-{static,shared}-c` CTest（复用构建，D 重跑） | 各 2/2（含双 TU） |
+| 公共头/双 TU | `sam_public_header_checks`/`sam_internal_header_checks` 重跑 + `sam_two_tu` | 编译通过；公共检查 flags 无 GGML/CUDA include；双 TU 通过 |
+| 私有实现增量编译 | touch `src/models/sam3/video/execution.hpp` 后重建 `build/structure-cpu-d` | 库 TU 重编 1、应用与内部测试重链接；未变化应用对象重编 0 |
+| Python 工具 | `.venv-reference/bin/python -B tools/test_tools.py` | 145 通过（含来源身份正例、变更负例、离线归档与篡改负例） |
+| 来源与归档 | 真实树 `source_snapshot()`/`archive_sources()` 应用 + 嵌套工具篡改负例 | 223/223 全部纳入；篡改可检出；归档可离线校验 |
+| 冻结归档 | `build/precision-final-v2/exports/f16` | 137 归档源只读校验通过、无写入 |
+| 文档/空白 | `tools/check_docs.py`、`git diff --check` | 70 份文档通过、无空白问题 |
+
+**数值回归**（与迁移前 A 基线同模型、输入、编译选项、后端与硬件；计时/路径/哈希归一化后逐文件对比）：
+
+| 检查 | 基线（A，`113e165`） | D（`a78d5fd` 后） | 对比结果 |
+| --- | --- | --- | --- |
+| CPU 图像 7 例（tensor/box/score/mask） | PASS | PASS | 98 文件、0 二进制差异、0 JSON 差异 |
+| CUDA 图像 7 例 | PASS | PASS | 98 文件、0 差异 |
+| CUDA 视频 5 例（motion/entry/occlusion/hotstart-removal/negative） | PASS | PASS | 1276 文件、0 差异；ID 映射一致（entry 0/1，occlusion 0，negative 空） |
+| CPU `negative` 16 帧固定回归 | exit 0 | exit 0 | 88 文件、0 差异；16/16 帧输出一致 |
+| CPU 图像 session 生命周期（缓存/多 session/图像失效/模型提前释放） | B 通过 | 通过（D 重跑） | 无变化 |
+| CUDA 视频 session（reset/帧序/负样本/ID 连续） | B 通过 | 通过（D 重跑） | 无变化 |
+| CUDA 长序列 64+64 交错（双 session/结果移动/状态上界） | 未运行 | 通过 | 新增覆盖，无基线冲突 |
+
+**性能对比**（A 的输入与方法；单次完整运行的均值，A/B/D 三点见 `performance-d.json`，
+说明存在主机状态波动，不作稳定基准）：
+
+| 指标 | A 基线 | D | B（同迁移后） |
+| --- | --- | --- | --- |
+| CPU 图像 image_ms / inference_ms 均值 | 36275 / 3856 | 28772 / 3050 | 40306 / 4002 |
+| CPU 图像峰值 RSS（metrics / `time -v`） | 4.610 / 4.502 GiB | 4.611 / 4.502 GiB | 同量级 |
+| CUDA 图像 image_ms / inference_ms 均值 | 325 / 172 | 308 / 143 | 312 / 135 |
+| CUDA 图像峰值 RSS | 3.551 / 3.467 GiB | 3.548 / 3.465 GiB | 同量级 |
+| CUDA 视频 5 例 frame_ms 均值 / 峰值 RSS | 997 / 3.630 GiB | 913 / 3.629 GiB | 893 / 3.630 GiB |
+| CPU `negative` 16 帧 wall / 峰值 RSS | 16:08.55 / 4.733 GiB | 9:03.47 / 4.733 GiB | 8:47.92 / 4.733 GiB |
+
+编译时间：D 全新目录 CPU 47s、CUDA 252s、共享 52s、SDK-only 29s、tools-only 37s（配置与
+推理分开；另有增量编译证据）。A 基线只保留 configure/build 日志、未记录构建墙钟时间，
+因此不宣称迁移前后构建时间对比；迁移的编译收益以“私有实现变更不重编译应用对象”单独记录。
+
+**未验证**：Metal（无匹配硬件）；CPU 完整 216 帧视频套件（吞吐，沿用 16 帧 `negative`
+固定回归）；逐模块 `.hpp/.cpp` 去内联仍保持 B 的范围（大型实现由库 TU 从 `src/` 编译进库）。
+
+**交付与交接**：D 为最终节点。交付提交、安装产物（`build/structure-d-install-*/prefix*`）、
+证据索引与性能记录见上；静态/动态源码与安装消费、父工程 GGML、移动前缀、SDK-only、
+tools 独立构建、CUDA probes OFF/ON 矩阵均有本次有效证据。本迁移不推送远端、不发布。

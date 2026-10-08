@@ -1,6 +1,8 @@
 # SAM.cpp 编译库迁移需求
 
-状态：新基线复审后已修订，DAG 已创建；由用户从 Orca viewer 启动实施。
+状态：已实施完成。四个串行节点 A–D 在 `113e165e78970cab3713e6e7b3b325c8a16c7561`
+基线上完成编译边界、私有结构、工具与安装包、最终验收；实际检查、性能与未验证范围见
+[总计划实施记录](plans/20261008-181312-compiled-library-structure.md)。
 基线：`113e165e78970cab3713e6e7b3b325c8a16c7561`。
 依据：[总计划](plans/20261008-181312-compiled-library-structure.md)和
 [本次任务分配](plans/20261008-211718-compiled-library-orca-dag.md)。

@@ -1,5 +1,7 @@
 # SAM.cpp 编译库迁移技术规格
 
+状态：迁移已实施，节点 D 最终验收通过；实际命令、证据与未验证范围见
+[总计划实施记录](plans/20261008-181312-compiled-library-structure.md)。
 基线：`113e165e78970cab3713e6e7b3b325c8a16c7561`。
 范围：[PRD](PRD.md)；修订后的总设计：[总计划](plans/20261008-181312-compiled-library-structure.md)。
 执行分配：[Orca 计划](plans/20261008-211718-compiled-library-orca-dag.md)。

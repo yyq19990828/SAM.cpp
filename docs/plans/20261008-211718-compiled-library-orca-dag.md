@@ -323,3 +323,19 @@ static/shared/CUDA 与移动前缀通过、Python 145 通过、文档 70 份通�
 223/223（嵌套工具篡改可检出，离线校验通过），冻结 `build/precision-final-v2/exports/f16`
 137 归档源只读校验通过。未验证：Metal（无匹配硬件）、CPU 完整 216 帧视频（吞吐）以及官方
 参考数值/性能套件（属节点 D）。D 继承本提交。
+
+### D：最终回归、性能与交付记录
+
+状态：完成。继承节点 C 提交 `a78d5fd92e0bc38dd8cc5dc1b8d98b99c59f1dec`，以文档提交
+记录最终验收（哈希见 worker 完成报告）。证据目录 `build/structure-d-evidence-v1/`
+（`index.json`、`logs/`、`performance-d.json`）。全新构建 D 矩阵：CPU Release 17/17
+（构建 47s）、CUDA probes OFF 30/30（构建 252s）、共享 17/17；SDK-only、examples OFF/tools ON、
+静态/共享/CUDA 安装导出与隔离 consumer（含移动前缀）、父工程 GGML 包复用与不可导出拒绝、
+CUDA probes ON 线性探针 45/45、增量编译（应用对象重编译 0）、Python 145、文档 70 与空白
+检查全部通过。数值：CPU/CUDA 图像、CUDA 视频 5 例与 CPU 16 帧 `negative` 均通过原始门槛，
+与迁移前 A 基线逐文件对比 98/98/1276/88 文件 0 差异；新增 CPU session、CUDA video session
+与 64+64 长序列交错检查通过。性能：与 A 同输入同选项对比时延与峰值内存无回归（RSS 变化
+<0.1%，时延处于 A/B/D 主机波动区间内），D 全新构建时间单独记录，A 未记录构建墙钟时间故
+不作构建时间对比。来源与归档 223/223、篡改/离线/变更负例有效，冻结归档只读通过。
+未验证：Metal（无匹配硬件）、CPU 完整 216 帧视频（吞吐，固定 16 帧回归替代）以及逐模块
+去内联（保持 B/C 范围）。D 为最终节点；交付提交、安装产物与未验证范围见总计划实施记录。
