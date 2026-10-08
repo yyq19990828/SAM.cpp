@@ -298,7 +298,8 @@ probes OFF 30/30 与 probes ON 探针 45/45、共享构建 17/17、static/shared
 `build/structure-b-evidence-v1/`（`index.json`）。CPU Release 17/17、CUDA probes OFF 30/30、
 CUDA probes ON 探针 45/45、共享构建 17/17、Python 145 通过、文档 70 份通过；CPU/CUDA 图像
 各 98 文件、CUDA 视频 1276 文件、CPU `negative` 视频 88 文件与节点 A 输出在计时归一化后一致，
-二进制载荷零差异；冻结 `build/precision-final-v2/exports/f16` 只读校验通过；增量编译检查证明
+二进制载荷零差异，实际权重 session 生命周期（CPU 图像、CUDA 视频）通过；冻结
+`build/precision-final-v2/exports/f16` 只读校验通过；增量编译检查证明
 改动私有跟踪实现只重编译库与内部测试并重链接应用，不重编译未变化应用对象。未验证：Metal
 （无匹配硬件）与 CPU 完整 216 帧视频（吞吐）；逐模块 `.hpp/.cpp` 去内联未执行，实现仍由库
 实现 TU 从 `src/` 头文件编译进库。C 继承 `f14ab3a`。

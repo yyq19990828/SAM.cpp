@@ -513,6 +513,7 @@ tokenizer、精度边界、缓存与执行顺序未变；未迁移 apps/tools（
 | 共享构建 | `build/structure-shared-b`；`BUILD_SHARED_LIBS=ON` | 构建 0；CTest 17/17 |
 | 参考图像 | CPU 与 CUDA 官方 reference 门槛 | exit 0；与 A 输出对比各 98 文件一致 |
 | 参考视频 | CUDA 完整套件；CPU `negative` 16 帧固定回归 | exit 0；CUDA 1276 文件、CPU 88 文件与 A 输出在计时/元数据归一化后一致，二进制载荷零差异 |
+| session 生命周期 | `test_session`（CPU 图像）与 `test_video_session`（CUDA 视频）实际权重 | exit 0；多 session 交错、reset、帧序与对象 ID 连续性、负样本行为通过 |
 | 来源与归档 | `source_snapshot()` / `archive_sources()` | 149 项（src 53、include 5）全部纳入并归档；变更/离线/篡改负例测试通过 |
 | 冻结归档只读 | `build/precision-final-v2/exports/f16` | 只读校验 PASS（1187 产物、137 归档源），未写入 |
 | 增量编译 | touch `src/models/sam3/video/execution.hpp` 后重建 | 库对象重编、应用重链接；未变化应用对象不重编 |
