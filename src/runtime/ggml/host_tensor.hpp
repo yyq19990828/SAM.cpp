@@ -15,7 +15,7 @@ namespace sam::internal {
 // explicitly materialize F32 only for diagnostics or an F32 consumer.
 class HostTensor {
 public:
-    static HostTensor download(ggml_tensor* tensor, RuntimeStats& stats) {
+    static HostTensor download(ggml_tensor* tensor, RuntimeStats& stats, GgmlRuntime* runtime = nullptr) {
         if (!tensor || !tensor->buffer || !ggml_is_contiguous(tensor) || ggml_nelements(tensor) <= 0 ||
             (tensor->type != GGML_TYPE_F32 && tensor->type != GGML_TYPE_F16 && tensor->type != GGML_TYPE_Q8_0))
             throw std::runtime_error("invalid SAM cached tensor allocation, layout or type");
@@ -24,7 +24,9 @@ public:
         result.elements_ = static_cast<std::size_t>(ggml_nelements(tensor));
         result.row_elements_ = tensor->ne[0];
         result.payload_.resize(ggml_nbytes(tensor));
-        ggml_backend_tensor_get(tensor, result.payload_.data(), 0, result.payload_.size());
+        observe_transfer(runtime, tensor, "download", result.payload_.size(), [&] {
+            ggml_backend_tensor_get(tensor, result.payload_.data(), 0, result.payload_.size());
+        });
         stats.host_download_bytes += result.payload_.size();
         result.validate_scales();
         return result;
@@ -46,12 +48,14 @@ public:
             throw std::invalid_argument("SAM cache input shape or row layout differs");
     }
 
-    void upload_to(ggml_tensor* tensor, RuntimeStats& stats) const {
+    void upload_to(ggml_tensor* tensor, RuntimeStats& stats, GgmlRuntime* runtime = nullptr) const {
         if (!tensor || !tensor->buffer || !ggml_is_contiguous(tensor) || tensor->type != type_ ||
             ggml_nbytes(tensor) != payload_.size())
             throw std::runtime_error("invalid SAM cached input allocation, layout or type");
         validate_shape(tensor->ne[0], tensor->ne[1], tensor->ne[2], tensor->ne[3]);
-        ggml_backend_tensor_set(tensor, payload_.data(), 0, payload_.size());
+        observe_transfer(runtime, tensor, "upload", payload_.size(), [&] {
+            ggml_backend_tensor_set(tensor, payload_.data(), 0, payload_.size());
+        });
         stats.host_upload_bytes += payload_.size();
     }
 

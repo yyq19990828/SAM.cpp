@@ -14,7 +14,7 @@ if __package__ in (None, ""):
 
 from tools.convert.sam3_artifacts import read_json, sha256_file, write_json
 from tools.quantize.weight_policy import (CUSTOM_MODULE_PROFILE_PREFIX, FULL_MODULE_PROFILE_PREFIX,
-                                         MIXED_STORAGE_PROFILE, QUANTIZATION_PROFILES,
+                                         MIXED_STORAGE_PROFILE, TENSOR_MIXED_STORAGE_PROFILE, QUANTIZATION_PROFILES,
                                          canonical_quantization_modules, mixed_quantization_profile, quantization_profile)
 
 
@@ -52,17 +52,19 @@ def validate_configuration(backend, compute, cache, activation="backend-selected
 
 
 def resolve_weights(value, schema_version=1):
-    if schema_version == 2:
-        object_keys(value, {"precision", "base_precision", "module_precisions"},
-                    {"storage_profile", "policy_sha256"}, "schema-2 weights")
+    if schema_version in (2, 3):
+        required = {"precision", "base_precision", "module_precisions"}
+        if schema_version == 3:
+            required.add("tensor_precisions")
+        object_keys(value, required, {"storage_profile", "policy_sha256"}, f"schema-{schema_version} weights")
         if value["precision"] != "mixed":
-            raise ValueError("configuration schema 2 requires precision=mixed; use schema 1 for uniform presets")
-        policy = {key: value[key] for key in ("base_precision", "module_precisions", "policy_sha256") if key in value}
+            raise ValueError(f"configuration schema {schema_version} requires precision=mixed; use schema 1 for uniform presets")
+        policy = {key: value[key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in value}
         profile = mixed_quantization_profile(policy, value.get("storage_profile"))
-        return {"precision": "mixed", "storage_profile": MIXED_STORAGE_PROFILE,
-                **{key: profile[key] for key in ("base_precision", "module_precisions", "policy_sha256")}}
+        return {"precision": "mixed", "storage_profile": profile["storage_profile"],
+                **{key: profile[key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in profile}}
     if isinstance(value, dict) and set(value) & {"overrides", "module_precisions", "tensor_precisions"}:
-        raise ValueError("schema 1 selects modules using one precision; use schema 2 for module formats; tensor overrides are not implemented")
+        raise ValueError("schema 1 selects modules using one precision; use schema 2 for module formats or schema 3 for tensor overrides")
     object_keys(value, {"precision"}, {"storage_profile", "modules"}, "weights")
     precision = choice(value["precision"], WEIGHTS[:-1], "schema-1 weight precision")
     storage, modules = value.get("storage_profile"), value.get("modules")
@@ -93,8 +95,8 @@ def resolve_weights(value, schema_version=1):
 
 def normalize_config(value):
     object_keys(value, {"schema_version", "kind", "task", "backend", "weights", "activation", "compute", "cache"}, set(), "configuration")
-    if type(value["schema_version"]) is not int or value["schema_version"] not in (1, 2) or value["kind"] != CONFIG_KIND:
-        raise ValueError("configuration requires schema_version=1/2 and kind=sam-quantization-config")
+    if type(value["schema_version"]) is not int or value["schema_version"] not in (1, 2, 3) or value["kind"] != CONFIG_KIND:
+        raise ValueError("configuration requires schema_version=1/2/3 and kind=sam-quantization-config")
     if value["task"] != "image":
         raise ValueError("the unified configuration currently supports SAM 3 image tools only; video policies are separate")
     for axis in ("activation", "compute", "cache"):
@@ -152,11 +154,11 @@ def model_weights(manifest):
     if not isinstance(storage, str) or not isinstance(modules, list):
         raise ValueError("invalid model storage profile or quantization module metadata")
     if manifest["precision"] == "mixed":
-        weights = resolve_weights({"precision": "mixed", "storage_profile": storage,
-                                   **{key: manifest.get(key) for key in ("base_precision", "module_precisions", "policy_sha256")}}, 2)
-        selected = [module for module, value in weights["module_precisions"].items() if value != "f32"]
+        policy = {key: manifest[key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in manifest}
+        weights = resolve_weights({"precision": "mixed", "storage_profile": storage, **policy}, 3 if "tensor_precisions" in policy else 2)
+        selected = mixed_quantization_profile(policy, storage)["modules"]
         if modules != selected:
-            raise ValueError("schema-5 quantization_modules disagrees with the module format allocation")
+            raise ValueError("quantization_modules disagrees with the mixed format allocation")
         return weights
     if storage.startswith((CUSTOM_MODULE_PROFILE_PREFIX, FULL_MODULE_PROFILE_PREFIX)):
         if not isinstance(modules, list) or not modules or canonical_quantization_modules(modules) != modules:
@@ -177,7 +179,7 @@ def resolve_model_configuration(args, manifest):
                 args.backend, args.compute, args.cache, getattr(args, "activation", "backend-selected")):
             raise ValueError("runtime settings differ from the resolved quantization configuration")
         return receipt
-    return configuration_receipt({"schema_version": 2 if actual["precision"] == "mixed" else 1,
+    return configuration_receipt({"schema_version": 3 if "tensor_precisions" in actual else 2 if actual["precision"] == "mixed" else 1,
                                   "kind": CONFIG_KIND, "task": "image", "backend": args.backend,
                                   "weights": actual, "activation": {"mode": getattr(args, "activation", "backend-selected")},
                                   "compute": {"mode": args.compute}, "cache": {"mode": args.cache}})
@@ -193,7 +195,7 @@ def validate_recipe_configuration(recipe):
                                                quantization_configuration=recipe["quantization_configuration"]),
                                 {"precision": recipe["weight_precision"], "storage_profile": recipe["storage_profile"],
                                  "quantization_modules": recipe["quantization_modules"],
-                                 **{key: recipe[key] for key in ("base_precision", "module_precisions", "policy_sha256") if key in recipe}})
+                                 **{key: recipe[key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in recipe}})
 
 
 def conversion_options(receipt):
@@ -201,7 +203,7 @@ def conversion_options(receipt):
     validate_context(config, "conversion")
     weights = config["weights"]
     if weights["precision"] == "mixed":
-        return {"precision": "mixed", "storage_profile": MIXED_STORAGE_PROFILE, "quantize_modules": None}
+        return {"precision": "mixed", "storage_profile": weights["storage_profile"], "quantize_modules": None}
     storage = weights["storage_profile"]
     # Preserve the converter's mutually exclusive profile/module arguments.
     modules = weights["modules"] if storage.startswith(CUSTOM_MODULE_PROFILE_PREFIX) else None
@@ -267,7 +269,9 @@ def capabilities():
                         "exceptions": "protected F32 tensors; K-block vision MLP row fallback Q8_0",
                         "mixed_module_formats": ["f32", *QUANTIZATION_PROFILES],
                         "mixed_configuration_schema": 2, "mixed_storage_profile": MIXED_STORAGE_PROFILE,
-                        "mixed_tensor_overrides_or_module_f16": "NOT_IMPLEMENTED"},
+                        "tensor_configuration_schema": 3, "tensor_storage_profile": TENSOR_MIXED_STORAGE_PROFILE,
+                        "tensor_overrides": "exact eligible canonical linear names; tensor > module > base; no unused entries",
+                        "mixed_module_or_tensor_f16": "NOT_IMPLEMENTED"},
             "activation": {"modes": ["backend-selected"], "independent_int8_fp8_f16": "NOT_IMPLEMENTED",
                            "studies": "PyTorch/offline studies do not enable native runtime modes"},
             "compute": {"cpu": ["f32"], "metal": ["f32"], "cuda": ["f32", "f16"],

@@ -56,8 +56,10 @@ public:
         ensure_scheduler();
         if (active_context_ == context && active_graph_ == graph) {
             ++diagnostics_.graph_reuses;
-            if (const auto& observer = runtime_.graph_observer())
+            if (const auto& observer = runtime_.graph_observer()) {
                 observer->allocated(context, graph, scheduler_.get());
+                observer->bound(0, allocated_bytes(), true);
+            }
             return;
         }
         const auto start = std::chrono::steady_clock::now();
@@ -74,10 +76,13 @@ public:
         active_graph_ = graph;
         active_sources_ = std::move(sources);
         ++diagnostics_.graph_binds;
-        diagnostics_.bind_ms += elapsed_ms(start);
+        const auto bind_ms = elapsed_ms(start);
+        diagnostics_.bind_ms += bind_ms;
         diagnostics_.workspace_peak_bytes = std::max(diagnostics_.workspace_peak_bytes, allocated_bytes());
-        if (const auto& observer = runtime_.graph_observer())
+        if (const auto& observer = runtime_.graph_observer()) {
             observer->allocated(context, graph, scheduler_.get());
+            observer->bound(bind_ms, allocated_bytes(), false);
+        }
     }
 
     std::size_t required_bytes(ggml_context* context, ggml_cgraph* graph,
@@ -151,16 +156,20 @@ public:
                         " graph attempted compute fallback for " + ggml_op_name(node->op));
             }
         }
+        const auto observer = runtime_.graph_observer();
+        if (observer) observer->computing(context, graph, scheduler_.get());
         const auto start = std::chrono::steady_clock::now();
         const auto status = ggml_backend_sched_graph_compute(scheduler_.get(), graph);
         ++diagnostics_.compute_calls;
         const auto compute_ms = elapsed_ms(start);
         diagnostics_.compute_ms += compute_ms;
+        // Evaluation callbacks borrow the observer only for this computation.
+        if (observer) ggml_backend_sched_set_eval_callback(scheduler_.get(), nullptr, nullptr);
         if (status != GGML_STATUS_SUCCESS) {
             release();
             throw std::runtime_error("SAM graph execution failed");
         }
-        if (const auto& observer = runtime_.graph_observer()) observer->computed(context, graph, compute_ms);
+        if (observer) observer->computed(context, graph, compute_ms);
     }
 
     void discard(ggml_context* context) {

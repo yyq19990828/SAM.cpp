@@ -9,13 +9,14 @@ application images and prompts. The application owner decides the acceptable
 quality/resource tradeoff.
 
 `tools/benchmark/quantization_benchmark.py` provides ranked-output comparison,
-independent performance measurement and precision inspection without v2/v3 quality budgets, minimum sample
+independent performance measurement, precision inspection and opt-in CPU execution
+cost diagnostics without v2/v3 quality budgets, minimum sample
 counts or performance prerequisites. Export currently targets Linux CPU/CUDA;
 original checkpoint export requires the prepared CUDA reference environment.
 This tool adds no inference kernel or public cache-selection API.
 
 Prefer the [unified configuration](quantization-config.md): `export` and
-`inspect-precision` accept `--quantization-config`; `performance` accepts both
+`inspect-precision` and `execution-cost` accept `--quantization-config`; `performance` accepts both
 `--baseline-config` and `--candidate-config`. Each is checked against the
 model's actual weight allocation. Separate CLI settings remain available but
 cannot be mixed with configuration files.
@@ -193,7 +194,7 @@ policies and `execution_evidence`; a model name is not its whole-graph arithmeti
 
 | Dimension | Setting | Meaning and evidence |
 | --- | --- | --- |
-| Weights | `weights.precision` with `modules` / `storage_profile`, or schema-2 `base_precision` / `module_precisions` | GGUF may mix protected F32, selected module Q formats and Q8 fallbacks; inspect policy hash, per-type counts/bytes and assignment reasons |
+| Weights | `weights.precision` with `modules` / `storage_profile`, schema-2 `base_precision` / `module_precisions`, or schema-3 exact `tensor_precisions` | GGUF may mix protected F32, selected Q formats and Q8 fallbacks; inspect policy hash, per-type counts/bytes and assignment reasons |
 | Activations | `activation.mode=backend-selected` | No independent native INT8/FP8/F16 activation switch; kernels may transform/quantize RHS; numerical probes are not deployment modes |
 | Compute | `compute.mode` | CUDA F16 hints apply to eligible floating-point matmuls/attention; quantized matmuls retain their dispatch; F32 does not imply all private kernel representations are F32 |
 | Cache | `cache.mode` | Image levels 0/1/2 use F32/F32/F32, F16/F16/F16 or mixed Q8_0/Q8_0/F32; this is not an LLM KV cache |
@@ -203,8 +204,9 @@ are selected at load. CPU/Metal expose only F32 compute/cache here; reduced
 settings require explicit CUDA. Cache settings belong to probes, not a new public
 model-loading API. CPU loading promotes F16 weights to F32 and casts quantized
 matrices to temporary F32 operands before matmul; smaller files need not reduce
-runtime memory proportionally. Arbitrary per-layer mixed formats, independent activation
-quantization and universal kernel precision guarantees are not implemented.
+runtime memory proportionally. Exact eligible tensor overrides are supported;
+regex/wildcards, mixed F16, independent activation quantization and universal
+kernel precision guarantees are not implemented.
 
 Inspect stored weights and resolved policies without inference:
 
@@ -227,6 +229,48 @@ hints observed at graph allocation boundaries. They cannot prove internal
 kernel multiplication/accumulation types. The observer perturbs execution and
 must not provide performance timing. Untraced kernel evidence remains
 `NOT_COLLECTED`.
+
+## CPU execution cost diagnostics
+
+Use `execution-cost` to inspect the cost of one image and one prompt on CPU,
+independently of quality reports and paired performance measurements. The model
+must retain its conversion manifest. For example, after building tools with
+CUDA/Metal disabled:
+
+```sh
+cmake --build build/quant-cpu --target sam_execution_cost_probe -j 2
+.venv-reference/bin/python tools/benchmark/quantization_benchmark.py execution-cost \
+  --binary build/quant-cpu/examples/sam_execution_cost_probe \
+  --model models/sam3-tensor-mixed.gguf --image /absolute/path/to/application.png \
+  --text person --quantization-config docs/configs/quantization/image-tensor-mixed-cpu.json \
+  --output build/application-cpu-cost
+```
+
+This explicitly runs a full image inference once, with CPU/F32 compute/F32
+cache and four threads; it is not a schema-only preview. No model weights are
+copied into the result directory. The default timeout is 1,800 seconds per child;
+set `--timeout` as needed. Validation in this delivery used bounded matrix
+fixtures, not a complete-model run or a GPU campaign.
+
+`report.json` and `report.md` bind the model, manifest, binary/libraries, image
+and optional configuration hashes. `probe/execution-cost.json` retains raw
+graph/node/transfer observations. The JSON separates graph bind and synchronized
+compute wall time, Q→F32 casts, matmuls, other operations, metadata, and tensor
+upload/download API wall time. Inputs/output types and backend are observed;
+accumulation/RHS hints remain requests. Nodes with zero calls were in the graph
+snapshot but were not observed executing. Arena peak is the maximum scheduler
+tensor arena, excluding weights and backend-private scratch; process RSS is a
+separate whole-process peak. Neither is a sum of node output sizes.
+
+Every node is synchronized separately to prevent neighboring work being charged
+to one operation. This changes scheduling/fusion and includes dispatch overhead:
+`diagnostic_only=true`, `performance_comparable=false`. Node times are already
+inside graph time and must not be added again. Transfers exclude host allocation
+and weight loading. Graph construction/reserve and preprocessing are not
+individually timed. Internal RHS packing may occur inside matmul but is not
+separately measured; it and kernel arithmetic remain `NOT_COLLECTED`. These
+costs explain a path, not a speedup. Use unobserved `performance` runs for gains;
+their default behavior is unchanged.
 
 ## Historical results
 

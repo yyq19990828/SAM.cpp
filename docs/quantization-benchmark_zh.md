@@ -6,12 +6,12 @@
 应用方应在自己的代表性图像和提示词上，将完整配置与原始 SAM 3 checkpoint
 或原生 F32 GGUF 比较，自行决定可接受的质量、速度和内存取舍。
 
-`tools/benchmark/quantization_benchmark.py` 分别提供 ranked 输出对比、独立性能测量和精度检查，不要求
+`tools/benchmark/quantization_benchmark.py` 提供 ranked 输出对比、独立性能测量、精度检查和可选 CPU 执行开销诊断，不要求
 v2/v3 质量预算、最低样本数或性能收益。导出目前面向 Linux CPU/CUDA，原始
 checkpoint 需要已准备好的 CUDA 参考环境。它没有新增推理 kernel 或公共缓存选择 API。
 
 优先使用[统一量化配置](quantization-config_zh.md)：`export` 和 `inspect-precision`
-接受 `--quantization-config`，`performance` 同时接受 `--baseline-config` 和
+及 `execution-cost` 接受 `--quantization-config`，`performance` 同时接受 `--baseline-config` 和
 `--candidate-config`。工具会核对配置与模型的实际权重分配。旧独立参数继续可用，
 但不能与配置文件混用。
 
@@ -166,7 +166,7 @@ CUDA 使用可见设备 0，可通过 `CUDA_VISIBLE_DEVICES` 选择物理设备�
 
 | 维度 | 配置 | 实际含义与证据 |
 | --- | --- | --- |
-| 权重 | `weights.precision` 及 `modules` / `storage_profile`，或 schema 2 的 `base_precision` / `module_precisions` | GGUF 可同时有受保护的 F32、各模块 Q 格式和 Q8 回退；检查策略哈希、逐类型张量数量／字节数及保留原因 |
+| 权重 | `weights.precision` 及 `modules` / `storage_profile`、schema 2 的 `base_precision` / `module_precisions` 或 schema 3 的精确 `tensor_precisions` | GGUF 可同时有受保护的 F32、各 Q 格式和 Q8 回退；检查策略哈希、逐类型张量数量／字节数及保留原因 |
 | 激活 | `activation.mode=backend-selected` | 原生暂不支持独立 INT8/FP8/F16 激活开关；后端可内部转换或量化 RHS，研究 probe 不等于可部署配置 |
 | 计算 | `compute.mode` | CUDA F16 只给符合条件的浮点矩阵／attention 设置提示，量化矩阵保留自己的分派；F32 也不保证内核所有临时表示都是 F32 |
 | 缓存 | `cache.mode` | 图像特征 0/1/2：F32 为 F32/F32/F32，F16 为 F16/F16/F16，mixed-Q8_0 为 Q8_0/Q8_0/F32；不是 LLM KV cache |
@@ -174,8 +174,8 @@ CUDA 使用可见设备 0，可通过 `CUDA_VISIBLE_DEVICES` 选择物理设备�
 权重格式在转换时确定；计算和实验缓存策略在加载时选择。CPU/Metal 在这里仅接入
 F32 计算及 F32 缓存，低精度设置需显式 CUDA；实验缓存开关属于 probe，未增加公共
 模型加载 API。CPU 加载 F16 权重会提升到 F32，量化矩阵在 CPU matmul 前转换到
-临时 F32；文件变小不保证运行内存同比变小。任意逐层混合量化格式、独立激活量化
-及统一内核计算精度承诺尚未实现。
+临时 F32；文件变小不保证运行内存同比变小。合资格张量的精确名称覆盖已支持；正则／
+通配符、混合 F16、独立激活量化及统一内核计算精度承诺尚未实现。
 
 无需推理即可检查 GGUF 的存储和策略：
 
@@ -194,6 +194,40 @@ F32 计算及 F32 缓存，低精度设置需显式 CUDA；实验缓存开关属
 `graphs.json` 保存算子输入／输出类型、源槽位及累加／RHS 提示；这些是图分配边界的
 观察，不能证明 kernel 内部乘法／累加类型。该 observer 会影响执行，不用于性能计时。
 内核证据没有采集时始终为 `NOT_COLLECTED`。
+
+## CPU 执行开销诊断
+
+`execution-cost` 独立观察 CPU 上一张图、一个提示词的执行成本，不依赖质量报告或
+配对性能测量。模型须保留转换 manifest。先在关闭 CUDA/Metal 的构建中编译工具，
+再显式运行：
+
+```sh
+cmake --build build/quant-cpu --target sam_execution_cost_probe -j 2
+.venv-reference/bin/python tools/benchmark/quantization_benchmark.py execution-cost \
+  --binary build/quant-cpu/examples/sam_execution_cost_probe \
+  --model models/sam3-tensor-mixed.gguf --image /absolute/path/to/application.png \
+  --text person --quantization-config docs/configs/quantization/image-tensor-mixed-cpu.json \
+  --output build/application-cpu-cost
+```
+
+此命令会真正运行一次完整图像推理，使用 CPU/F32 计算/F32 缓存及 4 线程，区别于
+只读转换预览。不会把模型复制到结果目录。子进程默认超时 1,800 秒，可用 `--timeout`
+调整。本轮仅用小型矩阵 fixture 验证实现，没有运行完整模型或 GPU campaign。
+
+`report.json`、`report.md` 绑定模型、manifest、二进制／动态库、图片及可选配置哈希；
+`probe/execution-cost.json` 保留原始图／节点／传输观察。报告分别给出 graph bind、
+同步 compute wall time、Q→F32 cast、矩阵乘、其他算子、metadata 及张量上传／下载 API
+耗时。输入／输出类型和 backend 是实际观察，累加／RHS 提示仍只是请求。调用次数为
+零的节点只出现在图快照中，没有观察到执行。arena peak 是 scheduler 张量 arena 的
+最大值，不包括权重和 backend 私有 scratch；RSS 是独立的全进程峰值，二者都不是
+节点输出字节数之和。
+
+为避免相邻算子混入计时，诊断会逐节点同步，改变调度／融合并包含分派开销，固定标为
+`diagnostic_only=true`、`performance_comparable=false`。节点耗时已经包含在图耗时中，
+不能重复相加。传输计时不含主机内存分配和权重加载；图构造／reserve、预处理没有
+单独计时。内核 RHS 打包可能发生在矩阵乘内部，但未独立测量，和内核算术一样保留
+`NOT_COLLECTED`。成本用于解释执行路径；收益仍用不带 observer 的 `performance`
+测量，其默认行为不变。
 
 ## 历史结果
 

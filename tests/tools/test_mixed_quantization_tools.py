@@ -41,7 +41,7 @@ def mixed_configuration(base="q4_k", overrides=None):
             "activation": {"mode": "backend-selected"}, "compute": {"mode": "f32"}, "cache": {"mode": "f32"}}
 
 
-def convert_fixture(root, config, quantizer=None):
+def create_fixture(root, config):
     """Create a tiny original F32 checkpoint; substitute only SAM shapes/tokenizer source."""
     import torch
     shapes = {"vit.blocks.0.attn.qkv.weight": (2, 256), "vit.blocks.0.mlp.lin2.weight": (2, 4736),
@@ -75,10 +75,15 @@ def convert_fixture(root, config, quantizer=None):
     merges = [(left, right) for left in base for right in base][:48894]
     vocab = base + [token + "</w>" for token in base] + [left + right for left, right in merges]
     vocab += ["<start_of_text>", "<end_of_text>"]
+    return source, bpe, output, path, schema, (vocab, merges), receipt, state
+
+
+def convert_fixture(root, config, quantizer=None):
+    source, bpe, output, path, schema, tokenizer, receipt, state = create_fixture(root, config)
     arguments = ["--checkpoint", str(source), "--bpe", str(bpe), "--output", str(output), "--quantization-config", str(path)]
     if quantizer is not None:
         arguments.extend(["--quantizer", str(quantizer)])
-    with patch.object(convert_sam3, "load_tokenizer", return_value=(vocab, merges)), \
+    with patch.object(convert_sam3, "load_tokenizer", return_value=tokenizer), \
             patch("tools.convert.sam3_artifacts.read_json", return_value=schema), redirect_stdout(io.StringIO()):
         convert_sam3.main(arguments)
     return output, receipt, state

@@ -245,11 +245,12 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
     if configuration is not None:
         config = validate_receipt(configuration)
         if precision == "mixed":
-            requested_policy = {key: config["weights"].get(key) for key in ("base_precision", "module_precisions", "policy_sha256")}
+            requested_policy = {key: config["weights"][key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in config["weights"]}
             mixed_policy = requested_policy if mixed_policy is None else mixed_policy
             if quantize_modules is not None:
                 raise ValueError("mixed conversion uses module_precisions instead of --quantize-modules")
-            actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, **mixed_policy}, 2)
+            actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, **mixed_policy},
+                                     3 if "tensor_precisions" in mixed_policy else 2)
         else:
             actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, "modules": quantize_modules})
         if task != "image" or actual != config["weights"]:
@@ -281,10 +282,18 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
         raise ValueError("output must use .gguf; reconvert from the original checkpoint")
     if output.exists() or manifest_path.exists():
         raise FileExistsError(f"refusing to overwrite model or manifest: {output}")
+    from tools.convert.conversion_plan import allocation_rows, conversion_plan
+    from tools.convert.sam3_artifacts import read_json
+    schema_path = Path(__file__).with_name("sam3_tensor_schema.json")
+    schema = read_json(schema_path)
+    if schema.get("schema_version") != 1 or schema.get("sam3_revision") != SAM3_REVISION:
+        raise ValueError("unsupported detector tensor schema")
+    expected = tensor_schema(schema, task)
+    assignments = {row["name"]: row for row in allocation_rows(expected, precision, storage_profile,
+                                                              quantization_modules, mixed_policy)}
     quantizer_path = None
     quantizer_provenance = None
-    requires_native = quantized and (any(value in ("q6_k", "q5_k", "q4_k") for value in profile["module_precisions"].values())
-                                    if precision == "mixed" else precision != "q8_0")
+    requires_native = any(row["resolved_dtype"] in ("q6_k", "q5_k", "q4_k") for row in assignments.values())
     if requires_native:
         if quantizer is None:
             raise ValueError(f"--quantizer is required for {precision}")
@@ -292,11 +301,6 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
     elif quantizer is not None:
         raise ValueError("--quantizer is only used by Q6_K/Q5_K/Q4_K profiles")
     vocab, merges = load_tokenizer(bpe_path)
-    schema_path = Path(__file__).with_name("sam3_tensor_schema.json")
-    from tools.convert.sam3_artifacts import read_json
-    schema = read_json(schema_path)
-    if schema.get("schema_version") != 1 or schema.get("sam3_revision") != SAM3_REVISION:
-        raise ValueError("unsupported detector tensor schema")
     state = torch.load(checkpoint, map_location="cpu", weights_only=True)
     if isinstance(state, dict) and isinstance(state.get("model"), dict):
         state = state["model"]
@@ -323,10 +327,11 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
         if precision == "mixed" and tensor.dtype not in (torch.float32, torch.complex64):
             raise ValueError(f"{name}: mixed conversion requires the original F32 checkpoint, not reduced weights")
         renamed[name] = (key, tensor)
-    expected = tensor_schema(schema, task)
     if set(renamed) != set(expected):
         raise ValueError(f"checkpoint schema mismatch; missing={sorted(set(expected) - set(renamed))}; "
                          f"unknown={sorted(set(renamed) - set(expected))}")
+    planned = conversion_plan(expected, precision, task, storage_profile, quantization_modules, mixed_policy,
+                              tokenizer=(vocab, merges))
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = []
     published = []
@@ -353,12 +358,9 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             qtype = (quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules, **policy_options)
                      if quantized else None)
             if qtype is not None:
-                packed = (quantized_array(name, array, precision, storage_profile, quantization_modules, **policy_options)
-                          if qtype == gguf.GGMLQuantizationType.Q8_0
-                          else quantize_native_rows(name, array, qtype, quantizer_path, quant_workdir))
-                # gguf-py converts a packed uint8 byte-shape back to logical dimensions here.
-                writer.add_tensor_info(name, packed.shape, packed.dtype, packed.nbytes, raw_dtype=qtype)
-                del packed
+                # The allocation pass records logical dimensions and packed byte size;
+                # payloads are encoded only once, in the subsequent streaming pass.
+                writer.add_tensor_info(name, shape, array.dtype, assignments[name]["bytes"], raw_dtype=qtype)
             else:
                 converted = converted_array(name, array, "f32" if quantized else precision)
                 dtype = gguf.GGMLQuantizationType.F16 if converted.itemsize == 2 else gguf.GGMLQuantizationType.F32
@@ -396,7 +398,13 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
         inventory = inspect_tensors(reader, precision, expected, original_shapes, storage_profile,
                                     quantization_modules, **policy_options)
         del reader
+        if Path(model_tmp).stat().st_size != planned["gguf_size"]["exact_bytes"]:
+            raise ValueError("converted GGUF size differs from the shared conversion plan")
         for item in inventory:
+            assignment = assignments[item["name"]]
+            if item["bytes"] != assignment["bytes"] or item["dtype"] != {
+                    "f32": "float32", "f16": "float16"}.get(assignment["resolved_dtype"], assignment["resolved_dtype"]):
+                raise ValueError(f"{item['name']}: converted tensor differs from the shared allocation plan")
             source_name, tensor = renamed[item["name"]]
             item.update(source_name=source_name, source_dtype=str(tensor.dtype),
                         conversion="complex-real-pairs" if tensor.is_complex() else "real")
@@ -409,6 +417,8 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             "converter_sha256": sha256_file(__file__),
             "gguf_helper_sha256": sha256_file(Path(__file__).with_name("sam3_gguf.py")),
             "weight_policy_sha256": sha256_file(Path(__file__).resolve().parents[1] / "quantize/weight_policy.py"),
+            "tensor_policy_sha256": sha256_file(Path(__file__).resolve().parents[1] / "quantize/tensor_policy.py"),
+            "conversion_plan_sha256": sha256_file(Path(__file__).with_name("conversion_plan.py")),
             "gguf_package_version": gguf_version,
             "checkpoint": {"file": Path(checkpoint).name, "sha256": checkpoint_sha256},
             "bpe": {"file": Path(bpe_path).name, "sha256": sha256_file(bpe_path)},
@@ -417,6 +427,7 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
                           "sot_id": 49406, "eot_id": 49407},
             "options": {"detector_only": task == "image", "preserve_f32": list(KEEP_F32), "one_dimensional_f32": True},
             "tensors": inventory, "skipped": skipped,
+            "conversion_plan": {key: value for key, value in planned.items() if key != "tensors"},
         }
         if quantized:
             manifest.update(storage_profile=profile["storage_profile"],
@@ -446,21 +457,20 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
                     item["quantization_reason"] = quantization_reason_for_tensor(
                         item["name"], original_shapes[item["name"]], precision, storage_profile,
                         quantization_modules, **policy_options)
-            if profile["schema_version"] == 5:
-                manifest.update({key: profile[key] for key in ("base_precision", "module_precisions", "policy_sha256")})
-                vision_format = profile["module_precisions"]["vision"]
-                manifest["options"]["row_block_fallback"] = "Q8_0" if vision_format in ("q6_k", "q5_k", "q4_k") else None
+            if profile["schema_version"] in (5, 6):
+                manifest.update({key: profile[key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in profile})
+                manifest["options"]["row_block_fallback"] = ("Q8_0" if any(
+                    row["quantization_reason"] == "q8-row-fallback" for row in assignments.values()) else None)
                 manifest["options"]["quantized_image_linear_weights"] = any(item["dtype"].startswith("q") for item in inventory)
                 manifest["quantization"] = {"version": QUANTIZATION_VERSION,
                                             "ggml_quantization_version": QUANTIZATION_VERSION,
                                             "gguf_file_type": profile["file_type"],
                                             "base_ggml_type": profile["ggml_type"],
                                             "module_precisions": profile["module_precisions"],
-                                            "row_block_fallback": "per-module K formats use Q8_0 only for vision MLP ne[0]=4736"}
+                                            "row_block_fallback": "requested K formats use Q8_0 only for vision MLP ne[0]=4736"}
                 for item in inventory:
-                    item["requested_dtype"] = profile["module_precisions"].get(item["module"], "f32")
-                    item["resolved_dtype"] = "f32" if item["dtype"] == "float32" else item["dtype"]
-                    item["selector"] = f"module:{item['module']}" if item["module"] else "protected:outside-module-policy"
+                    assignment = assignments[item["name"]]
+                    item.update({key: assignment[key] for key in ("requested_dtype", "resolved_dtype", "selector", "quantization_reason")})
             manifest["quantizer"] = {"implementation": "gguf-py",
                                      "version": gguf_version,
                                      "module": "gguf.quants.quantize",
@@ -514,8 +524,9 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--task", choices=("image", "video"))
-    parser.add_argument("--checkpoint", required=True, type=Path)
-    parser.add_argument("--bpe", required=True, type=Path)
+    parser.add_argument("--checkpoint", type=Path, help="original checkpoint; optional mmap metadata preflight for --dry-run")
+    parser.add_argument("--bpe", type=Path, help="pinned tokenizer asset; optional for --dry-run size bounds")
+    parser.add_argument("--dry-run", action="store_true", help="write a JSON allocation preview without encoding weights or running inference")
     parser.add_argument("--precision", choices=("f32", "f16", "hybrid", "q8_0", "q6_k", "q5_k", "q4_k"),
                         help="weight storage precision: defaults to hybrid for video; required for image")
     parser.add_argument("--quantizer", type=Path, help="absolute path to sam_quantize_rows for K profiles")
@@ -543,6 +554,12 @@ def main(argv=None):
                 if args.task != "video":
                     parser.error("--precision is required for --task image (or use --quantization-config)")
                 args.precision = "hybrid"
+        if args.dry_run:
+            from tools.convert.conversion_plan import preview
+            preview(args, **options)
+            return
+        if args.checkpoint is None or args.bpe is None:
+            raise ValueError("normal conversion requires --checkpoint and --bpe")
         arguments = (args.checkpoint, args.bpe, args.precision, args.output, args.task,
                      args.quantizer, args.storage_profile)
         if args.quantize_modules is None:

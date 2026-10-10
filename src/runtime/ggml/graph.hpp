@@ -4,6 +4,7 @@
 #include "resources.hpp"
 #include "runtime.hpp"
 #include "workspace.hpp"
+#include "transfer.hpp"
 #include "sam/types.hpp"
 #include "ggml.h"
 #include "ggml-backend.h"
@@ -150,17 +151,22 @@ inline ggml_tensor* input_tensor(ggml_context* ctx, const char* name,
     return tensor;
 }
 
-inline void upload(ggml_tensor* tensor, const std::vector<float>& values, RuntimeStats& stats) {
+inline void upload(ggml_tensor* tensor, const std::vector<float>& values, RuntimeStats& stats,
+                   GgmlRuntime* runtime = nullptr) {
     if (!tensor->buffer || ggml_nbytes(tensor) != values.size() * sizeof(float))
         throw std::runtime_error("invalid SAM graph input allocation or shape");
-    ggml_backend_tensor_set(tensor, values.data(), 0, values.size() * sizeof(float));
+    observe_transfer(runtime, tensor, "upload", values.size() * sizeof(float), [&] {
+        ggml_backend_tensor_set(tensor, values.data(), 0, values.size() * sizeof(float));
+    });
     stats.host_upload_bytes += values.size() * sizeof(float);
 }
-inline std::vector<float> download(ggml_tensor* tensor, RuntimeStats& stats) {
+inline std::vector<float> download(ggml_tensor* tensor, RuntimeStats& stats, GgmlRuntime* runtime = nullptr) {
     if (!tensor->buffer || tensor->type != GGML_TYPE_F32 || !ggml_is_contiguous(tensor))
         throw std::runtime_error("invalid SAM graph output allocation or type");
     std::vector<float> values(static_cast<std::size_t>(ggml_nelements(tensor)));
-    ggml_backend_tensor_get(tensor, values.data(), 0, values.size() * sizeof(float));
+    observe_transfer(runtime, tensor, "download", values.size() * sizeof(float), [&] {
+        ggml_backend_tensor_get(tensor, values.data(), 0, values.size() * sizeof(float));
+    });
     stats.host_download_bytes += values.size() * sizeof(float);
     return values;
 }

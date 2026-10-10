@@ -7,6 +7,7 @@ MAX_QUANTIZATION_MODULE_CSV_LENGTH = 256
 FULL_MODULE_PROFILE_PREFIX = "image-full-linear-"
 CUSTOM_MODULE_PROFILE_PREFIX = "image-modules-linear-"
 MIXED_STORAGE_PROFILE = "image-mixed-linear-v1"
+TENSOR_MIXED_STORAGE_PROFILE = "image-tensor-mixed-linear-v1"
 MODULE_TENSOR_PREFIXES = {
     "vision": ("vit.", "neck."),
     "text": ("text.",),
@@ -109,6 +110,8 @@ def mixed_quantization_policy(base_precision, module_precisions):
 
 
 def mixed_quantization_profile(policy, storage_profile=None):
+    if isinstance(policy, dict) and "tensor_precisions" in policy:
+        return tensor_mixed_quantization_profile(policy, storage_profile)
     if not isinstance(policy, dict) or set(policy) - {"base_precision", "module_precisions", "policy_sha256"}:
         raise ValueError("mixed policy requires base_precision and module_precisions only")
     resolved = mixed_quantization_policy(policy.get("base_precision"), policy.get("module_precisions"))
@@ -121,6 +124,33 @@ def mixed_quantization_profile(policy, storage_profile=None):
             **resolved, "storage_profile": MIXED_STORAGE_PROFILE, "schema_version": 5,
             "modules": [module for module, value in resolved["module_precisions"].items() if value != "f32"],
             "module_precisions_csv": ",".join(f"{module}={value}" for module, value in resolved["module_precisions"].items()),
+            "profile_status": "candidate"}
+
+
+def tensor_mixed_quantization_profile(policy, storage_profile=None):
+    from tools.quantize.tensor_policy import validate_tensor_precisions, quantization_module_for_tensor
+    if set(policy) - {"base_precision", "module_precisions", "tensor_precisions", "policy_sha256"}:
+        raise ValueError("unknown field in exact-tensor weight policy")
+    resolved = mixed_quantization_policy(policy.get("base_precision"), policy.get("module_precisions"))
+    overrides = validate_tensor_precisions(policy["tensor_precisions"])
+    encoded = f"sam3:{TENSOR_MIXED_STORAGE_PROFILE}\nbase={resolved['base_precision']}\n"
+    encoded += "".join(f"{module}={value}\n" for module, value in resolved["module_precisions"].items())
+    encoded += "".join(f"tensor:{name}={value}\n" for name, value in overrides.items())
+    digest = hashlib.sha256(encoded.encode("ascii")).hexdigest()
+    if "policy_sha256" in policy and policy["policy_sha256"] != digest:
+        raise ValueError("tensor weight policy SHA-256 disagrees with the resolved allocation")
+    if storage_profile not in (None, TENSOR_MIXED_STORAGE_PROFILE):
+        raise ValueError("tensor overrides require image-tensor-mixed-linear-v1")
+    base = QUANTIZATION_PROFILES[resolved["base_precision"]]
+    selected = {module for module, value in resolved["module_precisions"].items() if value != "f32"}
+    selected.update(quantization_module_for_tensor(name) for name, value in overrides.items() if value != "f32")
+    return {**{key: value for key, value in base.items() if key != "vision_storage_profile"},
+            "base_precision": resolved["base_precision"], "module_precisions": resolved["module_precisions"],
+            "tensor_precisions": overrides, "policy_sha256": digest,
+            "storage_profile": TENSOR_MIXED_STORAGE_PROFILE, "schema_version": 6,
+            "modules": [module for module in QUANTIZATION_MODULES if module in selected],
+            "module_precisions_csv": ",".join(f"{module}={value}" for module, value in resolved["module_precisions"].items()),
+            "tensor_precisions_csv": ",".join(f"{name}={value}" for name, value in overrides.items()),
             "profile_status": "candidate"}
 
 

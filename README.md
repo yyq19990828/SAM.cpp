@@ -39,6 +39,10 @@ Per-module F32/Q8_0/Q6_K/Q5_K/Q4_K allocation is available through the
 [mixed weight configuration](docs/quantization-config.md#module-mixed-weights).
 CPU conversion and small arithmetic fixtures are checked; mixed-model quality,
 performance and CUDA/Metal execution remain unmeasured.
+Exact eligible tensor overrides and read-only conversion previews are available
+through the [tensor configuration](docs/quantization-config.md#exact-tensor-overrides-and-conversion-preview).
+[CPU cost diagnostics](docs/quantization-benchmark.md#cpu-execution-cost-diagnostics)
+record observed casts/matmuls/transfers separately from normal speed benchmarks.
 One exact custom text/fusion/decoder Q8_0 image recipe has a
 [scoped CUDA GPU-memory acceptance](docs/quantization.md); this does not
 qualify other custom combinations or backends.

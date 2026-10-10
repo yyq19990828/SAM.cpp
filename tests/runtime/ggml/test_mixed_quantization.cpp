@@ -3,6 +3,7 @@
 #include "models/sam3/weights.hpp"
 #include "models/sam3/tensors.hpp"
 #include "runtime/ggml.hpp"
+#include "../../../tools/benchmark/execution_cost.hpp"
 
 #include <algorithm>
 #include <array>
@@ -75,7 +76,7 @@ void write_fixture(const std::filesystem::path& path, const std::function<void(g
     require(gguf_write_to_file(file.get(), path.string().c_str(), false), "cannot write mixed fixture");
 }
 
-void check_fixture_cpu(const std::string& path) {
+void check_fixture_cpu(const std::string& path, const std::string& cost_report = {}) {
     GgufReader reader(path);
     const auto policy = read_image_mixed_policy(reader);
     const auto tensors = reader.tensors();
@@ -91,6 +92,9 @@ void check_fixture_cpu(const std::string& path) {
         return ggml_is_quantized(static_cast<ggml_type>(tensor.type));
     });
     GgmlRuntime runtime({sam::Backend::Cpu, 2}, !packed, packed);
+    const auto observer = std::make_shared<sam_cost::Observer>();
+    observer->stage = "bounded_mixed_linear_fixture";
+    if (!cost_report.empty()) runtime.set_graph_observer(observer);
     auto weights = make_context(tensors.size() + 2);
     std::vector<ggml_tensor*> stored;
     for (const auto& tensor : tensors) {
@@ -132,11 +136,11 @@ void check_fixture_cpu(const std::string& path) {
             rhs_values.back()[k] = k == 0 ? 128.0f : static_cast<float>(static_cast<int>(k % 23) - 11) * 0.017f;
     }
     execution.allocate();
-    for (std::size_t i = 0; i < inputs.size(); ++i) upload(inputs[i], rhs_values[i], stats);
+    for (std::size_t i = 0; i < inputs.size(); ++i) upload(inputs[i], rhs_values[i], stats, &runtime);
     execution.compute();
     double maximum_error = 0;
     for (std::size_t i = 0; i < stored.size(); ++i) {
-        const auto actual = download(outputs[i], stats);
+        const auto actual = download(outputs[i], stats, &runtime);
         const auto width = stored[i]->ne[0], rows = stored[i]->ne[1];
         for (std::int64_t column = 0; column < 3; ++column) {
             for (std::int64_t row = 0; row < rows; ++row) {
@@ -152,6 +156,12 @@ void check_fixture_cpu(const std::string& path) {
         require(stored[i]->type == tensors[i].type, "mixed CPU execution replaced resident weight storage");
     }
     require(stats.cpu_nodes > 0 && stats.cuda_nodes == 0 && stats.metal_nodes == 0, "mixed arithmetic escaped CPU");
+    if (!cost_report.empty()) {
+        require(!std::filesystem::exists(cost_report), "cost fixture report must use a new file");
+        auto output = sam_example::output_file(cost_report);
+        observer->write(output);
+        output << '\n';
+    }
     std::cout << "mixed CPU tensors=" << tensors.size() << " maximum_absolute_error=" << maximum_error << '\n';
 }
 
@@ -215,12 +225,59 @@ void check_metadata(const std::filesystem::path& path) {
     write_fixture(path);
 }
 
+void check_tensor_policy(const std::filesystem::path& path) {
+    const std::string tensors = "ddec.layers.0.linear1.weight=f32,fenc.layers.0.linear1.weight=q5_k,"
+                                "text.resizer.weight=q4_k,vit.blocks.0.attn.qkv.weight=q6_k";
+    const std::string identity = "c290f907480a3b3cadc5304989e2d4463ba0e8ca1e414a18bcf63bcfca17f471";
+    const auto policy = parse_image_mixed_policy("q4_k", module_csv, identity, tensors);
+    require(policy.tensor_precisions.size() == 4, "native tensor policy lost an override");
+    require(image_mixed_quantized_tensor_type("vit.blocks.0.attn.qkv.weight", {256, 2}, policy) == GGML_TYPE_Q6_K &&
+            image_mixed_quantized_tensor_type("text.resizer.weight", {256, 2}, policy) == GGML_TYPE_Q4_K &&
+            image_mixed_quantized_tensor_type("fenc.layers.0.linear1.weight", {256, 2}, policy) == GGML_TYPE_Q5_K &&
+            image_mixed_quantized_tensor_type("ddec.layers.0.linear1.weight", {256, 2}, policy) == GGML_TYPE_F32,
+            "native tensor precedence differs from the Python contract");
+    const std::vector<std::string> invalid{
+        "vit.blocks.0.attn.qkv.weight=f16", "vit.blocks.0.attn.qkv.weight=q6_k,vit.blocks.0.attn.qkv.weight=f32",
+        "vit.blocks.01.attn.qkv.weight=f32", "vit.blocks.32.attn.qkv.weight=f32", "text.token_embed.weight=f32",
+        "vit.blocks.0.attn.qkv.weight=q6_k,text.resizer.weight=q4_k", "vit.blocks.*.attn.qkv.weight=f32"};
+    for (const auto& value : invalid) {
+        bool rejected = false;
+        try { (void)parse_image_mixed_policy("q4_k", module_csv, identity, value); }
+        catch (const std::runtime_error&) { rejected = true; }
+        require(rejected, "invalid exact tensor policy was accepted");
+    }
+    auto tensor_metadata = [&](gguf_context* file) {
+        gguf_set_val_u32(file, "sam.schema_version", 6);
+        gguf_set_val_str(file, "sam.storage_profile", "image-tensor-mixed-linear-v1");
+        gguf_set_val_str(file, "sam.quantization.tensor_precisions", tensors.c_str());
+        gguf_set_val_str(file, "sam.quantization.policy_sha256", identity.c_str());
+    };
+    write_fixture(path, tensor_metadata);
+    {
+        GgufReader reader(path.string());
+        require(read_image_mixed_policy(reader).tensor_precisions == policy.tensor_precisions,
+                "native schema-6 metadata readback differs");
+    }
+    for (const auto& change : std::vector<std::function<void(gguf_context*)>>{
+            [](auto* file) { gguf_set_val_u32(file, "sam.schema_version", 5); },
+            [](auto* file) { gguf_remove_key(file, "sam.quantization.tensor_precisions"); },
+            [](auto* file) { gguf_set_val_str(file, "sam.quantization.tensor_precisions", ""); },
+            [](auto* file) { gguf_set_val_str(file, "sam.quantization.policy_sha256", std::string(64, '0').c_str()); }}) {
+        write_fixture(path, [&](auto* file) { tensor_metadata(file); change(file); });
+        bool rejected = false;
+        try { GgufReader reader(path.string()); (void)read_image_mixed_policy(reader); }
+        catch (const std::runtime_error&) { rejected = true; }
+        require(rejected, "altered schema-6 metadata passed preallocation validation");
+    }
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 3 && std::string(argv[1]) == "--fixture") {
-            check_fixture_cpu(argv[2]);
+        if ((argc == 3 || argc == 5) && std::string(argv[1]) == "--fixture") {
+            require(argc == 3 || std::string(argv[3]) == "--cost-report", "expected --cost-report NEW_FILE");
+            check_fixture_cpu(argv[2], argc == 5 ? argv[4] : "");
             return 0;
         }
         require(argc == 1, "usage: test_mixed_quantization [--fixture tiny-converted.gguf]");
@@ -228,6 +285,7 @@ int main(int argc, char** argv) {
         const auto path = directory.path / "mixed.gguf";
         check_metadata(path);
         check_fixture_cpu(path.string());
+        check_tensor_policy(path);
         std::cout << "mixed weight metadata and CPU checks passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -57,7 +57,7 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         std::int32_t required_type = 0;
         if (file.mixed_quantized) {
             required_type = static_cast<std::int32_t>(image_mixed_quantized_tensor_type(
-                required.first, found->second->dimensions, {file.base_precision, file.policy_sha256, file.module_precisions}));
+                required.first, found->second->dimensions, {file.base_precision, file.policy_sha256, file.module_precisions, file.tensor_precisions}));
         } else if (file.modular_quantized) {
             required_type = static_cast<std::int32_t>(image_modular_quantized_tensor_type(
                 required.first, found->second->dimensions,
@@ -143,6 +143,7 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
     state->model_info.base_precision = std::move(file.base_precision);
     state->model_info.module_precisions = std::move(file.module_precisions);
     state->model_info.policy_sha256 = std::move(file.policy_sha256);
+    state->model_info.tensor_precisions = std::move(file.tensor_precisions);
     return state;
 }
 

@@ -6,9 +6,10 @@ M1–M3 implemented and CPU fixture validation completed on 2026-10-10; see the
 [implementation/results](20261010-161049-module-mixed-weight-implementation.md).
 The [unified configuration](../quantization-config.md) now supports schema-2
 module-format policies in addition to schema-1 single-format allocations.
-Complete-model mixed quality/performance, M4 device evidence and M5 exact-tensor
-overrides/mixed F16 remain pending. Reference agreement and performance remain
-independent advisory reports.
+Exact tensor overrides (the first part of M5), conversion previews and CPU cost
+diagnostics continue under the [next implementation/results plan](20261010-165611-quantization-preview-tensor-policy-costs.md).
+Complete-model mixed quality/performance, M4 device evidence and mixed F16 remain
+pending. Reference agreement and performance remain independent advisory reports.
 
 Initial scope: module-level F32/Q8_0/Q6_K/Q5_K/Q4_K selections. F16 inside a
 quantized mixed model and exact per-tensor overrides follow separately, after

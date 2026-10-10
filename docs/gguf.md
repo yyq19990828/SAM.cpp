@@ -5,7 +5,8 @@ with 32-byte alignment. GGUF defines the container; the fields below define
 this project's SAM 3 model contract. Schema 1 covers image F32 and mixed-F16
 weights, schema 2 covers video weights and explicit state/transport metadata,
 schema 3 identifies the legacy versioned quantized image profiles, schema
-4 adds explicit component selection, and schema 5 assigns weight formats per module. Container support
+4 adds explicit component selection, schema 5 assigns weight formats per module,
+and schema 6 adds exact tensor overrides. Container support
 does not itself imply that a model, task or backend is supported. See the
 [Model Zoo](../MODEL_ZOO.md) and [quantization guide](quantization.md) for
 current usage scope. Other model families need their own metadata and tensor
@@ -21,10 +22,10 @@ reader limits, but does not change model behavior.
 | --- | --- | --- |
 | `general.architecture` | STRING | `sam3` |
 | `general.name` | STRING | Optional human-readable name |
-| `general.file_type` | UINT32 | Schema 1/2: `0` for F32 or `1` for mixed F16. Schema 3/4: profile-specific values below. Schema 5: declared base Q format. |
+| `general.file_type` | UINT32 | Schema 1/2: `0` for F32 or `1` for mixed F16. Schema 3/4: profile-specific values below. Schema 5/6: declared base Q format. |
 | `general.alignment` | UINT32 | `32` when present |
-| `sam.schema_version` | UINT32 | `1` for image F32/F16, `2` for video, `3` for legacy quantized image, `4` for modular quantized image, `5` for module mixed weights |
-| `sam.task` | STRING | `text_image` for schema 1/3/4/5; `text_video` for schema 2 |
+| `sam.schema_version` | UINT32 | `1` for image F32/F16, `2` for video, `3` for legacy quantized image, `4` for modular quantized image, `5` for module mixed weights, `6` for exact tensor overrides |
+| `sam.task` | STRING | `text_image` for schema 1/3/4/5/6; `text_video` for schema 2 |
 | `sam.source.checkpoint_sha256` | STRING | 64 lowercase hexadecimal characters identifying the actual input checkpoint |
 | `sam.source.code_revision` | STRING | `2345a4ad109ac29c569da749c91d84f10dc08c40` |
 | `sam.tokenizer.sha256` | STRING | `924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a` |
@@ -245,7 +246,7 @@ even if overrides replace every module's base choice. It does not summarize the
 actual storage distribution. The module mapping, actual tensor types and
 schema-4 eligibility/protection rules determine storage. The vision K-row 4736
 exception remains Q8_0. F32 module choices, protected parameters and ineligible
-rows remain F32. Per-module F16 and per-tensor overrides are not supported.
+rows remain F32. Schema 5 accepts neither mixed F16 nor per-tensor overrides.
 All-F32 allocations are valid; runtime quantized arithmetic flags follow actual
 stored types rather than the base file-type value.
 
@@ -263,6 +264,50 @@ older schema-1–4 loaders reject schema 5.
 Small CPU conversion and mixed arithmetic fixtures validate the format path.
 No complete-model quality/performance or mixed CUDA/Metal qualification follows
 from these checks. See the [configuration guide](quantization-config.md) for usage.
+
+## Exact tensor mixed image weights (schema 6)
+
+Schema 6 uses `sam.storage_profile=image-tensor-mixed-linear-v1`, the same image
+inventory and arithmetic policies, and the base/module fields above. It also
+requires STRING `sam.quantization.tensor_precisions`: 1–348 sorted exact
+`name=format` entries separated by commas, without spaces or duplicates, at most
+65,536 bytes. Names are canonical ASCII tensor names, at most 127 bytes. Formats
+are F32/Q8_0/Q6_K/Q5_K/Q4_K in lowercase. Empty or unmatched entries, patterns,
+protected tensors, mixed F16 and invalid names/formats fail before allocation.
+
+Resolve exact tensor > module > base, then apply the unchanged protection and
+row-layout rules. Only the existing eligible linear matrices can be overridden;
+a K request on vision MLP width 4736 still resolves to Q8_0. A Q override can
+enable a matrix in an otherwise F32 module. Schema 6 does not carry
+`sam.quantization.modules`. The sidecar/runtime `quantization_modules` array
+contains modules selected by a non-F32 module choice or a non-F32 tensor override;
+the actual tensor inventory determines whether any quantized storage remains.
+
+`sam.quantization.policy_sha256` hashes ASCII with LF line endings and a final LF:
+the first line is `sam3:image-tensor-mixed-linear-v1`, followed by `base=...`,
+all four `module=format` lines in canonical module order, then
+`tensor:<canonical-name>=<format>` lines in ascending name order. For example:
+
+```text
+sam3:image-tensor-mixed-linear-v1
+base=q4_k
+vision=q4_k
+text=q8_0
+fusion=q6_k
+decoder=f32
+tensor:ddec.layers.0.linear1.weight=q5_k
+tensor:text.resizer.weight=f32
+tensor:vit.blocks.0.attn.qkv.weight=q6_k
+```
+
+Configuration schema 3 resolves this policy. Manifest, `ModelInfo` and native
+image JSON expose `tensor_precisions` alongside the base, module map and policy
+hash. Conversion previews and real conversions share the same allocation;
+real conversion checks resolved types/bytes and exact GGUF size before publishing.
+Schemas 1–5 reject the reserved tensor field and keep their prior interpretation;
+older loaders reject schema 6. Reconversion from original F32 is required to
+change the allocation. CPU fixture checks establish format and small arithmetic
+correctness; whole-model quality/performance and CUDA/Metal execution are unmeasured.
 
 ## Full video profile (schema 2)
 

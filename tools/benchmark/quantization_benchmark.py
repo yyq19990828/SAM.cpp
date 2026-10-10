@@ -357,12 +357,22 @@ def main(argv=None):
     inspect.add_argument("--compute", choices=("f32", "f16"))
     inspect.add_argument("--cache", choices=("f32", "f16", "mixed-q8_0"))
     inspect.add_argument("--activation", help="only backend-selected is implemented")
+    costs = commands.add_parser("execution-cost", help="one CPU inference with serialized node diagnostics; not a speed benchmark")
+    for name in ("model", "image", "binary", "output"):
+        costs.add_argument("--" + name, type=Path, required=True)
+    costs.add_argument("--text", required=True)
+    costs.add_argument("--quantization-config", type=Path)
+    costs.add_argument("--timeout", type=float, default=1800)
     args = parser.parse_args(argv)
     try:
         if args.command in ("export", "inspect-precision"):
             resolve_runtime_arguments(args)
         elif args.command == "performance":
             resolve_performance_arguments(args)
+        elif args.command == "execution-cost":
+            if args.quantization_config is None:
+                args.backend = "cpu"
+            resolve_runtime_arguments(args)
         if args.command == "export":
             required = ("checkpoint", "sam3_source", "sam3_runtime_source", "bpe") if args.engine == "original" else ("binary", "model")
             if any(getattr(args, name) is None for name in required):
@@ -375,6 +385,9 @@ def main(argv=None):
         elif args.command == "inspect-precision":
             from tools.benchmark.precision_reporting import inspect as describe
             describe(args)
+        elif args.command == "execution-cost":
+            from tools.benchmark.execution_cost import run as cost_run
+            cost_run(args)
         else:
             from tools.benchmark.quantization_performance import run as time_run, summarize as time_summary
             (time_run if args.command == "performance" else time_summary)(args)

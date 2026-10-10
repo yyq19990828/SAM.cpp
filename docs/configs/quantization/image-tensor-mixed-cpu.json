@@ -1,0 +1,19 @@
+{
+  "schema_version": 3,
+  "kind": "sam-quantization-config",
+  "task": "image",
+  "backend": "cpu",
+  "weights": {
+    "precision": "mixed",
+    "base_precision": "q4_k",
+    "module_precisions": {"text": "q8_0", "fusion": "q6_k", "decoder": "f32"},
+    "tensor_precisions": {
+      "vit.blocks.0.attn.qkv.weight": "q6_k",
+      "text.resizer.weight": "f32",
+      "ddec.layers.0.linear1.weight": "q5_k"
+    }
+  },
+  "activation": {"mode": "backend-selected"},
+  "compute": {"mode": "f32"},
+  "cache": {"mode": "f32"}
+}

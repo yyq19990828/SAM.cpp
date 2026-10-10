@@ -81,7 +81,7 @@ not accept module-format overrides.
 
 Convert directly from the original F32 checkpoint. Reduced checkpoints and
 requantization of an existing GGUF are not supported sources. A native encoder is
-required if any module requests Q6_K/Q5_K/Q4_K; Q8_0/F32-only module policies do
+required if any resolved tensor uses Q6_K/Q5_K/Q4_K; Q8_0/F32-only allocations do
 not need it:
 
 ```sh
@@ -105,11 +105,59 @@ mixed arithmetic fixtures are validated. Complete-model quality/performance and
 mixed-policy CUDA/Metal execution have not been measured. Existing fixed-preset
 hardware results do not qualify a new mixed policy.
 
+## Exact tensor overrides and conversion preview
+
+The [tensor mixed CPU example](configs/quantization/image-tensor-mixed-cpu.json)
+uses configuration schema 3. Add a nonempty `weights.tensor_precisions` object
+to a mixed policy, using exact canonical names:
+
+```json
+{
+  "tensor_precisions": {
+    "vit.blocks.0.attn.qkv.weight": "q6_k",
+    "text.resizer.weight": "f32",
+    "ddec.layers.0.linear1.weight": "q5_k"
+  }
+}
+```
+
+Precedence is tensor > module > base. A Q override may select a matrix in an
+F32 module. Every entry must name an eligible canonical linear matrix; protected
+parameters, unknown names, empty maps, duplicate keys, regex/wildcards and mixed
+F16 fail. Formats are F32/Q8_0/Q6_K/Q5_K/Q4_K. Protections and the vision 4736
+K-to-Q8 fallback still apply. Schema 1/2 meanings are unchanged; this policy uses
+SAM GGUF schema 6 and `image-tensor-mixed-linear-v1`, with its own versioned hash.
+See the [format contract](gguf.md#exact-tensor-mixed-image-weights-schema-6).
+
+Preview before allocating conversion storage:
+
+```sh
+.venv-reference/bin/python tools/convert/convert_sam3.py --dry-run \
+  --quantization-config docs/configs/quantization/image-tensor-mixed-cpu.json \
+  --output build/tensor-preview.json
+```
+
+No checkpoint, native encoder or backend is required. The new JSON lists every
+tensor's requested/resolved format, selector, protection/fallback reason, elements
+and packed bytes, plus per-module/type totals and disk bounds. Without a tokenizer
+it bounds metadata at the reader's 16 MiB limit; with `--bpe FILE` it serializes
+pinned metadata in memory to calculate the exact valid GGUF size. Manifest and
+filesystem overhead are not estimated. Native encoder scratch is one row-matrix
+F32 input plus packed output; publication uses hard links without a second model
+copy. Runtime F32 cast payload is a static inventory, not peak RSS/workspace.
+
+Optional `--checkpoint FILE` checks names, shapes and source dtypes with PyTorch
+mmap; it does not scan values, hash the checkpoint or claim numerical validity.
+Non-mmap-compatible checkpoints fail without falling back to a full RAM load.
+Real conversion still checks values and provenance. Remove `--dry-run`, provide
+checkpoint/BPE and any required native encoder, and use a new `.gguf` output for
+conversion. Each K matrix is encoded once after its layout is planned.
+
 ## Supported combinations
 
 | Choice | CPU | Metal | CUDA |
 | --- | --- | --- | --- |
-| Image weights | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K; module mixed policy | Same stored formats; mixed hardware unverified | Same stored formats; mixed hardware unverified |
+| Image weights | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K; module/exact tensor mixed policy | Same stored formats; mixed hardware unverified | Same stored formats; mixed hardware unverified |
 | Independent activation mode | `backend-selected` only | `backend-selected` only | `backend-selected` only |
 | Compute policy | `f32` | `f32` | `f32` / `f16` |
 | Image-feature cache | `f32` | `f32` | `f32` / `f16` / `mixed-q8_0` in private image probes |
@@ -133,7 +181,7 @@ The following requests fail instead of falling back silently:
 
 | Request | Current result |
 | --- | --- |
-| Different Q formats per individual layer/tensor, or F16 inside a mixed policy | Not implemented; schema 2 supports F32/Q8/Q6/Q5/Q4 per module |
+| Regex/wildcard tensor rules, protected tensor overrides or mixed F16 | Unavailable; schema 3 accepts exact eligible tensor names with F32/Q8/Q6/Q5/Q4 |
 | Explicit INT8/FP8/F16 activation mode | Not implemented; studies/probes do not enable a native mode |
 | CPU/Metal F16 compute or reduced image cache | Unsupported by this configuration |
 | Reduced cache through the public C++ API | Unavailable; private native image probes only |

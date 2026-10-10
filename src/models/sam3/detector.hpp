@@ -30,6 +30,7 @@ SOFTWARE.
 #include "architecture.hpp"
 #include "ops.hpp"
 #include "sam/types.hpp"
+#include "runtime/ggml/transfer.hpp"
 #include "ggml.h"
 #include "ggml-backend.h"
 #include <cmath>
@@ -742,14 +743,16 @@ inline sam3_ddec_output sam3_build_ddec_graph(
     return out;
 }
 
-inline void initialize_detector_zero_inputs(ggml_context* context, RuntimeStats& stats) {
+inline void initialize_detector_zero_inputs(ggml_context* context, RuntimeStats& stats, GgmlRuntime* runtime = nullptr) {
     // Each decoder layer creates its own inputs with repeated names. Initialize
     // every tensor rather than only one ggml_get_tensor() match.
     for (auto* tensor = ggml_get_first_tensor(context); tensor; tensor = ggml_get_next_tensor(context, tensor)) {
         const std::string name = ggml_get_name(tensor);
         if ((name == "ddec_query_pos_pres" || name == "rpb_pres_zeros") && tensor->buffer) {
             std::vector<float> zeros(static_cast<std::size_t>(ggml_nelements(tensor)), 0.0f);
-            ggml_backend_tensor_set(tensor, zeros.data(), 0, zeros.size() * sizeof(float));
+            observe_transfer(runtime, tensor, "upload", zeros.size() * sizeof(float), [&] {
+                ggml_backend_tensor_set(tensor, zeros.data(), 0, zeros.size() * sizeof(float));
+            });
             stats.host_upload_bytes += zeros.size() * sizeof(float);
         }
     }

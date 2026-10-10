@@ -9,7 +9,7 @@ from tools.quantize.quantization_config import (CACHES, WEIGHTS, resolve_model_c
 
 
 def mixed_weight_fields(value):
-    return {key: value[key] for key in ("base_precision", "module_precisions", "policy_sha256") if key in value}
+    return {key: value[key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in value}
 
 
 def native_weight_policy_matches(value, recipe):
@@ -21,7 +21,7 @@ def has_quantized_weights(recipe):
         inventory = recipe.get("weight_inventory", {})
         if inventory.get("tensor_count", 0):
             return any(name.startswith("q") for name in inventory["types"])
-        return any(value != "f32" for value in recipe["module_precisions"].values())
+        return any(value != "f32" for value in (*recipe["module_precisions"].values(), *recipe.get("tensor_precisions", {}).values()))
     return recipe["weight_precision"] in WEIGHTS[2:]
 
 

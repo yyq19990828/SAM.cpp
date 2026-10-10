@@ -17,6 +17,10 @@ if(SAM_BUILD_TOOLS)
     target_link_libraries(sam_precision_benchmark_probe PRIVATE sam_private sam_image_io)
     set_target_properties(sam_precision_benchmark_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/examples)
 
+    add_executable(sam_execution_cost_probe benchmark/execution_cost_probe.cpp)
+    target_link_libraries(sam_execution_cost_probe PRIVATE sam_private sam_image_io)
+    set_target_properties(sam_execution_cost_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/examples)
+
     add_executable(sam_quantize_rows quantize/quantize_rows.cpp)
     target_compile_features(sam_quantize_rows PRIVATE cxx_std_17)
     target_compile_definitions(sam_quantize_rows PRIVATE

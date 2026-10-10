@@ -70,8 +70,8 @@ GGUF schema 5 保存此策略，加载器独立检查每个张量的类型和布
 配置 schema 1 维持原有单格式语义，不能填写模块格式覆盖。
 
 转换必须直接读取原始 F32 checkpoint，不支持已降精度 checkpoint 或对已有 GGUF
-再次量化。任何模块请求 Q6_K/Q5_K/Q4_K 时都需要原生行量化工具；只有 Q8_0/F32 的
-模块策略不需要：
+再次量化。最终有张量使用 Q6_K/Q5_K/Q4_K 时需要原生行量化工具；只有 Q8_0/F32 的
+分配不需要：
 
 ```sh
 python3 tools/quantize/quantization_config.py validate \
@@ -92,11 +92,52 @@ manifest 逐张量记录请求／实际 dtype、模块选择器、保护或回�
 CPU 转换、格式校验和小型混合矩阵运算，尚未测量完整模型质量／性能，以及混合策略的
 CUDA/Metal 执行。已有固定预设的硬件结果不能替代新混合策略的测量。
 
+## 逐张量覆盖与转换预览
+
+[逐张量 CPU 示例](configs/quantization/image-tensor-mixed-cpu.json)使用配置 schema 3。
+在混合策略中增加非空 `weights.tensor_precisions`，填写规范精确名称：
+
+```json
+{
+  "tensor_precisions": {
+    "vit.blocks.0.attn.qkv.weight": "q6_k",
+    "text.resizer.weight": "f32",
+    "ddec.layers.0.linear1.weight": "q5_k"
+  }
+}
+```
+
+优先级为 tensor > module > base；Q 覆盖可以启用原本为 F32 的模块中的单个矩阵。
+每条规则必须命中合资格的规范线性矩阵。保护张量、未知名称、空映射、重复键、正则／
+通配符及混合 F16 均报错。可选 F32/Q8_0/Q6_K/Q5_K/Q4_K，保护规则和 vision 行宽
+4736 的 K→Q8 回退继续适用。配置 schema 1/2 含义不变；新策略使用 SAM GGUF
+schema 6、`image-tensor-mixed-linear-v1` 及独立版本化哈希，见[格式合同](gguf.md#exact-tensor-mixed-image-weights-schema-6)。
+
+转换前先检查分配和磁盘预算：
+
+```sh
+.venv-reference/bin/python tools/convert/convert_sam3.py --dry-run \
+  --quantization-config docs/configs/quantization/image-tensor-mixed-cpu.json \
+  --output build/tensor-preview.json
+```
+
+无需 checkpoint、原生量化器或 backend。新 JSON 列出每个张量的请求／实际类型、
+选择器、保护／回退原因、元素和 packed 字节，以及模块／类型汇总和磁盘上下界。
+无 tokenizer 时以读取器的 16 MiB metadata 限制给出上界；提供 `--bpe FILE` 后在内存
+序列化固定 metadata，计算合法 GGUF 的精确大小。manifest 和文件系统开销未估算。
+原生编码暂存按单个矩阵的 F32 输入加 packed 输出计算；模型通过硬链接发布，不复制
+第二份模型。运行时 F32 cast 载荷是静态清单，不是峰值 RSS 或 workspace。
+
+可选 `--checkpoint FILE` 使用 PyTorch mmap 检查名称、形状和源 dtype，不扫描数值、
+不计算 checkpoint 哈希，也不证明数值有效。非 mmap 兼容文件会报错，不回退到整份
+权重加载。真正转换仍检查数值和来源。去掉 `--dry-run`，提供 checkpoint/BPE、所需
+原生编码器并改用新的 `.gguf` 输出即可转换；K 矩阵在布局确定后只编码一次。
+
 ## 可用组合
 
 | 选择 | CPU | Metal | CUDA |
 | --- | --- | --- | --- |
-| 图像权重 | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K；模块混合策略 | 相同存储格式；混合策略硬件未验证 | 相同存储格式；混合策略硬件未验证 |
+| 图像权重 | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K；模块／精确张量混合策略 | 相同存储格式；混合策略硬件未验证 | 相同存储格式；混合策略硬件未验证 |
 | 独立激活模式 | 仅 `backend-selected` | 仅 `backend-selected` | 仅 `backend-selected` |
 | 计算策略 | `f32` | `f32` | `f32` / `f16` |
 | 图像特征缓存 | `f32` | `f32` | 私有图像 probe 可用 `f32` / `f16` / `mixed-q8_0` |
@@ -116,7 +157,7 @@ GGUF 改变计算／缓存策略；改变权重精度或模块范围需要从原
 
 | 请求 | 当前结果 |
 | --- | --- |
-| 单独指定每层／张量的 Q 格式，或在混合策略中使用 F16 | 尚未实现；schema 2 支持按模块选择 F32/Q8/Q6/Q5/Q4 |
+| 正则／通配符规则、覆盖保护张量或混合 F16 | 不支持；schema 3 支持按精确合资格张量名选择 F32/Q8/Q6/Q5/Q4 |
 | 指定 INT8/FP8/F16 激活模式 | 尚未实现；研究工具不等于原生运行模式 |
 | CPU/Metal F16 计算或低精度图像缓存 | 此配置不支持 |
 | 公共 C++ API 使用低精度缓存 | 未开放，仅限私有原生图像 probe |

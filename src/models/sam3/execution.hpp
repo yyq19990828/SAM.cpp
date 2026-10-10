@@ -87,11 +87,11 @@ struct ModelDefinition {
                 for (int i = 0; i < 3; ++i) execution.output(tracker_neck[i]);
             }
             execution.allocate();
-            upload(input, features.preprocessed, stats);
+            upload(input, features.preprocessed, stats, &runtime);
             execution.compute();
-            for (int i = 0; i < 3; ++i) features.vision[i] = HostTensor::download(cached_neck[i], stats);
+            for (int i = 0; i < 3; ++i) features.vision[i] = HostTensor::download(cached_neck[i], stats, &runtime);
             if (video) for (int i = 0; i < 3; ++i) {
-                features.tracker[i] = download(tracker_neck[i], stats);
+                features.tracker[i] = download(tracker_neck[i], stats, &runtime);
                 round_bf16_storage(features.tracker[i]);
             }
         }
@@ -105,10 +105,10 @@ struct ModelDefinition {
             auto output = sam3_build_geom_enc_graph(ctx, weights, image.values, position);
             execution.output(output.geo_feats);
             execution.allocate();
-            features.vision[2].upload_to(image.stored, stats);
-            upload(position, features.position, stats);
+            features.vision[2].upload_to(image.stored, stats, &runtime);
+            upload(position, features.position, stats, &runtime);
             execution.compute();
-            features.geometry = download(output.geo_feats, stats);
+            features.geometry = download(output.geo_feats, stats, &runtime);
         }
         ++stats.vision_encodes;
         stats.image_ms = elapsed_ms(start);
@@ -126,16 +126,20 @@ struct ModelDefinition {
         auto* output = sam3_build_text_encoder_graph(ctx, input, weights);
         execution.output(output);
         execution.allocate();
-        ggml_backend_tensor_set(input, ids.data(), 0, ids.size() * sizeof(std::int32_t));
+        observe_transfer(&runtime, input, "upload", ids.size() * sizeof(std::int32_t), [&] {
+            ggml_backend_tensor_set(input, ids.data(), 0, ids.size() * sizeof(std::int32_t));
+        });
         stats.host_upload_bytes += ids.size() * sizeof(std::int32_t);
         std::vector<ggml_fp16_t> causal(static_cast<std::size_t>(length) * length);
         sam3_fill_causal_mask(causal.data(), length);
         auto* mask = ggml_get_tensor(ctx, "causal_mask");
         if (!mask || !mask->buffer) throw std::runtime_error("SAM text causal mask is unallocated");
-        ggml_backend_tensor_set(mask, causal.data(), 0, causal.size() * sizeof(ggml_fp16_t));
+        observe_transfer(&runtime, mask, "upload", causal.size() * sizeof(ggml_fp16_t), [&] {
+            ggml_backend_tensor_set(mask, causal.data(), 0, causal.size() * sizeof(ggml_fp16_t));
+        });
         stats.host_upload_bytes += causal.size() * sizeof(ggml_fp16_t);
         execution.compute();
-        auto values = download(output, stats);
+        auto values = download(output, stats, &runtime);
         ++stats.text_encodes;
         stats.text_ms = elapsed_ms(start);
         return values;
@@ -176,12 +180,12 @@ struct ModelDefinition {
         auto* output = sam3_build_fenc_graph(ctx, weights, input.values, tokens, position, bias);
         execution.output(output);
         execution.allocate();
-        image.vision[2].upload_to(input.stored, stats);
-        upload(position, image.position, stats);
-        upload(tokens, prompt.tokens, stats);
-        upload(bias, prompt.attention_bias, stats);
+        image.vision[2].upload_to(input.stored, stats, &runtime);
+        upload(position, image.position, stats, &runtime);
+        upload(tokens, prompt.tokens, stats, &runtime);
+        upload(bias, prompt.attention_bias, stats, &runtime);
         execution.compute();
-        return download(output, stats);
+        return download(output, stats, &runtime);
     }
 
     DetectorOutput detect(GgmlRuntime& runtime, const ImageFeatures& image,
@@ -205,23 +209,23 @@ struct ModelDefinition {
         execution.output(output.presence_score);
         execution.output(output.queries);
         execution.allocate();
-        upload(encoded, fusion, stats);
-        upload(position, image.position, stats);
-        upload(tokens, prompt.tokens, stats);
+        upload(encoded, fusion, stats, &runtime);
+        upload(position, image.position, stats, &runtime);
+        upload(tokens, prompt.tokens, stats, &runtime);
         std::vector<float> sine_values(64), coordinates(h);
         for (int i = 0; i < 64; ++i)
             sine_values[i] = 2.0f * 3.14159265358979323846f / std::pow(10000.0f, 2.0f * i / 128.0f);
         for (int i = 0; i < h; ++i) coordinates[i] = static_cast<float>(i) / h;
-        upload(sine, sine_values, stats);
-        upload(rpb, coordinates, stats);
-        upload(bias, prompt.attention_bias, stats);
-        upload(valid, prompt.validity, stats);
-        initialize_detector_zero_inputs(ctx, stats);
+        upload(sine, sine_values, stats, &runtime);
+        upload(rpb, coordinates, stats, &runtime);
+        upload(bias, prompt.attention_bias, stats, &runtime);
+        upload(valid, prompt.validity, stats, &runtime);
+        initialize_detector_zero_inputs(ctx, stats, &runtime);
         execution.compute();
-        detection.class_logits = download(output.class_scores, stats);
-        detection.boxes = download(output.pred_boxes, stats);
-        detection.presence_logit = download(output.presence_score, stats).front();
-        detection.query_features = download(output.queries, stats);
+        detection.class_logits = download(output.class_scores, stats, &runtime);
+        detection.boxes = download(output.pred_boxes, stats, &runtime);
+        detection.presence_logit = download(output.presence_score, stats, &runtime).front();
+        detection.query_features = download(output.queries, stats, &runtime);
         return detection;
     }
 
@@ -249,17 +253,17 @@ struct ModelDefinition {
                                                   runtime.convolution_columns_type());
         execution.output(output);
         execution.allocate();
-        upload(encoded, fusion, stats);
+        upload(encoded, fusion, stats, &runtime);
         // Lowest-resolution FPN is replaced by fusion output inside the mask
         // head and has no allocation; only upload inputs that are used.
         for (int i = 0; i < 3; ++i) if (cached_neck[i].stored->buffer)
-            image.vision[i].upload_to(cached_neck[i].stored, stats);
+            image.vision[i].upload_to(cached_neck[i].stored, stats, &runtime);
         std::vector<float> object_features(detection.query_features.begin() + d, detection.query_features.end());
-        upload(objects, object_features, stats);
-        upload(tokens, prompt.tokens, stats);
-        upload(bias, prompt.attention_bias, stats);
+        upload(objects, object_features, stats, &runtime);
+        upload(tokens, prompt.tokens, stats, &runtime);
+        upload(bias, prompt.attention_bias, stats, &runtime);
         execution.compute();
-        return download(output, stats);
+        return download(output, stats, &runtime);
     }
 
     // Shared builders keep fusion and detector intermediates on the device.
@@ -299,28 +303,28 @@ struct ModelDefinition {
         execution.output(detection.presence_score);
         execution.output(masks);
         execution.allocate();
-        image.vision[2].upload_to(input.stored, stats);
-        upload(position, image.position, stats);
-        upload(tokens, prompt.tokens, stats);
-        upload(bias, prompt.attention_bias, stats);
-        upload(valid, prompt.validity, stats);
+        image.vision[2].upload_to(input.stored, stats, &runtime);
+        upload(position, image.position, stats, &runtime);
+        upload(tokens, prompt.tokens, stats, &runtime);
+        upload(bias, prompt.attention_bias, stats, &runtime);
+        upload(valid, prompt.validity, stats, &runtime);
         for (int i = 0; i < 3; ++i) if (cached_neck[i].stored->buffer)
-            image.vision[i].upload_to(cached_neck[i].stored, stats);
+            image.vision[i].upload_to(cached_neck[i].stored, stats, &runtime);
         std::vector<float> sine_values(64), coordinates(h);
         for (int i = 0; i < 64; ++i)
             sine_values[i] = 2.0f * 3.14159265358979323846f / std::pow(10000.0f, 2.0f * i / 128.0f);
         for (int i = 0; i < h; ++i) coordinates[i] = static_cast<float>(i) / h;
-        upload(sine, sine_values, stats);
-        upload(rpb, coordinates, stats);
-        initialize_detector_zero_inputs(ctx, stats);
+        upload(sine, sine_values, stats, &runtime);
+        upload(rpb, coordinates, stats, &runtime);
+        initialize_detector_zero_inputs(ctx, stats, &runtime);
         execution.compute();
         Prediction prediction;
         prediction.text = std::move(prompt.text);
-        prediction.fusion = download(fusion, stats);
-        prediction.boxes = download(detection.pred_boxes, stats);
-        prediction.class_logits = download(detection.class_scores, stats);
-        prediction.presence_logit = download(detection.presence_score, stats).front();
-        prediction.mask_logits = download(masks, stats);
+        prediction.fusion = download(fusion, stats, &runtime);
+        prediction.boxes = download(detection.pred_boxes, stats, &runtime);
+        prediction.class_logits = download(detection.class_scores, stats, &runtime);
+        prediction.presence_logit = download(detection.presence_score, stats, &runtime).front();
+        prediction.mask_logits = download(masks, stats, &runtime);
         ++stats.inferences;
         stats.inference_ms = elapsed_ms(start);
         return prediction;

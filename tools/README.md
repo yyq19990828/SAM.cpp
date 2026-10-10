@@ -53,14 +53,25 @@ v2/v3 exports can be compared without changing their original receipts.
 See the [application benchmark guide](../docs/quantization-benchmark.md) for
 commands, precision boundaries and interpretation. `performance` runs paired latency/memory processes independently;
 `summarize-performance` reads existing raw records offline, and `inspect-precision`
-checks stored tensors without inference. Native activation and arbitrary per-layer
-mixed-format settings are not implemented.
+checks stored tensors without inference. `execution-cost` runs one CPU image
+with serialized node observation and writes an independent diagnostic report;
+those timings are not performance benchmark samples. Native activation modes,
+regex/wildcard tensor policies and mixed F16 are not implemented.
 
 Module-level mixed F32/Q8_0/Q6_K/Q5_K/Q4_K weights use configuration schema 2 and
 SAM GGUF schema 5. See the [mixed CPU example](../docs/configs/quantization/image-mixed-cpu.json)
 and [configuration guide](../docs/quantization-config.md#module-mixed-weights).
 Small CPU conversion/arithmetic fixtures validate this path; complete-model
 quality/performance and mixed CUDA/Metal qualification remain unmeasured.
+
+Exact eligible tensor overrides use config schema 3 and SAM GGUF schema 6;
+see the [tensor CPU example](../docs/configs/quantization/image-tensor-mixed-cpu.json).
+`convert/convert_sam3.py --dry-run` shares allocation with real conversion and
+produces a new JSON preview without encoding payloads or initializing a backend.
+Checkpoint metadata preflight and exact tokenizer sizing are optional. Native
+K matrices are encoded once during real conversion. CPU diagnostic costs use
+`sam_execution_cost_probe` and the independent `execution-cost` command; kernel
+packing/arithmetic stay `NOT_COLLECTED`.
 
 `quantize/quantization_config.py capabilities` lists supported four-axis choices;
 `validate --config CONFIG.json` resolves them without model dependencies or GPU
