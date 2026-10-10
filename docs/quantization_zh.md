@@ -15,7 +15,7 @@
 
 | 维度 | 当前实现 | 配置边界 |
 | --- | --- | --- |
-| 权重存储 | F32/F16 以及 Q8_0/Q6_K/Q5_K/Q4_K 图像线性权重 | 一次转换一种目标量化格式，支持模块选择及固定浮点／Q8 例外；尚无任意逐层混合格式配方 |
+| 权重存储 | F32/F16 及 Q8_0/Q6_K/Q5_K/Q4_K 图像线性权重；模块混合 F32/Q 格式 | 模块格式覆盖使用配置 schema 2／GGUF schema 5；保留 F32/Q8 保护例外；未开放逐张量覆盖与混合 F16 |
 | 激活 | 图缓冲主要为 F32，后端 kernel 可能内部转换或量化操作数 | W8A8/FP8 工具仍是研究／probe，不是可部署的完整模型配置 |
 | 算术 | CUDA F32/F16 策略；量化 kernel 根据类型、形状和后端分派 | 策略名称不保证整图统一的操作数／累加类型；F16 提示面向支持的浮点操作 |
 | 特征缓存 | F32 及实验 F16/mixed-Q8_0 图像缓存 | CUDA probe 可选；混合 Q8 保留 F32 低分辨率检测特征，公共加载保持现有缓存选项 |
@@ -127,6 +127,11 @@ cmake --build build/quant-cpu --target sam_quantize_rows --parallel
 ```
 
 模块名区分大小写，重复或未知模块会报错；命令行可以调整模块顺序，文件中会保存为规范顺序。旁置 manifest 列出每个张量所属模块、实际存储类型和量化或保留浮点的原因。加载后的 schema 4 模型通过 `ModelInfo::quantization_modules` 报告选择。
+
+需要为不同模块选择不同格式时，使用[配置 schema 2 的混合策略](quantization-config_zh.md#模块级混合权重)
+与 [CPU 示例](configs/quantization/image-mixed-cpu.json)。转换从原始 F32 checkpoint 生成
+`image-mixed-linear-v1`（SAM GGUF schema 5）。CPU 转换与小型矩阵运算已验证；完整模型
+质量／性能以及混合策略 CUDA/Metal 执行尚未测量。
 
 自定义组合可用 `tools/validation/validate_image.py --allow-custom-quantization` 做单独的参考对照，报告会保持诊断标识。对照方法见[模型验证](validation_zh.md)。
 

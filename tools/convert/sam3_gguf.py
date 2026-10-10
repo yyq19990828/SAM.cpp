@@ -1,4 +1,4 @@
-"""SAM 3 image schema 1 and experimental video schema 2 on the pinned GGUF tools."""
+"""SAM 3 image schemas 1/3/4/5 and video schema 2 on the pinned GGUF tools."""
 
 import hashlib
 import math
@@ -14,7 +14,8 @@ from tools.quantize.weight_policy import (
     QUANTIZATION_MODULES, MAX_QUANTIZATION_MODULE_CSV_LENGTH,
     FULL_MODULE_PROFILE_PREFIX, CUSTOM_MODULE_PROFILE_PREFIX, MODULE_TENSOR_PREFIXES,
     QUANTIZATION_PROFILES, SUPPORTED_STORAGE_PROFILES,
-    canonical_quantization_modules, quantization_profile,
+    MIXED_STORAGE_PROFILE, canonical_quantization_modules, quantization_profile,
+    parse_mixed_module_precisions,
 )
 
 
@@ -226,9 +227,15 @@ def quantization_module_for_linear_weight(name):
     return None
 
 
-def quantized_tensor_type(name, shape, precision, storage_profile=None, quantization_modules=None):
+def quantized_tensor_type(name, shape, precision, storage_profile=None, quantization_modules=None, *, mixed_policy=None):
     """Return the exact GGML type for a whitelisted image matrix, or None for F32."""
-    profile = quantization_profile(precision, storage_profile, quantization_modules)
+    profile = quantization_profile(precision, storage_profile, quantization_modules, mixed_policy=mixed_policy)
+    if profile["schema_version"] == 5:
+        module = quantization_module_for_tensor(name)
+        requested = profile["module_precisions"].get(module, "f32")
+        if requested == "f32":
+            return None
+        return quantized_tensor_type(name, shape, requested, quantization_modules=[module])
     if profile["schema_version"] == 4:
         module = quantization_module_for_tensor(name)
         if module is None or module not in profile["modules"]:
@@ -294,9 +301,15 @@ def quantized_tensor_type(name, shape, precision, storage_profile=None, quantiza
     return qtype
 
 
-def quantization_reason_for_tensor(name, shape, precision, storage_profile, quantization_modules):
-    """Describe schema-4 tensor allocation without changing legacy sidecars."""
-    profile = quantization_profile(precision, storage_profile, quantization_modules)
+def quantization_reason_for_tensor(name, shape, precision, storage_profile, quantization_modules, *, mixed_policy=None):
+    """Describe schema-4/5 tensor allocation without changing legacy sidecars."""
+    profile = quantization_profile(precision, storage_profile, quantization_modules, mixed_policy=mixed_policy)
+    if profile["schema_version"] == 5:
+        module = quantization_module_for_tensor(name)
+        requested = profile["module_precisions"].get(module, "f32")
+        if requested == "f32":
+            return "module-f32" if module is not None else "outside-module-policy"
+        return quantization_reason_for_tensor(name, shape, requested, None, [module])
     if profile["schema_version"] != 4:
         raise ValueError("per-tensor module reasons are only defined for schema 4")
     module = quantization_module_for_tensor(name)
@@ -324,9 +337,9 @@ def quantization_reason_for_tensor(name, shape, precision, storage_profile, quan
     return "outside-linear-whitelist"
 
 
-def quantized_array(name, array, precision, storage_profile=None, quantization_modules=None):
+def quantized_array(name, array, precision, storage_profile=None, quantization_modules=None, *, mixed_policy=None):
     """Q8_0 encode from F32 with pinned gguf-py; K formats use the native helper."""
-    qtype = quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules)
+    qtype = quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules, mixed_policy=mixed_policy)
     if qtype is None:
         raise ValueError(f"{name}: tensor is not in the quantized image matrix whitelist")
     if qtype != gguf.GGMLQuantizationType.Q8_0:
@@ -403,14 +416,14 @@ def validate_tokenizer(tokens, merges):
 
 
 def write_metadata(writer, precision, checkpoint_sha256, tokens, merges, task="image", storage_profile=None,
-                   quantization_modules=None):
-    quantized = precision in QUANTIZATION_PROFILES
+                   quantization_modules=None, *, mixed_policy=None):
+    quantized = precision in QUANTIZATION_PROFILES or precision == "mixed"
     if quantized:
         if task != "image":
             raise ValueError("quantized storage profiles are defined only for image models")
-        profile = quantization_profile(precision, storage_profile, quantization_modules)
+        profile = quantization_profile(precision, storage_profile, quantization_modules, mixed_policy=mixed_policy)
     else:
-        if storage_profile is not None or quantization_modules is not None:
+        if storage_profile is not None or quantization_modules is not None or mixed_policy is not None:
             raise ValueError("quantization module/profile selection requires a quantized image precision")
         storage_dtype("", (1,), precision)
     if precision == "hybrid" and task != "video":
@@ -438,6 +451,10 @@ def write_metadata(writer, precision, checkpoint_sha256, tokens, merges, task="i
         writer.add_uint32("general.quantization_version", QUANTIZATION_VERSION)
         if profile["schema_version"] == 4:
             writer.add_string("sam.quantization.modules", profile["modules_csv"])
+        if profile["schema_version"] == 5:
+            writer.add_string("sam.quantization.base_precision", profile["base_precision"])
+            writer.add_string("sam.quantization.module_precisions", profile["module_precisions_csv"])
+            writer.add_string("sam.quantization.policy_sha256", profile["policy_sha256"])
     writer.add_key_value("sam3.vision.global_attention_blocks", GLOBAL_BLOCKS,
                          gguf.GGUFValueType.ARRAY, sub_type=gguf.GGUFValueType.UINT32)
     writer.add_token_list(tokens)
@@ -532,7 +549,7 @@ def read_gguf(path):
 
 
 def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="image", storage_profile=None,
-                      quantization_modules=None):
+                      quantization_modules=None, *, mixed_policy=None):
     def require(key, types, expected=None):
         field = reader.get_field(key)
         if field is None or field.types != types:
@@ -555,12 +572,26 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
     if reader.get_field("general.alignment") is not None:
         require("general.alignment", [gguf.GGUFValueType.UINT32], 32)
     file_type = require("general.file_type", [gguf.GGUFValueType.UINT32])
-    if schema_version in (3, 4):
+    mixed_keys = ("sam.quantization.base_precision", "sam.quantization.module_precisions", "sam.quantization.policy_sha256")
+    if schema_version != 5 and (mixed_policy is not None or any(reader.get_field(key) is not None for key in mixed_keys)):
+        raise ValueError("mixed weight policy metadata requires SAM schema 5")
+    if schema_version in (3, 4, 5):
         if task != "image":
             raise ValueError(f"SAM schema {schema_version} currently supports image models only")
         profile_name = require("sam.storage_profile", [gguf.GGUFValueType.STRING])
         actual_precision = None
-        if schema_version == 3:
+        if schema_version == 5:
+            actual_precision = "mixed"
+            if profile_name != MIXED_STORAGE_PROFILE or quantization_modules is not None or reader.get_field("sam.quantization.modules") is not None:
+                raise ValueError("schema 5 requires its mixed storage profile and module format mapping")
+            policy = {"base_precision": require(mixed_keys[0], [gguf.GGUFValueType.STRING]),
+                      "module_precisions": parse_mixed_module_precisions(require(mixed_keys[1], [gguf.GGUFValueType.STRING])),
+                      "policy_sha256": require(mixed_keys[2], [gguf.GGUFValueType.STRING])}
+            profile = quantization_profile("mixed", profile_name, mixed_policy=policy)
+            if mixed_policy is not None and profile != quantization_profile("mixed", profile_name, mixed_policy=mixed_policy):
+                raise ValueError("GGUF mixed policy differs from the requested allocation")
+            profile_modules = None
+        elif schema_version == 3:
             actual_precision = next((name for name, base in QUANTIZATION_PROFILES.items()
                                      if profile_name in (base["storage_profile"], base["vision_storage_profile"])), None)
             if reader.get_field("sam.quantization.modules") is not None:
@@ -588,7 +619,8 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
                     raise ValueError("GGUF quantization modules disagree with the requested modules")
         if actual_precision is None:
             raise ValueError("unsupported SAM image quantization profile")
-        profile = quantization_profile(actual_precision, profile_name, profile_modules)
+        if schema_version != 5:
+            profile = quantization_profile(actual_precision, profile_name, profile_modules)
         if file_type != profile["file_type"]:
             raise ValueError("GGUF file type disagrees with the SAM quantization profile")
         if storage_profile is not None and storage_profile != profile_name:
@@ -607,7 +639,7 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
         raise ValueError("unsupported SAM schema version")
     if precision is not None and precision != actual_precision:
         raise ValueError("GGUF storage precision disagrees with its provenance")
-    if storage_profile is not None and schema_version not in (3, 4):
+    if storage_profile is not None and schema_version not in (3, 4, 5):
         raise ValueError("storage profile is only valid for a quantized image")
     if quantization_modules is not None and schema_version != 4:
         raise ValueError("quantization modules are only valid for a schema-4 image")
@@ -621,7 +653,7 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
 
 
 def inspect_tensors(reader, precision, expected, original_shapes=None, storage_profile=None,
-                    quantization_modules=None):
+                    quantization_modules=None, *, mixed_policy=None):
     if {tensor.name for tensor in reader.tensors} != set(expected):
         raise ValueError("GGUF tensor inventory differs from the SAM 3 schema")
     inventory = []
@@ -635,9 +667,9 @@ def inspect_tensors(reader, precision, expected, original_shapes=None, storage_p
                 or any(type(value) is not int or value <= 0 or value > 2**31 - 1 for value in original_shape)
                 or list(reversed(canonical_shape(original_shape))) != dimensions):
             raise ValueError(f"{name}: original shape does not match the GGUF dimensions")
-        if precision in QUANTIZATION_PROFILES:
+        if precision in QUANTIZATION_PROFILES or precision == "mixed":
             wanted_type = quantized_tensor_type(name, original_shape, precision, storage_profile,
-                                                quantization_modules)
+                                                quantization_modules, mixed_policy=mixed_policy)
             if wanted_type is None:
                 wanted_type = gguf.GGMLQuantizationType.F32
             dtype_name = "float32" if wanted_type == gguf.GGMLQuantizationType.F32 else wanted_type.name.lower()

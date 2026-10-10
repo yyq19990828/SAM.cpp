@@ -2,12 +2,13 @@
 
 ## Status and scope
 
-Planned, not implemented. The current
-[unified configuration](../quantization-config.md) supports one target Q format
-with a selected module subset. Its protected F32 tensors and fixed Q8 fallback
-already create mixed stored dtypes, but do not provide user-selected formats
-per module or tensor. This plan adds that control to SAM 3 image weights without
-turning reference agreement or performance into repository quality gates.
+M1–M3 implemented and CPU fixture validation completed on 2026-10-10; see the
+[implementation/results](20261010-161049-module-mixed-weight-implementation.md).
+The [unified configuration](../quantization-config.md) now supports schema-2
+module-format policies in addition to schema-1 single-format allocations.
+Complete-model mixed quality/performance, M4 device evidence and M5 exact-tensor
+overrides/mixed F16 remain pending. Reference agreement and performance remain
+independent advisory reports.
 
 Initial scope: module-level F32/Q8_0/Q6_K/Q5_K/Q4_K selections. F16 inside a
 quantized mixed model and exact per-tensor overrides follow separately, after
@@ -15,7 +16,7 @@ loader/backend handling is explicit. Video memory, activation quantization,
 automatic quality optimization and automatic fallback across devices are out
 of the first slice. No large GPU validation is authorized by this plan.
 
-## Current constraints
+## Baseline constraints before implementation
 
 - `tools/quantize/weight_policy.py` owns versioned single-format allocations;
   `tools/convert/sam3_gguf.py` owns tensor eligibility, dtype and row-layout rules.
@@ -35,7 +36,8 @@ of the first slice. No large GPU validation is authorized by this plan.
    A mixed weight policy declares a base Q format plus module-format overrides.
    Base precision applies to eligible matrices across the four modules; F32
    overrides retain a module's matrices. Protect the existing mandatory F32
-   tensors regardless of requests. Explicitly reject attempts to quantize them.
+   tensors regardless of module requests. Per-tensor attempts to bypass protection
+   are outside this schema and rejected.
 2. Introduce SAM image GGUF schema 5 with profile `image-mixed-linear-v1`.
    Record the base precision, canonical module-format allocation and a canonical
    policy hash. `general.file_type` follows the declared base Q format; schema

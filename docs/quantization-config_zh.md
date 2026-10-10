@@ -45,11 +45,58 @@ F32/F16 权重分别填写 `{"precision":"f32"}` / `{"precision":"f16"}`，不�
 模块选择。旧命令行默认行为保持不变；新 JSON 的量化配置要求明确选择范围，避免
 无意中采用旧版视觉／文本分配策略。
 
+## 模块级混合权重
+
+[混合 CPU 示例](configs/quantization/image-mixed-cpu.json) 使用配置 schema 2，权重维度为：
+
+```json
+{
+  "precision": "mixed",
+  "base_precision": "q4_k",
+  "module_precisions": {"text": "q8_0", "fusion": "q6_k", "decoder": "f32"}
+}
+```
+
+基础 Q 格式应用于四个模块的合资格线性矩阵，覆盖项替换指定模块的选择。示例解析为
+vision Q4_K、text Q8_0、fusion Q6_K、decoder F32。每个模块可选
+F32/Q8_0/Q6_K/Q5_K/Q4_K。偏置、归一化、embedding、卷积、规范向量和受保护的小矩阵
+继续保留 F32。vision 选择 K 格式时，行宽 4736 的 MLP 仍固定回退为 Q8_0；模块请求
+不能绕过保护规则。
+
+解析结果补齐四个模块，并添加 `storage_profile=image-mixed-linear-v1` 和 `policy_sha256`。
+GGUF schema 5 保存此策略，加载器独立检查每个张量的类型和布局。
+`ModelInfo::precision` 报告 `mixed`，`base_precision`、`module_precisions`、`policy_sha256`
+与实际张量清单解释分配。全部模块覆盖为 F32 也有效，此时不宣称使用量化算术。
+配置 schema 1 维持原有单格式语义，不能填写模块格式覆盖。
+
+转换必须直接读取原始 F32 checkpoint，不支持已降精度 checkpoint 或对已有 GGUF
+再次量化。任何模块请求 Q6_K/Q5_K/Q4_K 时都需要原生行量化工具；只有 Q8_0/F32 的
+模块策略不需要：
+
+```sh
+python3 tools/quantize/quantization_config.py validate \
+  --config docs/configs/quantization/image-mixed-cpu.json --context conversion
+
+.venv-reference/bin/python tools/convert/convert_sam3.py \
+  --quantization-config docs/configs/quantization/image-mixed-cpu.json \
+  --checkpoint /absolute/path/to/sam3.pt --bpe /absolute/path/to/bpe_simple_vocab_16e6.txt.gz \
+  --quantizer "$PWD/build/quant-cpu/examples/sam_quantize_rows" \
+  --output models/sam3-mixed.gguf
+
+.venv-reference/bin/python tools/benchmark/quantization_benchmark.py inspect-precision \
+  --quantization-config docs/configs/quantization/image-mixed-cpu.json \
+  --model models/sam3-mixed.gguf --output build/mixed-precision.json
+```
+
+manifest 逐张量记录请求／实际 dtype、模块选择器、保护或回退原因和字节数。本轮验证了
+CPU 转换、格式校验和小型混合矩阵运算，尚未测量完整模型质量／性能，以及混合策略的
+CUDA/Metal 执行。已有固定预设的硬件结果不能替代新混合策略的测量。
+
 ## 可用组合
 
 | 选择 | CPU | Metal | CUDA |
 | --- | --- | --- | --- |
-| 图像权重 | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K | 相同存储格式 | 相同存储格式 |
+| 图像权重 | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K；模块混合策略 | 相同存储格式；混合策略硬件未验证 | 相同存储格式；混合策略硬件未验证 |
 | 独立激活模式 | 仅 `backend-selected` | 仅 `backend-selected` | 仅 `backend-selected` |
 | 计算策略 | `f32` | `f32` | `f32` / `f16` |
 | 图像特征缓存 | `f32` | `f32` | 私有图像 probe 可用 `f32` / `f16` / `mixed-q8_0` |
@@ -69,7 +116,7 @@ GGUF 改变计算／缓存策略；改变权重精度或模块范围需要从原
 
 | 请求 | 当前结果 |
 | --- | --- |
-| 不同模块／层／张量分别使用不同 Q 格式 | 尚未实现；当前支持一种格式加模块选择 |
+| 单独指定每层／张量的 Q 格式，或在混合策略中使用 F16 | 尚未实现；schema 2 支持按模块选择 F32/Q8/Q6/Q5/Q4 |
 | 指定 INT8/FP8/F16 激活模式 | 尚未实现；研究工具不等于原生运行模式 |
 | CPU/Metal F16 计算或低精度图像缓存 | 此配置不支持 |
 | 公共 C++ API 使用低精度缓存 | 未开放，仅限私有原生图像 probe |
@@ -140,6 +187,6 @@ GGUF 的运行方式；新运行可以在权重不变的前提下选择其他受
 参考一致性、用户可选质量建议、性能测量和收益标签相互独立。统一配置不会新增
 COCO 质量硬门槛或必须提速的要求。
 
-后续工作分别见[混合权重量化计划](plans/20261010-155435-mixed-weight-quantization.md)和
-[原生激活量化计划](plans/20261010-155435-native-activation-quantization.md)。其中规划的模式
-目前尚不能在配置中选择。
+[混合权重量化计划](plans/20261010-155435-mixed-weight-quantization.md)跟踪模块实现与后续
+硬件／逐张量扩展。[原生激活量化计划](plans/20261010-155435-native-activation-quantization.md)
+中的规划模式目前尚不能在配置中选择。

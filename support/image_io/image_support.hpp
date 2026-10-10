@@ -163,6 +163,14 @@ inline void write_model_profile(std::ostream& stream, const sam::ModelInfo& info
     }
     stream << ']' << ",\"device_name\":" << json_string(info.device_name)
            << ",\"cuda_device\":" << info.cuda_device;
+    if (info.precision == "mixed") {
+        stream << ",\"base_precision\":" << json_string(info.base_precision) << ",\"module_precisions\":{";
+        for (std::size_t i = 0; i < info.module_precisions.size(); ++i) {
+            if (i) stream << ',';
+            stream << json_string(info.module_precisions[i].first) << ':' << json_string(info.module_precisions[i].second);
+        }
+        stream << "},\"policy_sha256\":" << json_string(info.policy_sha256);
+    }
 }
 
 inline std::ofstream output_file(const std::filesystem::path& path, bool binary = false) {

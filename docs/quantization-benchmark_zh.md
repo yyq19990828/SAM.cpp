@@ -166,7 +166,7 @@ CUDA 使用可见设备 0，可通过 `CUDA_VISIBLE_DEVICES` 选择物理设备�
 
 | 维度 | 配置 | 实际含义与证据 |
 | --- | --- | --- |
-| 权重 | `weights.precision` 及 `modules` / `storage_profile` | GGUF 可同时有 F32、目标 Q 格式和 Q8 回退；检查逐类型张量数量／字节数及保留原因 |
+| 权重 | `weights.precision` 及 `modules` / `storage_profile`，或 schema 2 的 `base_precision` / `module_precisions` | GGUF 可同时有受保护的 F32、各模块 Q 格式和 Q8 回退；检查策略哈希、逐类型张量数量／字节数及保留原因 |
 | 激活 | `activation.mode=backend-selected` | 原生暂不支持独立 INT8/FP8/F16 激活开关；后端可内部转换或量化 RHS，研究 probe 不等于可部署配置 |
 | 计算 | `compute.mode` | CUDA F16 只给符合条件的浮点矩阵／attention 设置提示，量化矩阵保留自己的分派；F32 也不保证内核所有临时表示都是 F32 |
 | 缓存 | `cache.mode` | 图像特征 0/1/2：F32 为 F32/F32/F32，F16 为 F16/F16/F16，mixed-Q8_0 为 Q8_0/Q8_0/F32；不是 LLM KV cache |

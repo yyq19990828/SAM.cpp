@@ -178,6 +178,12 @@ the selected components in the file; see the [quantization guide](../quantizatio
 for floating-point exceptions and the distinction between presets and custom
 diagnostic combinations.
 
+Different formats per module use the [mixed configuration](../quantization-config.md#module-mixed-weights)
+with `--quantization-config`, producing SAM GGUF schema 5. This configuration
+selects F32/Q8_0/Q6_K/Q5_K/Q4_K per module directly from original F32 weights.
+Small CPU conversion/arithmetic fixtures validate the path; full-model
+quality/performance and mixed CUDA/Metal execution remain unmeasured.
+
 ## Output files and precision labels
 
 Each conversion writes a `.gguf` file and a matching `.gguf.manifest.json`
@@ -191,7 +197,7 @@ video state boundary:
 
 | Task | Precision choices | Notes |
 | --- | --- | --- |
-| Image | `f32`, `f16`, `q8_0`, `q6_k`, `q5_k`, `q4_k` | Quantized formats use an exact schema-3 vision/legacy profile or schema-4 full/custom module profile. |
+| Image | `f32`, `f16`, `q8_0`, `q6_k`, `q5_k`, `q4_k`; `mixed` through JSON configuration | Quantized formats use schema-3/4 fixed allocations, or schema-5 per-module formats through configuration schema 2. |
 | Video | `f32`, `f16`, `hybrid` | Quantized video files are not defined. |
 
 The GGUF schema and model adapter enforce the declared tensor inventory,

@@ -35,6 +35,10 @@ repository numerical acceptance covers the fixed vision and full presets.
 Custom combinations, F16 video and legacy `image-linear-*` profiles remain
 diagnostic configurations. See the model catalog for the current status of
 other SAM variants and composed pipelines.
+Per-module F32/Q8_0/Q6_K/Q5_K/Q4_K allocation is available through the
+[mixed weight configuration](docs/quantization-config.md#module-mixed-weights).
+CPU conversion and small arithmetic fixtures are checked; mixed-model quality,
+performance and CUDA/Metal execution remain unmeasured.
 One exact custom text/fusion/decoder Q8_0 image recipe has a
 [scoped CUDA GPU-memory acceptance](docs/quantization.md); this does not
 qualify other custom combinations or backends.

@@ -51,11 +51,65 @@ F32/F16 weight storage uses `{"precision":"f32"}` or
 The old CLI keeps its defaults. JSON quantized configurations require an
 explicit allocation to avoid silently selecting the legacy vision/text policy.
 
+## Module mixed weights
+
+[The mixed CPU example](configs/quantization/image-mixed-cpu.json) uses configuration
+schema 2. Its weight axis is:
+
+```json
+{
+  "precision": "mixed",
+  "base_precision": "q4_k",
+  "module_precisions": {"text": "q8_0", "fusion": "q6_k", "decoder": "f32"}
+}
+```
+
+The base Q format applies to eligible linears in all four modules; overrides
+replace individual module choices. This example resolves to vision Q4_K,
+text Q8_0, fusion Q6_K and decoder F32. Each module accepts F32/Q8_0/Q6_K/Q5_K/Q4_K.
+Biases, normalization, embeddings, convolutions, canonical vectors and protected
+small matrices remain F32. A vision K format retains the fixed 4736-wide MLP Q8_0
+fallback. Module requests cannot override these protections.
+
+Resolution fills all four modules and adds `storage_profile=image-mixed-linear-v1`
+and `policy_sha256`. GGUF schema 5 stores that policy, and the loader independently
+checks every tensor's type and layout. `ModelInfo::precision` is `mixed`;
+`base_precision`, `module_precisions`, `policy_sha256` and the actual tensor
+inventory explain its allocation. All-F32 overrides are valid and do not imply
+quantized arithmetic. Schema 1 keeps its existing single-format meaning; it does
+not accept module-format overrides.
+
+Convert directly from the original F32 checkpoint. Reduced checkpoints and
+requantization of an existing GGUF are not supported sources. A native encoder is
+required if any module requests Q6_K/Q5_K/Q4_K; Q8_0/F32-only module policies do
+not need it:
+
+```sh
+python3 tools/quantize/quantization_config.py validate \
+  --config docs/configs/quantization/image-mixed-cpu.json --context conversion
+
+.venv-reference/bin/python tools/convert/convert_sam3.py \
+  --quantization-config docs/configs/quantization/image-mixed-cpu.json \
+  --checkpoint /absolute/path/to/sam3.pt --bpe /absolute/path/to/bpe_simple_vocab_16e6.txt.gz \
+  --quantizer "$PWD/build/quant-cpu/examples/sam_quantize_rows" \
+  --output models/sam3-mixed.gguf
+
+.venv-reference/bin/python tools/benchmark/quantization_benchmark.py inspect-precision \
+  --quantization-config docs/configs/quantization/image-mixed-cpu.json \
+  --model models/sam3-mixed.gguf --output build/mixed-precision.json
+```
+
+The manifest records each tensor's requested and resolved dtype, module selector,
+protection/fallback reason and byte count. CPU conversion, format checks and small
+mixed arithmetic fixtures are validated. Complete-model quality/performance and
+mixed-policy CUDA/Metal execution have not been measured. Existing fixed-preset
+hardware results do not qualify a new mixed policy.
+
 ## Supported combinations
 
 | Choice | CPU | Metal | CUDA |
 | --- | --- | --- | --- |
-| Image weights | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K | Same stored formats | Same stored formats |
+| Image weights | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K; module mixed policy | Same stored formats; mixed hardware unverified | Same stored formats; mixed hardware unverified |
 | Independent activation mode | `backend-selected` only | `backend-selected` only | `backend-selected` only |
 | Compute policy | `f32` | `f32` | `f32` / `f16` |
 | Image-feature cache | `f32` | `f32` | `f32` / `f16` / `mixed-q8_0` in private image probes |
@@ -79,7 +133,7 @@ The following requests fail instead of falling back silently:
 
 | Request | Current result |
 | --- | --- |
-| Different Q formats per module/layer/tensor | Not implemented; one format plus module selection is available |
+| Different Q formats per individual layer/tensor, or F16 inside a mixed policy | Not implemented; schema 2 supports F32/Q8/Q6/Q5/Q4 per module |
 | Explicit INT8/FP8/F16 activation mode | Not implemented; studies/probes do not enable a native mode |
 | CPU/Metal F16 compute or reduced image cache | Unsupported by this configuration |
 | Reduced cache through the public C++ API | Unavailable; private native image probes only |
@@ -159,6 +213,7 @@ Reference agreement and optional user advice stay separate from performance
 measurements and benefit tags. Neither COCO scores nor a speedup requirement is
 introduced by this configuration.
 
-Future work is scoped in the [mixed weight plan](plans/20261010-155435-mixed-weight-quantization.md)
-and [native activation plan](plans/20261010-155435-native-activation-quantization.md).
-Their proposed modes are not selectable in the current configuration.
+The [mixed weight plan](plans/20261010-155435-mixed-weight-quantization.md) tracks
+module implementation and later device/tensor extensions. Modes proposed in the
+[native activation plan](plans/20261010-155435-native-activation-quantization.md)
+remain unavailable in this configuration.

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sam {
@@ -29,9 +30,12 @@ struct ModelInfo {
     std::string profile;
     std::string storage_profile; // Versioned weight policy, separate from the temporal profile.
     std::string arithmetic_profile; // Runtime arithmetic contract, separate from weight storage; empty for legacy F32 math.
-    std::vector<std::string> quantization_modules; // Populated only by schema-4 modular image profiles.
+    std::vector<std::string> quantization_modules; // Quantized modules for schema-4/5 image profiles.
     std::string device_name;
     int cuda_device = -1; // Resolved visible CUDA index; -1 on other backends.
+    std::string base_precision; // Schema 5 only; general.file_type describes this base.
+    std::vector<std::pair<std::string, std::string>> module_precisions; // Canonical module order, including F32 modules.
+    std::string policy_sha256; // Schema-5 allocation identity, separate from file/source hashes.
 };
 
 struct RuntimeStats {

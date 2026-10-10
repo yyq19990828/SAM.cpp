@@ -19,6 +19,10 @@ SAM.cpp 面向多种 SAM 模型适配器，以及由检测和分割模型组合�
 
 用户可以用 `--quantize-modules vision,text` 等选择局部量化。仓库数值验收聚焦固定视觉和全模块预设，自定义组合需要另行验证，见[量化指南](docs/quantization_zh.md)。
 
+[模块混合配置](docs/quantization-config_zh.md#模块级混合权重)还能为各模块分别分配
+F32/Q8_0/Q6_K/Q5_K/Q4_K。小型 CPU 转换／矩阵运算已验证；完整模型质量／性能及
+混合策略 CUDA/Metal 执行尚未测量。
+
 [可视化样例](docs/visual-examples_zh.md)在相同图片、提示词和 0.2 检出阈值下比较各图像权重版本的 CPU、Metal 输出。量化版本以最终输出质量验收，张量误差单独供参考。
 
 当前 SAM 3 实现仍属实验阶段，验证语料规模较小，接入应用时应检查自己的输入质量。

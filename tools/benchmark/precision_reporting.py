@@ -8,6 +8,23 @@ from tools.quantize.quantization_config import (CACHES, WEIGHTS, resolve_model_c
                                                validate_configuration, validate_recipe_configuration)
 
 
+def mixed_weight_fields(value):
+    return {key: value[key] for key in ("base_precision", "module_precisions", "policy_sha256") if key in value}
+
+
+def native_weight_policy_matches(value, recipe):
+    return recipe["weight_precision"] != "mixed" or mixed_weight_fields(value) == mixed_weight_fields(recipe)
+
+
+def has_quantized_weights(recipe):
+    if recipe["weight_precision"] == "mixed":
+        inventory = recipe.get("weight_inventory", {})
+        if inventory.get("tensor_count", 0):
+            return any(name.startswith("q") for name in inventory["types"])
+        return any(value != "f32" for value in recipe["module_precisions"].values())
+    return recipe["weight_precision"] in WEIGHTS[2:]
+
+
 def conversion_manifest(model):
     sidecar = model.with_suffix(model.suffix + ".manifest.json")
     manifest = read_json(sidecar)
@@ -34,6 +51,8 @@ def native_recipe(args, *, collect_environment=True):
             "binary_sha256": sha256_file(args.binary), "conversion_manifest_sha256": sidecar_digest,
             "model_bytes": args.model.stat().st_size, "cuda_device": 0 if args.backend == "cuda" else None,
             "weight_inventory": weight_inventory(manifest), "quantization_configuration": configuration}
+    if manifest["precision"] == "mixed":
+        recipe.update(mixed_weight_fields(manifest))
     if collect_environment:
         recipe["environment"] = runtime_environment(args.backend)
     return recipe
@@ -58,7 +77,7 @@ def weight_inventory(manifest):
 
 
 def expected_runtime_profile(recipe):
-    quantized = recipe["weight_precision"] in WEIGHTS[2:]
+    quantized = has_quantized_weights(recipe)
     if recipe["compute_mode"] == "f16":
         return "ggml-quantized-cuda-f16-v1" if quantized else "ggml-cuda-f16-v1"
     if not quantized:
@@ -74,7 +93,7 @@ def precision_description(manifest):
     activation = recipe.get("activation", "backend-selected")
     validate_configuration(backend, compute, cache, activation)
     original = recipe.get("engine") == "original"
-    quantized = recipe["weight_precision"] in WEIGHTS[2:]
+    quantized = has_quantized_weights(recipe)
     observed = manifest.get("arithmetic_profile")
     if original:
         compute_scope = "PyTorch F32 oracle with autocast and TF32 disabled; see exporter provenance"
@@ -95,6 +114,7 @@ def precision_description(manifest):
             "requested": {"weight_storage": recipe["weight_precision"], "activation": activation,
                           "compute": compute, "image_feature_cache": cache},
             "weights": {"inventory": manifest.get("weight_inventory", recipe.get("weight_inventory", {"evidence": "NOT_COLLECTED"})),
+                        **mixed_weight_fields(recipe),
                         "uniform_dtype_guarantee": False,
                         "note": "preset names do not describe every tensor; protected tensors stay F32 and K-block exceptions can use Q8_0"},
             "activation_policy": "backend-selected; no independent native activation setting",
@@ -128,13 +148,20 @@ def inspect(args):
     configuration = resolve_model_configuration(args, manifest)
     inventory = weight_inventory(manifest)
     # Read bounded GGUF tensor headers, not the multi-GB dequantized payload.
-    from tools.convert.sam3_gguf import read_gguf, validate_metadata
+    from tools.convert.sam3_gguf import read_gguf, validate_metadata, quantized_tensor_type
     reader = read_gguf(args.model)
     storage = manifest.get("storage_profile") or "dense"
     modules = manifest.get("quantization_modules", [])
+    policy_options = {"mixed_policy": mixed_weight_fields(manifest)} if manifest["precision"] == "mixed" else {}
     validate_metadata(reader, manifest["precision"], manifest["checkpoint"]["sha256"],
                       storage_profile=None if storage == "dense" else storage,
-                      quantization_modules=modules or None)
+                      quantization_modules=(modules or None) if manifest["precision"] != "mixed" else None,
+                      **policy_options)
+    if manifest["precision"] == "mixed":
+        for tensor in reader.tensors:
+            wanted = quantized_tensor_type(tensor.name, list(reversed(tensor.shape)), "mixed", storage, **policy_options)
+            if tensor.tensor_type.name != (wanted.name if wanted is not None else "F32"):
+                raise ValueError(f"{tensor.name}: GGUF type differs from the mixed module policy")
     observed = {tensor.name: (tensor.tensor_type.name.lower(), tensor.n_bytes) for tensor in reader.tensors}
     aliases = {"float32": "f32", "float16": "f16"}
     expected = {row["name"]: (aliases.get(row["dtype"], row["dtype"]), row["bytes"]) for row in manifest["tensors"]}
@@ -144,6 +171,7 @@ def inspect(args):
     recipe = {"engine": "native", "backend": args.backend, "weight_precision": manifest["precision"],
               "storage_profile": storage, "quantization_modules": modules, "compute_mode": args.compute,
               "feature_cache": args.cache, "activation": args.activation,
+              "weight_inventory": inventory, **mixed_weight_fields(manifest),
               "quantization_configuration": configuration}
     result = {"schema_version": 1, "kind": "sam3-precision-description-v1", "complete": True,
               "model_sha256": digest, "conversion_manifest_sha256": sidecar_digest,

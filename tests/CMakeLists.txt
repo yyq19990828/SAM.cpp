@@ -6,6 +6,10 @@ add_executable(test_quantization runtime/ggml/test_quantization.cpp)
 target_link_libraries(test_quantization PRIVATE sam_private)
 add_test(NAME sam_quantization COMMAND test_quantization)
 
+add_executable(test_mixed_quantization runtime/ggml/test_mixed_quantization.cpp)
+target_link_libraries(test_mixed_quantization PRIVATE sam_private)
+add_test(NAME sam_mixed_quantization COMMAND test_mixed_quantization)
+
 # One public API used from two translation units must link against the real
 # library and fail identically in both.
 add_executable(test_two_tu api/test_two_tu_main.cpp api/two_tu_other.cpp)

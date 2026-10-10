@@ -193,7 +193,7 @@ policies and `execution_evidence`; a model name is not its whole-graph arithmeti
 
 | Dimension | Setting | Meaning and evidence |
 | --- | --- | --- |
-| Weights | `weights.precision` and `modules` / `storage_profile` | GGUF may mix protected F32, target Q storage and Q8 fallbacks; inspect per-type counts/bytes and assignment reasons |
+| Weights | `weights.precision` with `modules` / `storage_profile`, or schema-2 `base_precision` / `module_precisions` | GGUF may mix protected F32, selected module Q formats and Q8 fallbacks; inspect policy hash, per-type counts/bytes and assignment reasons |
 | Activations | `activation.mode=backend-selected` | No independent native INT8/FP8/F16 activation switch; kernels may transform/quantize RHS; numerical probes are not deployment modes |
 | Compute | `compute.mode` | CUDA F16 hints apply to eligible floating-point matmuls/attention; quantized matmuls retain their dispatch; F32 does not imply all private kernel representations are F32 |
 | Cache | `cache.mode` | Image levels 0/1/2 use F32/F32/F32, F16/F16/F16 or mixed Q8_0/Q8_0/F32; this is not an LLM KV cache |

@@ -8,7 +8,8 @@ import sys
 
 from tools.benchmark.performance_measurement import run_process
 from tools.benchmark.performance_statistics import WORKLOADS, pair_order, summarize_measurements
-from tools.benchmark.precision_reporting import expected_runtime_profile, native_recipe, precision_description, validate_configuration
+from tools.benchmark.precision_reporting import (expected_runtime_profile, native_recipe, native_weight_policy_matches,
+                                               precision_description, validate_configuration)
 from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file, verify_run_artifacts, write_json
 from tools.maintenance.artifact_snapshot import archive_sources, native_snapshot, source_snapshot, runtime_environment
 from tools.quantize.quantization_config import validate_recipe_configuration
@@ -64,6 +65,7 @@ def validate_record(row, recipe, case, protocol):
             or row.get("precision") != recipe["weight_precision"]
             or (row.get("storage_profile") or "dense") != recipe["storage_profile"]
             or row.get("quantization_modules") != recipe["quantization_modules"]
+            or not native_weight_policy_matches(row, recipe)
             or row.get("cuda_compute") != recipe["compute_mode"] or row.get("feature_cache") != recipe["feature_cache"]
             or row.get("arithmetic_profile") != expected_runtime_profile(recipe)
             or row.get("prompt") != case["prompt"] or row.get("alternate") != case["alternate"]

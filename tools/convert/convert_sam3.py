@@ -240,26 +240,34 @@ def quantize_native_rows(name, array, qtype, quantizer, workdir):
 
 
 def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=None, storage_profile=None,
-            quantize_modules=None, *, configuration=None, configuration_inputs=None):
+            quantize_modules=None, *, configuration=None, configuration_inputs=None, mixed_policy=None):
     from tools.convert.sam3_artifacts import verify_run_artifacts
     if configuration is not None:
         config = validate_receipt(configuration)
-        actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, "modules": quantize_modules})
+        if precision == "mixed":
+            requested_policy = {key: config["weights"].get(key) for key in ("base_precision", "module_precisions", "policy_sha256")}
+            mixed_policy = requested_policy if mixed_policy is None else mixed_policy
+            if quantize_modules is not None:
+                raise ValueError("mixed conversion uses module_precisions instead of --quantize-modules")
+            actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, **mixed_policy}, 2)
+        else:
+            actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, "modules": quantize_modules})
         if task != "image" or actual != config["weights"]:
             raise ValueError("conversion arguments differ from the resolved quantization configuration")
     verify_run_artifacts(configuration_inputs or {})
-    quantized = precision in QUANTIZATION_PROFILES
+    quantized = precision in QUANTIZATION_PROFILES or precision == "mixed"
+    policy_options = {"mixed_policy": mixed_policy} if mixed_policy is not None else {}
     gguf_version = importlib.metadata.version("gguf")
     if storage_profile is not None and quantize_modules is not None:
         raise ValueError("--quantize-modules cannot be combined with --storage-profile")
     quantization_modules = None
     if quantized:
         gguf_version = pinned_gguf_version(gguf_version)
-        profile = quantization_profile(precision, storage_profile, quantize_modules)
+        profile = quantization_profile(precision, storage_profile, quantize_modules, **policy_options)
         storage_profile = profile["storage_profile"]
         if profile["schema_version"] == 4:
             quantization_modules = profile["modules"]
-    elif storage_profile is not None or quantize_modules is not None:
+    elif storage_profile is not None or quantize_modules is not None or mixed_policy is not None:
         raise ValueError("quantization module/profile selection requires a quantized image precision")
     if quantized and task != "image":
         raise ValueError("quantized storage profiles are defined only for image models")
@@ -275,7 +283,9 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
         raise FileExistsError(f"refusing to overwrite model or manifest: {output}")
     quantizer_path = None
     quantizer_provenance = None
-    if quantized and precision != "q8_0":
+    requires_native = quantized and (any(value in ("q6_k", "q5_k", "q4_k") for value in profile["module_precisions"].values())
+                                    if precision == "mixed" else precision != "q8_0")
+    if requires_native:
         if quantizer is None:
             raise ValueError(f"--quantizer is required for {precision}")
         quantizer_path, quantizer_provenance = quantizer_identity(Path(quantizer))
@@ -310,6 +320,8 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             continue
         if name in renamed:
             raise ValueError(f"duplicate converted tensor name: {name}")
+        if precision == "mixed" and tensor.dtype not in (torch.float32, torch.complex64):
+            raise ValueError(f"{name}: mixed conversion requires the original F32 checkpoint, not reduced weights")
         renamed[name] = (key, tensor)
     expected = tensor_schema(schema, task)
     if set(renamed) != set(expected):
@@ -329,7 +341,7 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
         checkpoint_sha256 = sha256_file(checkpoint)
         writer = gguf.GGUFWriter(model_tmp, "sam3", endianess=gguf.GGUFEndian.LITTLE)
         write_metadata(writer, precision, checkpoint_sha256, vocab, merges, task, storage_profile,
-                       quantization_modules)
+                       quantization_modules, **policy_options)
         original_shapes = {}
         for name, (_, tensor) in sorted(renamed.items()):
             array = tensor_array(name, tensor)
@@ -338,10 +350,10 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             if dimensions != expected[name]:
                 raise ValueError(f"{name}: expected GGML dimensions {expected[name]}, got {dimensions}")
             original_shapes[name] = list(array.shape)
-            qtype = (quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules)
+            qtype = (quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules, **policy_options)
                      if quantized else None)
             if qtype is not None:
-                packed = (quantized_array(name, array, precision, storage_profile, quantization_modules)
+                packed = (quantized_array(name, array, precision, storage_profile, quantization_modules, **policy_options)
                           if qtype == gguf.GGMLQuantizationType.Q8_0
                           else quantize_native_rows(name, array, qtype, quantizer_path, quant_workdir))
                 # gguf-py converts a packed uint8 byte-shape back to logical dimensions here.
@@ -358,10 +370,10 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
         writer.write_ti_data_to_file()
         for name, (_, tensor) in sorted(renamed.items()):
             array = tensor_array(name, tensor)
-            qtype = (quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules)
+            qtype = (quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules, **policy_options)
                      if quantized else None)
             if qtype is not None:
-                packed = (quantized_array(name, array, precision, storage_profile, quantization_modules)
+                packed = (quantized_array(name, array, precision, storage_profile, quantization_modules, **policy_options)
                           if qtype == gguf.GGMLQuantizationType.Q8_0
                           else quantize_native_rows(name, array, qtype, quantizer_path, quant_workdir))
                 writer.write_tensor_data(packed, tensor_endianess=gguf.GGUFEndian.LITTLE)
@@ -378,11 +390,11 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
         writer.close()
         reader = read_gguf(model_tmp)
         _, actual_vocab, actual_merges = validate_metadata(reader, precision, checkpoint_sha256, task,
-                                                           storage_profile, quantization_modules)
+                                                           storage_profile, quantization_modules, **policy_options)
         if actual_vocab != vocab or actual_merges != [" ".join(pair) for pair in merges]:
             raise ValueError("GGUF tokenizer readback differs from the pinned source")
         inventory = inspect_tensors(reader, precision, expected, original_shapes, storage_profile,
-                                    quantization_modules)
+                                    quantization_modules, **policy_options)
         del reader
         for item in inventory:
             source_name, tensor = renamed[item["name"]]
@@ -433,11 +445,28 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
                     item["module"] = quantization_module_for_tensor(item["name"])
                     item["quantization_reason"] = quantization_reason_for_tensor(
                         item["name"], original_shapes[item["name"]], precision, storage_profile,
-                        quantization_modules)
+                        quantization_modules, **policy_options)
+            if profile["schema_version"] == 5:
+                manifest.update({key: profile[key] for key in ("base_precision", "module_precisions", "policy_sha256")})
+                vision_format = profile["module_precisions"]["vision"]
+                manifest["options"]["row_block_fallback"] = "Q8_0" if vision_format in ("q6_k", "q5_k", "q4_k") else None
+                manifest["options"]["quantized_image_linear_weights"] = any(item["dtype"].startswith("q") for item in inventory)
+                manifest["quantization"] = {"version": QUANTIZATION_VERSION,
+                                            "ggml_quantization_version": QUANTIZATION_VERSION,
+                                            "gguf_file_type": profile["file_type"],
+                                            "base_ggml_type": profile["ggml_type"],
+                                            "module_precisions": profile["module_precisions"],
+                                            "row_block_fallback": "per-module K formats use Q8_0 only for vision MLP ne[0]=4736"}
+                for item in inventory:
+                    item["requested_dtype"] = profile["module_precisions"].get(item["module"], "f32")
+                    item["resolved_dtype"] = "f32" if item["dtype"] == "float32" else item["dtype"]
+                    item["selector"] = f"module:{item['module']}" if item["module"] else "protected:outside-module-policy"
             manifest["quantizer"] = {"implementation": "gguf-py",
                                      "version": gguf_version,
                                      "module": "gguf.quants.quantize",
                                      "ggml_quantization_version": QUANTIZATION_VERSION}
+            if precision == "mixed" and not any(item["dtype"].startswith("q") for item in inventory):
+                manifest["quantizer"] = {"implementation": "none-f32-only-policy"}
             if quantizer_provenance is not None:
                 manifest["quantizer"] = {"implementation": "ggml_quantize_chunk",
                                          "fallback_implementation": "gguf-py",

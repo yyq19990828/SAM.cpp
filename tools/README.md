@@ -56,6 +56,12 @@ commands, precision boundaries and interpretation. `performance` runs paired lat
 checks stored tensors without inference. Native activation and arbitrary per-layer
 mixed-format settings are not implemented.
 
+Module-level mixed F32/Q8_0/Q6_K/Q5_K/Q4_K weights use configuration schema 2 and
+SAM GGUF schema 5. See the [mixed CPU example](../docs/configs/quantization/image-mixed-cpu.json)
+and [configuration guide](../docs/quantization-config.md#module-mixed-weights).
+Small CPU conversion/arithmetic fixtures validate this path; complete-model
+quality/performance and mixed CUDA/Metal qualification remain unmeasured.
+
 `quantize/quantization_config.py capabilities` lists supported four-axis choices;
 `validate --config CONFIG.json` resolves them without model dependencies or GPU
 initialization. Conversion, quality exports and precision inspection accept

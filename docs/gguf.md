@@ -4,8 +4,8 @@ SAM 3 model files use little-endian [GGUF v3](https://github.com/ggml-org/ggml/b
 with 32-byte alignment. GGUF defines the container; the fields below define
 this project's SAM 3 model contract. Schema 1 covers image F32 and mixed-F16
 weights, schema 2 covers video weights and explicit state/transport metadata,
-schema 3 identifies the legacy versioned quantized image profiles, and schema
-4 adds explicit component selection for image weight quantization. Container support
+schema 3 identifies the legacy versioned quantized image profiles, schema
+4 adds explicit component selection, and schema 5 assigns weight formats per module. Container support
 does not itself imply that a model, task or backend is supported. See the
 [Model Zoo](../MODEL_ZOO.md) and [quantization guide](quantization.md) for
 current usage scope. Other model families need their own metadata and tensor
@@ -21,10 +21,10 @@ reader limits, but does not change model behavior.
 | --- | --- | --- |
 | `general.architecture` | STRING | `sam3` |
 | `general.name` | STRING | Optional human-readable name |
-| `general.file_type` | UINT32 | Schema 1/2: `0` for F32 or `1` for mixed F16. Schema 3/4: profile-specific values below. |
+| `general.file_type` | UINT32 | Schema 1/2: `0` for F32 or `1` for mixed F16. Schema 3/4: profile-specific values below. Schema 5: declared base Q format. |
 | `general.alignment` | UINT32 | `32` when present |
-| `sam.schema_version` | UINT32 | `1` for image F32/F16, `2` for video, `3` for legacy quantized image, `4` for modular quantized image |
-| `sam.task` | STRING | `text_image` for schema 1/3/4; `text_video` for schema 2 |
+| `sam.schema_version` | UINT32 | `1` for image F32/F16, `2` for video, `3` for legacy quantized image, `4` for modular quantized image, `5` for module mixed weights |
+| `sam.task` | STRING | `text_image` for schema 1/3/4/5; `text_video` for schema 2 |
 | `sam.source.checkpoint_sha256` | STRING | 64 lowercase hexadecimal characters identifying the actual input checkpoint |
 | `sam.source.code_revision` | STRING | `2345a4ad109ac29c569da749c91d84f10dc08c40` |
 | `sam.tokenizer.sha256` | STRING | `924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a` |
@@ -209,6 +209,60 @@ module, storage type and quantization/retention reason. Schema-4 runtime
 legacy schemas leave the new runtime field empty. Activation precision and
 CPU/Metal/CUDA arithmetic policies remain those described above. Loading this
 schema does not implement point/box prompting or quantized video tracking.
+
+## Module mixed image weights (schema 5)
+
+Schema 5 retains the same 1,133 canonical tensors, GGUF v3 container and
+`general.quantization_version=2`. It requires these additional STRING fields:
+
+| Key | Value |
+| --- | --- |
+| `sam.storage_profile` | `image-mixed-linear-v1` |
+| `sam.quantization.base_precision` | `q8_0`, `q6_k`, `q5_k` or `q4_k` |
+| `sam.quantization.module_precisions` | All four `module=format` entries, canonical order, no whitespace |
+| `sam.quantization.policy_sha256` | Lowercase SHA-256 of the canonical encoding below |
+
+Each module accepts `f32`, `q8_0`, `q6_k`, `q5_k`, `q4_k`.
+`sam.quantization.modules` is not allowed in schema 5; its complete format
+mapping replaces that selected-module wire field. JSON configuration schema 2
+resolves omitted module choices from the base before writing GGUF. The GGUF CSV
+must be complete, for example
+`vision=q4_k,text=q8_0,fusion=q6_k,decoder=f32`.
+
+Hash this exact ASCII encoding, including each LF and the final LF:
+
+```text
+sam3:image-mixed-linear-v1
+base=q4_k
+vision=q4_k
+text=q8_0
+fusion=q6_k
+decoder=f32
+```
+
+`general.file_type` matches the declared base (7/18/16/14 for Q8_0/Q6_K/Q5_K/Q4_K),
+even if overrides replace every module's base choice. It does not summarize the
+actual storage distribution. The module mapping, actual tensor types and
+schema-4 eligibility/protection rules determine storage. The vision K-row 4736
+exception remains Q8_0. F32 module choices, protected parameters and ineligible
+rows remain F32. Per-module F16 and per-tensor overrides are not supported.
+All-F32 allocations are valid; runtime quantized arithmetic flags follow actual
+stored types rather than the base file-type value.
+
+The native loader recomputes the policy hash, validates file type, checks every
+canonical tensor name/shape/type/range before backend weight allocation, and
+retains packed types. Sidecars add `base_precision`, `module_precisions`,
+`policy_sha256` and per-tensor `requested_dtype`, `resolved_dtype`, `selector`,
+`quantization_reason`. Their `quantization_modules` array lists only modules
+whose selected format is not F32, including an empty array for all-F32 choices.
+`ModelInfo` and native JSON expose those same policy fields with `precision=mixed`.
+The policy hash binds the allocation; file/checkpoint hashes separately identify
+the bytes and source. Earlier schemas reject reserved mixed-policy metadata;
+older schema-1–4 loaders reject schema 5.
+
+Small CPU conversion and mixed arithmetic fixtures validate the format path.
+No complete-model quality/performance or mixed CUDA/Metal qualification follows
+from these checks. See the [configuration guide](quantization-config.md) for usage.
 
 ## Full video profile (schema 2)
 

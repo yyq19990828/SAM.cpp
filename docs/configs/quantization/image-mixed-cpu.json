@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "kind": "sam-quantization-config",
+  "task": "image",
+  "backend": "cpu",
+  "weights": {
+    "precision": "mixed",
+    "base_precision": "q4_k",
+    "module_precisions": {"text": "q8_0", "fusion": "q6_k", "decoder": "f32"}
+  },
+  "activation": {"mode": "backend-selected"},
+  "compute": {"mode": "f32"},
+  "cache": {"mode": "f32"}
+}

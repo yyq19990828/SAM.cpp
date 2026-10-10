@@ -56,6 +56,15 @@ void test_model_quantization_modules_json() {
     sam_example::write_model_profile(device, info);
     require(device.str().find(",\"device_name\":\"NVIDIA GPU\",\"cuda_device\":2") != std::string::npos,
             "selected CUDA device identity was not serialized");
+    info.precision = "mixed";
+    info.base_precision = "q4_k";
+    info.module_precisions = {{"vision", "q4_k"}, {"text", "q8_0"}, {"fusion", "q6_k"}, {"decoder", "f32"}};
+    info.policy_sha256 = std::string(64, 'a');
+    std::ostringstream mixed;
+    sam_example::write_model_profile(mixed, info);
+    require(mixed.str().find("\"base_precision\":\"q4_k\",\"module_precisions\":{\"vision\":\"q4_k\",\"text\":\"q8_0\",\"fusion\":\"q6_k\",\"decoder\":\"f32\"}") != std::string::npos &&
+            mixed.str().find("\"policy_sha256\":\"" + std::string(64, 'a') + "\"") != std::string::npos,
+            "mixed allocation or policy hash was not serialized");
 }
 
 template<class Exception, class Function>

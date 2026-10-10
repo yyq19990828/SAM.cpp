@@ -55,7 +55,10 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         if (!std::equal(shape.begin(), shape.end(), expected->ne))
             throw std::runtime_error("incompatible SAM 3 tensor shape: " + required.first);
         std::int32_t required_type = 0;
-        if (file.modular_quantized) {
+        if (file.mixed_quantized) {
+            required_type = static_cast<std::int32_t>(image_mixed_quantized_tensor_type(
+                required.first, found->second->dimensions, {file.base_precision, file.policy_sha256, file.module_precisions}));
+        } else if (file.modular_quantized) {
             required_type = static_cast<std::int32_t>(image_modular_quantized_tensor_type(
                 required.first, found->second->dimensions,
                 *modular_image_quantization_profile(file.storage_profile), file.quantization_modules));
@@ -73,7 +76,13 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
         if (!definition.tensors.count(tensor.name))
             throw std::runtime_error("unknown SAM 3 tensor: " + tensor.name);
     }
-    state->runtime = std::make_unique<GgmlRuntime>(options, file.ftype == 0, file.quantized, cache);
+    const bool packed_weights = std::any_of(file.tensors.begin(), file.tensors.end(), [](const TensorInfo& tensor) {
+        return ggml_is_quantized(static_cast<ggml_type>(tensor.type));
+    });
+    const bool f32_weights = std::all_of(file.tensors.begin(), file.tensors.end(), [](const TensorInfo& tensor) {
+        return tensor.type == GGML_TYPE_F32;
+    });
+    state->runtime = std::make_unique<GgmlRuntime>(options, f32_weights, packed_weights, cache);
     const bool promote_weights_f16 = file.ftype == 1 && state->runtime->promote_f16_weights();
     if (promote_weights_f16) {
         // The CPU F16 dot path narrows activations to F16. Preserve the exact
@@ -129,8 +138,11 @@ inline std::shared_ptr<ModelState> load_state(const std::string& path, BackendOp
     state->model_info.arithmetic_profile = state->runtime->arithmetic_profile();
     state->model_info.device_name = state->runtime->device_name();
     state->model_info.cuda_device = state->runtime->cuda_device();
-    if (file.modular_quantized)
+    if (file.modular_quantized || file.mixed_quantized)
         state->model_info.quantization_modules = std::move(file.quantization_modules);
+    state->model_info.base_precision = std::move(file.base_precision);
+    state->model_info.module_precisions = std::move(file.module_precisions);
+    state->model_info.policy_sha256 = std::move(file.policy_sha256);
     return state;
 }
 

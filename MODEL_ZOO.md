@@ -28,6 +28,11 @@ Users can select local quantization with options such as
 the fixed vision and full presets; custom combinations need separate checks.
 See the [quantization guide](docs/quantization.md).
 
+The [module mixed configuration](docs/quantization-config.md#module-mixed-weights)
+also assigns F32/Q8_0/Q6_K/Q5_K/Q4_K independently per module. Small CPU
+conversion/arithmetic fixtures are validated; complete-model quality/performance
+and mixed CUDA/Metal execution remain unmeasured.
+
 [Visual examples](docs/visual-examples.md) compare CPU and Metal outputs for
 each image weight configuration using the same images, prompts and a detection
 threshold of 0.2. Quantized acceptance uses final output quality; tensor errors

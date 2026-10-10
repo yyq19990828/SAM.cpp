@@ -8,6 +8,7 @@ No releases have been published.
 
 ### Added
 
+- Module-level mixed F32/Q8_0/Q6_K/Q5_K/Q4_K image weights through configuration schema 2 and SAM GGUF schema 5. Original-F32 conversion records requested/resolved tensor formats and protection reasons; the native loader checks the allocation hash and canonical tensor contract. Model information and independent benchmark receipts expose the complete policy. Small CPU conversion/arithmetic fixtures are validated; mixed-model quality, performance and CUDA/Metal execution remain unmeasured.
 - Shared four-axis SAM 3 image configuration for conversion, quality exports, precision inspection and paired performance benchmarks. A standard-library-only validator lists supported combinations; explicit allocation, conflict checks and model binding prevent silent unsupported settings. Reports preserve requested runtime policies separately from conversion-applied weights and uncollected kernel arithmetic.
 - Quality-independent application performance benchmarks with paired latency and separate process-memory measurements, small-case selection, configurable iteration counts, offline summaries and advisory benefit tags. Slowdowns or missing quality reports do not block valid measurements.
 - Precision inspection and consistent quality/performance descriptions distinguish stored tensor types, requested compute/cache policies, runtime identifiers and uncollected kernel arithmetic. Opt-in graph diagnostics expose operand/output types and precision hints without treating them as kernel traces.

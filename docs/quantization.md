@@ -18,7 +18,7 @@ inference; the existing separate CLI options remain available.
 
 | Dimension | Current implementation | Configuration boundary |
 | --- | --- | --- |
-| Weight storage | F32/F16 and Q8_0/Q6_K/Q5_K/Q4_K image linears | One target quantized format per conversion; module selection and fixed floating/Q8 exceptions; no arbitrary per-layer mixed-format recipe |
+| Weight storage | F32/F16 and Q8_0/Q6_K/Q5_K/Q4_K image linears; module mixed F32/Q formats | Module-format overrides use configuration schema 2/GGUF schema 5; protected F32/Q8 exceptions remain; per-tensor overrides and mixed F16 are unavailable |
 | Activations | Mostly F32 graph buffers; backend kernels may stage/quantize operands internally | W8A8/FP8 tools are studies/probes, not complete deployable model profiles |
 | Arithmetic | CUDA F32/F16 policies; quantized kernel dispatch depends on type/shape/backend | A policy name does not guarantee one operand/accumulator dtype for the whole graph; F16 hints target supported dense operations |
 | Feature cache | F32 plus experimental F16/mixed-Q8_0 image caches | Probe options on CUDA; mixed Q8 keeps the low-resolution detection feature F32; public loading retains existing cache precision |
@@ -177,6 +177,12 @@ CLI ordering is normalized before writing the file. The sidecar manifest lists
 each tensor's module, actual storage type and quantization or floating-point
 retention reason. Loaded schema-4 models report the selected components through
 `ModelInfo::quantization_modules`.
+
+For different formats per module, use the [schema-2 mixed configuration](quantization-config.md#module-mixed-weights)
+and [CPU example](configs/quantization/image-mixed-cpu.json). Conversion creates
+`image-mixed-linear-v1` (SAM GGUF schema 5) directly from the original F32
+checkpoint. CPU conversion and small arithmetic fixtures are validated;
+complete-model quality/performance and mixed CUDA/Metal execution remain unmeasured.
 
 Use `tools/validation/validate_image.py --allow-custom-quantization` for a separate
 reference comparison of custom combinations; its report remains diagnostic.

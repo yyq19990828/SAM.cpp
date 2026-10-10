@@ -124,7 +124,7 @@ def export_original(args, samples, input_rows, identities, recipe):
                              "fp32_adaptation": adaptation}, "reference_kind": "official-checkpoint"}
 
 def export_native(args, samples, input_rows, identities, recipe):
-    from tools.benchmark.precision_reporting import expected_runtime_profile
+    from tools.benchmark.precision_reporting import expected_runtime_profile, native_weight_policy_matches
     table = args.output / "cases.tsv"
     entries = []
     for sample in samples:
@@ -155,6 +155,7 @@ def export_native(args, samples, input_rows, identities, recipe):
             if (value["prompt"] != prompt or value.get("precision") != recipe["weight_precision"]
                     or (value.get("storage_profile") or "dense") != recipe["storage_profile"]
                     or value.get("quantization_modules") != recipe["quantization_modules"]
+                    or not native_weight_policy_matches(value, recipe)
                     or value.get("arithmetic_profile") != expected_runtime_profile(recipe)
                     or (args.backend == "cuda" and value.get("cuda_device") != recipe.get("cuda_device", 0))
                     or value.get("feature_cache") != args.cache or value.get("cuda_compute") != args.compute):

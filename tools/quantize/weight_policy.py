@@ -1,9 +1,12 @@
 """Dependency-free SAM 3 image weight allocation policies shared by tools."""
 
+import hashlib
+
 QUANTIZATION_MODULES = ("vision", "text", "fusion", "decoder")
 MAX_QUANTIZATION_MODULE_CSV_LENGTH = 256
 FULL_MODULE_PROFILE_PREFIX = "image-full-linear-"
 CUSTOM_MODULE_PROFILE_PREFIX = "image-modules-linear-"
+MIXED_STORAGE_PROFILE = "image-mixed-linear-v1"
 MODULE_TENSOR_PREFIXES = {
     "vision": ("vit.", "neck."),
     "text": ("text.",),
@@ -89,7 +92,60 @@ def _schema4_quantization_profile(precision, modules, full=False):
     return profile
 
 
-def quantization_profile(precision, storage_profile=None, quantization_modules=None):
+def mixed_quantization_policy(base_precision, module_precisions):
+    """Resolve bounded module overrides; hash a versioned, language-neutral encoding."""
+    if not isinstance(base_precision, str) or base_precision not in QUANTIZATION_PROFILES:
+        raise ValueError("mixed base_precision must be q8_0/q6_k/q5_k/q4_k")
+    if not isinstance(module_precisions, dict) or set(module_precisions) - set(QUANTIZATION_MODULES):
+        raise ValueError("module_precisions must map only vision/text/fusion/decoder")
+    allowed = ("f32", *QUANTIZATION_PROFILES)
+    if any(not isinstance(value, str) or value not in allowed for value in module_precisions.values()):
+        raise ValueError("mixed module formats support f32/q8_0/q6_k/q5_k/q4_k; module F16 is not implemented")
+    modules = {module: module_precisions.get(module, base_precision) for module in QUANTIZATION_MODULES}
+    encoded = f"sam3:{MIXED_STORAGE_PROFILE}\nbase={base_precision}\n"
+    encoded += "".join(f"{module}={value}\n" for module, value in modules.items())
+    return {"base_precision": base_precision, "module_precisions": modules,
+            "policy_sha256": hashlib.sha256(encoded.encode("ascii")).hexdigest()}
+
+
+def mixed_quantization_profile(policy, storage_profile=None):
+    if not isinstance(policy, dict) or set(policy) - {"base_precision", "module_precisions", "policy_sha256"}:
+        raise ValueError("mixed policy requires base_precision and module_precisions only")
+    resolved = mixed_quantization_policy(policy.get("base_precision"), policy.get("module_precisions"))
+    if "policy_sha256" in policy and policy["policy_sha256"] != resolved["policy_sha256"]:
+        raise ValueError("mixed weight policy SHA-256 disagrees with module allocation")
+    if storage_profile not in (None, MIXED_STORAGE_PROFILE):
+        raise ValueError("mixed weights require image-mixed-linear-v1")
+    base = QUANTIZATION_PROFILES[resolved["base_precision"]]
+    return {**{key: value for key, value in base.items() if key != "vision_storage_profile"},
+            **resolved, "storage_profile": MIXED_STORAGE_PROFILE, "schema_version": 5,
+            "modules": [module for module, value in resolved["module_precisions"].items() if value != "f32"],
+            "module_precisions_csv": ",".join(f"{module}={value}" for module, value in resolved["module_precisions"].items()),
+            "profile_status": "candidate"}
+
+
+def parse_mixed_module_precisions(csv):
+    if not isinstance(csv, str) or len(csv) > MAX_QUANTIZATION_MODULE_CSV_LENGTH:
+        raise ValueError("mixed module precision CSV exceeds its bound")
+    fields = csv.split(",")
+    if len(fields) != len(QUANTIZATION_MODULES):
+        raise ValueError("mixed module precision CSV requires all four modules")
+    result = {}
+    for module, field in zip(QUANTIZATION_MODULES, fields):
+        key, separator, value = field.partition("=")
+        if key != module or not separator or value not in ("f32", *QUANTIZATION_PROFILES):
+            raise ValueError("mixed module precisions must be a canonical module=format CSV")
+        result[key] = value
+    return result
+
+
+def quantization_profile(precision, storage_profile=None, quantization_modules=None, *, mixed_policy=None):
+    if precision == "mixed":
+        if quantization_modules is not None:
+            raise ValueError("mixed weights use module_precisions instead of a selected module list")
+        return mixed_quantization_profile(mixed_policy, storage_profile)
+    if mixed_policy is not None:
+        raise ValueError("mixed_policy requires precision=mixed")
     try:
         base = QUANTIZATION_PROFILES[precision]
     except KeyError as error:

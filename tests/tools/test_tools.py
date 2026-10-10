@@ -36,6 +36,7 @@ from tests.tools.test_precision_v3 import PrecisionV3Checks, PrecisionV3Artifact
 from tests.tools.test_quantization_benchmark import QuantizationBenchmarkChecks
 from tests.tools.test_quantization_performance import QuantizationPerformanceChecks
 from tests.tools.test_quantization_config import QuantizationConfigChecks
+from tests.tools.test_mixed_quantization_tools import MixedQuantizationChecks
 from tests.tools.test_verify_precision_q8_cache import Q8CacheArithmeticChecks
 from tests.tools.test_verify_int8_dots import ExactInt8DotChecks
 from tests.tools.test_verify_fp8_dots import FP8DotChecks
