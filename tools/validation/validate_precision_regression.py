@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the seven frozen image regressions with v2 spatial, zero-tail gates.
+"""Run the seven frozen image regressions with versioned spatial, zero-tail gates.
 
 The reference subcommand transcodes complete original F32 tensor dumps. It must
 reproduce every stored deployed mask, score and box exactly before those raw
@@ -19,7 +19,8 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.validation.precision_acceptance import (GATES_SHA256, canonical_hash, combine_statuses, compare_objects,
-                                  load_gates, object_gates, quality_profile, validate_output)
+                                  diagnostic_summary, gate_identity, load_gates, object_gates, policy_arguments,
+                                  quality_profile, validate_output)
 from tools.maintenance.precision_artifacts import (archive_sources, native_recipe, native_snapshot, packages,
                                  runtime_environment, source_snapshot, verify_export_artifacts)
 from tools.convert.sam3_artifacts import (BPE_SHA256, SAM3_REVISION, artifact_path, load_case_manifest, read_array,
@@ -149,10 +150,15 @@ def prepare_reference(args):
 
 def load_ranked(directory, kind):
     manifest = read_json(directory / "manifest.json")
-    if (manifest.get("schema_version") != 2 or manifest.get("kind") != kind or manifest.get("complete") is not True
-            or manifest.get("cases_sha256") != CASES_SHA256 or manifest.get("gates_sha256") != GATES_SHA256
+    version = manifest.get("schema_version")
+    if (manifest.get("kind") != kind or not kind.endswith(f"-v{version}") or manifest.get("complete") is not True
+            or manifest.get("cases_sha256") != CASES_SHA256 or manifest.get("gates_sha256") != gate_identity(version)[1]
             or [row.get("id") for row in manifest["cases"]] != [row["id"] for row in fixed_cases()]):
         raise ValueError("incomplete or mismatched fixed ranked run")
+    if "recipe" in manifest:
+        quality_profile(manifest["recipe"], load_gates(policy_version=version))
+        if canonical_hash(manifest["recipe"]) != manifest["recipe_sha256"]:
+            raise ValueError("fixed regression recipe identity changed")
     verify_export_artifacts(directory, manifest)
     outputs = {}
     for row, expected in zip(manifest["cases"], fixed_cases()):
@@ -166,7 +172,7 @@ def load_ranked(directory, kind):
 
 
 def compare_cases(reference, candidate, recipe, incremental=False):
-    gates = load_gates()
+    gates = load_gates(policy_version=recipe["schema_version"])
     _, profile = quality_profile(recipe, gates, incremental)
     rows = []
     for case in fixed_cases():
@@ -180,20 +186,24 @@ def compare_cases(reference, candidate, recipe, incremental=False):
                                      "limit": 0, "status": "PASS" if passed else "FAIL"})
             result["status"] = combine_statuses([row["status"] for row in result["checks"]])
         rows.append({"id": case["id"], "status": result["status"], "objects": comparison, "gates": result})
-    return {"status": combine_statuses([row["status"] for row in rows]), "cases": rows,
+    diagnostics = ({"diagnostics": diagnostic_summary([row["objects"] for row in rows])}
+                   if recipe["schema_version"] == 3 else {})
+    return {"status": combine_statuses([row["status"] for row in rows]), "cases": rows, **diagnostics,
             "annotation_protection": "NOT_APPLICABLE: fixed fixtures do not have COCO ground truth"}
 
 
 def run(args):
     reference, reference_outputs = load_ranked(args.reference, "sam3-fixed-ranked-reference-v2")
-    recipe = native_recipe(args.binary, args.model, args.backend, args.compute, args.cache)
+    version = getattr(args, "policy_version", 2)
+    recipe = native_recipe(args.binary, args.model, args.backend, args.compute, args.cache,
+                           version, getattr(args, "quality_tier", None))
     if reference["checkpoint_sha256"] != recipe["checkpoint_sha256"]:
         raise ValueError("candidate and fixed original reference checkpoints differ")
     baseline, baseline_outputs = None, None
     if (args.baseline is None) != (args.cache == "f32"):
         raise ValueError("compressed cache needs exactly one uncompressed fixed-regression baseline")
     if args.baseline:
-        baseline, baseline_outputs = load_ranked(args.baseline, "sam3-fixed-ranked-native-v2")
+        baseline, baseline_outputs = load_ranked(args.baseline, f"sam3-fixed-ranked-native-v{version}")
         if (baseline["recipe"].get("feature_cache") != "f32"
                 or {**baseline["recipe"], "feature_cache": args.cache} != recipe
                 or baseline["reference_sha256"] != sha256_file(args.reference / "manifest.json")):
@@ -241,13 +251,17 @@ def run(args):
             artifacts[str(path.resolve())] = sha256_file(path)
     archived = archive_sources(args.output, artifacts)
     status = combine_statuses([absolute["status"], incremental["status"]])
-    write_json(args.output / "manifest.json", {"schema_version": 2, "kind": "sam3-fixed-ranked-native-v2", "complete": True,
-                "cases_sha256": CASES_SHA256, "gates_sha256": GATES_SHA256, "recipe": recipe,
+    separation = ({"qualification_status": "FAIL" if status == "FAIL" else "NOT_RUN", "diagnostics_affect_quality": False}
+                  if version == 3 else {})
+    scope = ("Seven spatial v3 task regressions with zero task-tail allowance; fidelity diagnostics do not veto quality"
+             if version == 3 else "Seven spatial v2 regressions with zero tail allowance; existing legacy checks remain separately required")
+    write_json(args.output / "manifest.json", {"schema_version": version, "kind": f"sam3-fixed-ranked-native-v{version}", "complete": True,
+                "cases_sha256": CASES_SHA256, "gates_sha256": gate_identity(version)[1], "recipe": recipe,
                 "recipe_sha256": canonical_hash(recipe), "reference_sha256": sha256_file(args.reference / "manifest.json"),
                 "baseline_sha256": sha256_file(args.baseline / "manifest.json") if args.baseline else None,
                 "regression_status": status, "absolute": absolute, "incremental": incremental,
                 "legacy_regression_status": "NOT_RUN", "deployment_status": "NOT_RUN",
-                "scope": "Seven spatial v2 regressions with zero tail allowance; existing legacy checks remain separately required",
+                "scope": scope, **separation,
                 "cases": rows, "artifact_sha256": artifacts, "archived_sources": archived})
     print({"regression_status": status, "absolute": absolute["status"], "incremental": incremental["status"]}, flush=True)
 
@@ -259,6 +273,7 @@ def main():
     reference.add_argument("--sam3-source", type=Path, required=True)
     reference.add_argument("--sam3-runtime-source", type=Path, required=True)
     native = sub.add_parser("run", help="run native fixed cases and apply zero-tail spatial gates")
+    policy_arguments(native)
     native.add_argument("--binary", type=Path, required=True)
     native.add_argument("--model", type=Path, required=True)
     native.add_argument("--backend", choices=("cpu", "cuda", "metal"), required=True)

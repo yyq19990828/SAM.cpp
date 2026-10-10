@@ -40,3 +40,26 @@ the artifacts are stored separately from the source checkout.
 C++ tool sources use the private `sam_private` and `sam_image_io` targets and
 are never installed. `quantize_rows.cpp` provides the pinned GGML quantization
 provenance required by conversion receipts.
+
+## Versioned precision acceptance
+
+Existing commands default to v2. For new v3 image runs, pass `--policy-version 3
+--quality-tier balanced` to `validation/export_precision_outputs.py` and
+`validation/validate_precision_regression.py run`; `high-fidelity` and
+`compact` are the other explicit tiers. Evaluation infers the version from the
+run and never silently regrades v2 receipts. All output directories must be new.
+
+`maintenance/freeze_precision_campaign.py` accepts a
+`sam3-precision-selection-v3` document with a complete hash-bound
+`evaluation_history`. Quality-only campaigns can omit performance settings.
+Cache increments use `cache_baseline`; optional performance comparisons use
+`performance_baseline`, `performance_cases` and `benchmark_binary`.
+`benchmark/prepare_precision_performance.py --policy-version 3` prepares v3
+cases. `benchmark/benchmark_precision.py` consumes the campaign and passing final
+quality for both recipes; it reports valid measurements, non-regression and
+benefit labels separately. A quality report does not replace arithmetic evidence.
+
+See the [v3 plan](../docs/plans/20261010-101413-precision-acceptance-v3.md) for a
+selection example and the complete command sequence, and [model verification](../docs/validation.md#v3-image-acceptance)
+for report semantics. Policy versions do not change GGUF or ranked tensor
+payload formats.

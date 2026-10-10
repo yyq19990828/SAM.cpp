@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tools.validation.precision_acceptance import combine_statuses
+from tools.validation.precision_acceptance import combine_statuses, gate_identity
 from tools.convert.sam3_artifacts import verify_run_artifacts
 
 
@@ -14,9 +14,12 @@ ORDER = (("baseline", "candidate"), ("candidate", "baseline"), ("baseline", "can
 
 
 def validate_cases(value, dataset, dataset_hash, gates):
-    if (value.get("schema_version") != 2 or value.get("kind") != "sam3-precision-performance-cases-v2"
+    version = gates["schema_version"]
+    if (value.get("schema_version") != version or value.get("kind") != f"sam3-precision-performance-cases-v{version}"
             or value.get("dataset_sha256") != dataset_hash):
         raise ValueError("invalid frozen performance cases")
+    if version == 3 and value.get("gates_sha256") != gate_identity(version)[1]:
+        raise ValueError("performance cases use different v3 gates")
     rows = value.get("cases", [])
     ids = [row["id"] for row in rows]
     if len(rows) < gates["performance"]["cases_min"] or len(set(ids)) != len(ids):
@@ -129,11 +132,7 @@ def assess_performance(records, cases, gates, backend):
                                     "p95_ratio": float(np.quantile(b, .95) / np.quantile(a, .95))})
         ratios = {name + "_ratio": geometric_mean([row[name + "_ratio"] for row in aggregate_cases]) for name in ("p50", "p95")}
         ratios.update(memory)
-        labels = {}
-        for label, limits in policy["labels"].items():
-            if backend == "cpu" and "gpu-memory" in label:
-                labels[label] = "NOT_APPLICABLE"
-                continue
+        def assess_limits(limits):
             relevant = {name.removesuffix("_max"): limit for name, limit in limits.items()
                         if backend != "cpu" or not name.startswith("gpu_")}
             point_pass = (all(ratios[key] <= limit for key, limit in relevant.items())
@@ -141,17 +140,33 @@ def assess_performance(records, cases, gates, backend):
             stable = all(all(({**pair[workload], **{key: pair[key] for key in memory}})[key] <= limit
                              for key, limit in relevant.items()) for pair in pair_ratios)
             stable = stable and all(row["workloads"][workload]["p95_ratio"] <= policy["case_p95_ratio_max"] for row in per_case)
-            labels[label] = ("INCONCLUSIVE" if contaminated else "FAIL" if not point_pass
-                             else "INCONCLUSIVE" if not stable else "PASS")
+            return ("INCONCLUSIVE" if contaminated else "FAIL" if not point_pass
+                    else "INCONCLUSIVE" if not stable else "PASS")
+
+        labels = {}
+        for label, limits in policy["labels"].items():
+            labels[label] = ("NOT_APPLICABLE" if backend == "cpu" and "gpu-memory" in label
+                             else assess_limits(limits))
+            if gates["schema_version"] == 3 and labels[label] == "FAIL":
+                labels[label] = "NOT_DEMONSTRATED"
         workloads[workload] = {"ratios": ratios, "cases": aggregate_cases, "labels": labels,
                                "performance_labels": [label for label, status in labels.items() if status == "PASS"]}
+        if gates["schema_version"] == 3:
+            workloads[workload].update(
+                measurement_status="INCONCLUSIVE" if contaminated else "PASS",
+                non_regression_status=assess_limits(policy["non_regression"]),
+                benefit_status=("PASS" if workloads[workload]["performance_labels"] else
+                                "INCONCLUSIVE" if "INCONCLUSIVE" in labels.values() else "NOT_DEMONSTRATED"))
     return {"complete": True, "contaminated": contaminated, "workloads": workloads, "process_pairs": pair_ratios,
             "per_case_process_pairs": per_case, "memory": memory,
             "boundary_policy": "Aggregate point failure is FAIL; crossing a limit between independent pairs is INCONCLUSIVE"}
 
 
-def deployment_status(arithmetic, absolute, incremental, regression, performance_labels):
+def deployment_status(arithmetic, absolute, incremental, regression, performance_labels, policy_version=2):
+    gate_identity(policy_version)
+    if policy_version == 3 and "NOT_APPLICABLE" in (arithmetic, absolute, regression):
+        raise ValueError("v3 arithmetic, absolute quality and regression are mandatory")
     prerequisite = combine_statuses([arithmetic, absolute, incremental, regression])
     if prerequisite != "PASS":
         return prerequisite
-    return "PASS" if performance_labels else "INCONCLUSIVE"
+    return "PASS" if policy_version == 3 or performance_labels else "INCONCLUSIVE"

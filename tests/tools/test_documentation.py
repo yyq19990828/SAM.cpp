@@ -83,6 +83,21 @@ class DocumentationChecks(unittest.TestCase):
             (root / "tools/missing-tool.md").write_text("# Tool\n")
             check(root)
 
+    def test_platform_benchmark_tables_keep_bilingual_numeric_checks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = self.fixture(temporary)
+            (root / "benchmarks").mkdir()
+            english = root / "benchmarks/Linux-4090.md"
+            chinese = root / "benchmarks/Linux-4090_zh.md"
+            english.write_text("# Linux\n\n| F32 | 0.505 | 4.777 |\n")
+            with self.assertRaisesRegex(ValueError, "missing Chinese measurement document"):
+                check(root)
+            chinese.write_text("# Linux 性能\n\n| F32 | 0.505 | 4.777 |\n")
+            check(root)
+            chinese.write_text("# Linux 性能\n\n| F32 | 0.506 | 4.777 |\n")
+            with self.assertRaisesRegex(ValueError, "bilingual measurement/artifact table differs: benchmarks/Linux-4090"):
+                check(root)
+
 
 if __name__ == "__main__":
     unittest.main()

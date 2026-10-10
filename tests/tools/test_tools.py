@@ -32,6 +32,7 @@ from tests.tools.test_precision_dataset import PrecisionDatasetChecks
 from tests.tools.test_precision_artifacts import PrecisionArtifactChecks
 from tests.tools.test_precision_performance import PrecisionPerformanceChecks
 from tests.tools.test_precision_regression import PrecisionRegressionChecks
+from tests.tools.test_precision_v3 import PrecisionV3Checks, PrecisionV3ArtifactChecks
 from tests.tools.test_verify_precision_q8_cache import Q8CacheArithmeticChecks
 from tests.tools.test_verify_int8_dots import ExactInt8DotChecks
 from tests.tools.test_verify_fp8_dots import FP8DotChecks
@@ -293,7 +294,10 @@ class ToolChecks(unittest.TestCase):
                         "ggml_library_path": str(linked_library),
                         "ggml_quantize_library_path": str(encoder_library)}
             helper = root / "sam_quantize_rows"
-            for commit in (GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT, SAM_PATCHED_GGML_BUILD_COMMIT):
+            short_dot_patch = Path(__file__).resolve().parents[2] / "cmake/patches/ggml-short-dot-cuda.patch"
+            current_build_commit = SAM_PATCHED_GGML_BUILD_COMMIT + "-" + sha256_file(short_dot_patch)[:12]
+            for commit in (GGML_REVISION, SAM_LEGACY_PATCHED_GGML_BUILD_COMMIT,
+                           SAM_PATCHED_GGML_BUILD_COMMIT, current_build_commit):
                 with self.subTest(commit=commit):
                     identity["ggml_build_commit"] = commit
                     helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
@@ -305,7 +309,7 @@ class ToolChecks(unittest.TestCase):
                     self.assertEqual(provenance["ggml_version"], GGML_VERSION)
                     self.assertEqual(provenance["ggml_library"]["sha256"], sha256_file(linked_library))
                     self.assertEqual(provenance["ggml_quantize_library"]["sha256"], sha256_file(encoder_library))
-            identity["ggml_build_commit"] = SAM_PATCHED_GGML_BUILD_COMMIT + "-unverified"
+            identity["ggml_build_commit"] = current_build_commit + "-unverified"
             helper.write_text("#!/usr/bin/env python3\nprint(" + repr(json.dumps(identity)) + ")\n")
             with self.assertRaisesRegex(ValueError, "pinned GGML"):
                 quantizer_identity(helper)

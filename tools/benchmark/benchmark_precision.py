@@ -13,7 +13,7 @@ import time
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.validation.precision_acceptance import GATES_SHA256, load_gates
+from tools.validation.precision_acceptance import gate_identity, load_gates
 from tools.maintenance.precision_artifacts import (archive_sources, campaign_check, native_recipe, native_snapshot,
                                  source_snapshot, verify_export_artifacts)
 from tools.benchmark.precision_performance import ORDER, assess_performance, validate_cases
@@ -109,11 +109,11 @@ def run_process(binary, model, recipe, case, kind, output, diagnostic=False):
     return value
 
 
-def accepted_quality(path, recipe_hash, campaign_hash):
+def accepted_quality(path, recipe_hash, campaign_hash, policy_version=2):
     value = read_json(path)
-    if (value.get("schema_version") != 2 or value.get("kind") != "sam3-precision-quality-v2"
+    if (value.get("schema_version") != policy_version or value.get("kind") != f"sam3-precision-quality-v{policy_version}"
             or value.get("complete") is not True or value.get("phase") != "evaluation"
-            or value.get("final_evaluation_completed") is not True or value.get("gates_sha256") != GATES_SHA256
+            or value.get("final_evaluation_completed") is not True or value.get("gates_sha256") != gate_identity(policy_version)[1]
             or value.get("candidate_recipe_sha256") != recipe_hash or value.get("campaign_sha256") != campaign_hash
             or value.get("absolute_quality_status") != "PASS"
             or value.get("incremental_quality_status") not in ("PASS", "NOT_APPLICABLE")
@@ -129,9 +129,16 @@ def run(args):
     if args.output.exists():
         raise FileExistsError("performance output must be a new directory")
     campaign = read_json(args.campaign)
+    version = campaign["schema_version"]
+    gates = load_gates(policy_version=version)
     candidates = {row["id"]: row for row in campaign["runs"]}
     candidate = candidates[args.candidate]
+    if (not candidate.get("performance_baseline") or not campaign.get("performance_cases")
+            or not campaign.get("benchmark_binary")):
+        raise ValueError("this campaign did not freeze a performance comparison for the candidate")
     baseline = candidates[candidate["performance_baseline"]]
+    if version == 3 and baseline["recipe"]["quality_tier"] != candidate["recipe"]["quality_tier"]:
+        raise ValueError("v3 performance baselines require the same declared quality tier")
     if candidate["id"] == baseline["id"]:
         raise ValueError("a deployment baseline cannot claim an improvement over itself")
     if candidate["recipe"]["backend"] not in ("cpu", "cuda"):
@@ -139,20 +146,22 @@ def run(args):
     dataset_path = Path(candidate["development_manifest"]).parent / "dataset.json"
     campaign_hash = campaign_check(args.campaign, dataset_path, candidate["recipe"], "evaluation")
     campaign_check(args.campaign, dataset_path, baseline["recipe"], "evaluation")
-    c_quality = accepted_quality(args.candidate_quality, candidate["recipe_sha256"], campaign_hash)
-    b_quality = accepted_quality(args.baseline_quality, baseline["recipe_sha256"], campaign_hash)
+    c_quality = accepted_quality(args.candidate_quality, candidate["recipe_sha256"], campaign_hash, version)
+    b_quality = accepted_quality(args.baseline_quality, baseline["recipe_sha256"], campaign_hash, version)
     cp, bp = c_quality["absolute"]["profile"], b_quality["absolute"]["profile"]
-    if any(bp[name] > cp[name] for name in cp if name.endswith("_max")) or bp["mask_iou_min"] < cp["mask_iou_min"]:
+    mask_floor = "task_mask_iou_min" if version == 3 else "mask_iou_min"
+    if any(bp[name] > cp[name] for name in cp if name.endswith("_max")) or bp[mask_floor] < cp[mask_floor]:
         raise ValueError("deployment baseline has not passed an equally strict quality profile")
     cases_path = Path(campaign["performance_cases"])
-    cases = validate_cases(read_json(cases_path), load_precision_dataset(dataset_path), campaign["dataset_sha256"], load_gates())["cases"]
+    cases = validate_cases(read_json(cases_path), load_precision_dataset(dataset_path), campaign["dataset_sha256"], gates)["cases"]
     binary = Path(campaign["benchmark_binary"])
     identities = source_snapshot()
     for path in (args.campaign, args.candidate_quality, args.baseline_quality, cases_path):
         identities[str(path.resolve())] = sha256_file(path)
     for entry in (baseline, candidate):
         recipe = entry["recipe"]
-        actual = native_recipe(Path(entry["export_binary"]), Path(entry["model"]), recipe["backend"], recipe["compute_mode"], recipe["feature_cache"])
+        actual = native_recipe(Path(entry["export_binary"]), Path(entry["model"]), recipe["backend"], recipe["compute_mode"], recipe["feature_cache"],
+                               version, recipe.get("quality_tier"))
         if actual != recipe:
             raise ValueError("hardware, model, driver or binary changed after the campaign freeze")
         identities.update(native_snapshot(binary, Path(entry["model"])))
@@ -170,18 +179,20 @@ def run(args):
                     row.update({"case": case["id"], "pair": pair, "variant": variant})
                     records.append(row)
                     write_json(args.output / (name + ".json"), row)
-    result = assess_performance(records, cases, load_gates(), candidate["recipe"]["backend"])
+    result = assess_performance(records, cases, gates, candidate["recipe"]["backend"])
     verify_run_artifacts(identities)
     for path in sorted(args.output.rglob("*")):
         if path.is_file():
             identities[str(path.resolve())] = sha256_file(path)
     archived = archive_sources(args.output, identities)
-    write_json(args.output / "performance.json", {"schema_version": 2, "kind": "sam3-precision-performance-v2",
-               "gates_sha256": GATES_SHA256, "campaign_sha256": campaign_hash,
+    separation = ({"qualification_status": "NOT_RUN", "performance_required_for_qualification": False}
+                  if version == 3 else {})
+    write_json(args.output / "performance.json", {"schema_version": version, "kind": f"sam3-precision-performance-v{version}",
+               "gates_sha256": gate_identity(version)[1], "campaign_sha256": campaign_hash,
                "candidate_recipe_sha256": candidate["recipe_sha256"], "baseline_recipe_sha256": baseline["recipe_sha256"],
                "quality_prerequisites_passed": True, "backend": candidate["recipe"]["backend"],
                "artifact_sha256": identities, "archived_sources": archived, "records": records, **result,
-               "arithmetic_status": "NOT_RUN", "deployment_status": "NOT_RUN",
+               "arithmetic_status": "NOT_RUN", "deployment_status": "NOT_RUN", **separation,
                "exclusivity": "No other CUDA compute PID observed before/after each latency process and during independent memory sampling"})
     print({workload: row["performance_labels"] for workload, row in result["workloads"].items()}, flush=True)
 

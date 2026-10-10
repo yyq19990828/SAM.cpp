@@ -273,6 +273,9 @@ def export(args):
                 start = time.perf_counter()
                 cache_hit = image_key == previous_image_key
                 if not cache_hit:
+                    # Release the previous image before allocating its replacement.
+                    state = None
+                    captured.clear()
                     state = processor.set_image(image)
                     previous_image_key = image_key
                 processor.reset_all_prompts(state)
@@ -314,6 +317,9 @@ def export(args):
                                      "tensors_sha256": sha256_file(case_directory / "tensors.json"),
                                      "results_sha256": sha256_file(case_directory / "results.json"),
                                      "inference_seconds": elapsed, "image_cache_hit": cache_hit})
+                # Dumped tensors must not keep the previous prompt/image alive.
+                captured.pop("grounding")
+                del raw, fusion, tensors, tensor, query_scores
         packages = {distribution.metadata["Name"]: distribution.version for distribution in importlib.metadata.distributions()}
         bundle = {"schema_version": 1, "architecture": "sam3", "sam3_revision": SAM3_REVISION,
                   "reference_kind": reference_kind, "eligible_for_milestone": reference_kind == "official-checkpoint",

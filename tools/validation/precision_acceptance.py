@@ -17,18 +17,48 @@ from tools.convert.sam3_artifacts import read_json, sha256_file
 
 GATES_PATH = Path(__file__).resolve().parents[2] / "tests/data/sam3-precision-gates-v2.json"
 GATES_SHA256 = "4cf06bdc609e5a143b2d74b42f394480bbe39e7510726ecedfe44fde3212a802"
+GATES_V3_PATH = GATES_PATH.with_name("sam3-precision-gates-v3.json")
+GATES_V3_SHA256 = "822a617b90dcd5b45153b777d5e720272f234d38ae8908b3422d27357d842281"
+QUALITY_TIERS = ("high-fidelity", "balanced", "compact")
 STATUSES = frozenset({"PASS", "FAIL", "INCONCLUSIVE", "NOT_RUN", "NOT_APPLICABLE"})
 QUANTIZED = frozenset({"q8_0", "q6_k", "q5_k", "q4_k"})
 MODULES = ("vision", "text", "fusion", "decoder")
 
 
-def load_gates(path=GATES_PATH):
-    if sha256_file(path) != GATES_SHA256:
-        raise ValueError("v2 gate identity differs from the frozen policy")
+def gate_identity(policy_version=2):
+    if type(policy_version) is not int or policy_version not in (2, 3):
+        raise ValueError("unsupported precision gate version")
+    return (GATES_PATH, GATES_SHA256) if policy_version == 2 else (GATES_V3_PATH, GATES_V3_SHA256)
+
+
+def load_gates(path=None, *, policy_version=2):
+    default, digest = gate_identity(policy_version)
+    path = default if path is None else path
+    if sha256_file(path) != digest:
+        raise ValueError(f"v{policy_version} gate identity differs from the frozen policy")
     value = read_json(path)
-    if value.get("schema_version") != 2 or value.get("gate_set") != "sam3-precision-acceptance-v2":
+    if value.get("schema_version") != policy_version or value.get("gate_set") != f"sam3-precision-acceptance-v{policy_version}":
         raise ValueError("unsupported precision gate version")
     return value
+
+
+def policy_arguments(parser):
+    parser.add_argument("--policy-version", type=int, choices=(2, 3), default=2,
+                        help="explicit opt-in; v2 remains the legacy default")
+    parser.add_argument("--quality-tier", choices=QUALITY_TIERS,
+                        help="required for v3; independent of weight/compute/cache types")
+
+
+def version_recipe(recipe, policy_version=2, quality_tier=None):
+    gate_identity(policy_version)
+    if (policy_version == 3 and quality_tier not in QUALITY_TIERS
+            or policy_version == 2 and quality_tier is not None):
+        raise ValueError("v3 requires an explicit quality tier; v2 does not accept a tier")
+    result = {**recipe, "schema_version": policy_version}
+    if policy_version == 3:
+        result["quality_tier"] = quality_tier
+    quality_profile(result, load_gates(policy_version=policy_version))
+    return result
 
 
 def canonical_hash(value):
@@ -38,9 +68,11 @@ def canonical_hash(value):
 
 def quality_profile(recipe, gates, incremental=False):
     """Resolve a full declared recipe without guessing from the smallest dtype."""
-    if (recipe.get("schema_version") != 2 or recipe.get("task") != "image"
+    policy_version = gates["schema_version"]
+    gate_identity(policy_version)
+    if (recipe.get("schema_version") != policy_version or recipe.get("task") != "image"
             or recipe.get("backend") not in ("cpu", "metal", "cuda")):
-        raise ValueError("recipe requires an explicit v2 image/backend identity")
+        raise ValueError("recipe requires a matching versioned image/backend identity")
     weight, arithmetic, cache = (recipe.get(key) for key in ("weight_precision", "compute_mode", "feature_cache"))
     if weight not in {"f32", "f16", "bf16", *QUANTIZED}:
         raise ValueError("unsupported weight precision")
@@ -76,6 +108,12 @@ def quality_profile(recipe, gates, incremental=False):
             name = "bf16" if "bf16" in (weight, arithmetic) else "f16" if "f16" in (weight, arithmetic) else "f32"
     if recipe["backend"] != "cuda" and (arithmetic != "f32" or cache != "f32"):
         raise ValueError("this policy has no qualified non-CUDA compute/cache combination")
+    if policy_version == 3:
+        name = recipe.get("quality_tier")
+        if name not in QUALITY_TIERS:
+            raise ValueError("v3 requires an explicit quality tier")
+    elif "quality_tier" in recipe:
+        raise ValueError("v2 does not accept a quality tier")
     profile = dict(gates["profiles"][name])
     if incremental:
         if cache == "f32":
@@ -246,28 +284,41 @@ def compare_objects(reference, candidate, profile, common, ground_truth=()):
         passed = (ious[r, c] >= profile["mask_iou_min"] and score_error <= profile["score_error_max"]
                   and box_error <= profile["box_fraction_max"])
         counted = bool(high[r] or cs[cq] >= common["high_confidence_min"])
-        bad += counted and not passed
+        task_passed = ious[r, c] >= profile.get("task_mask_iou_min", profile["mask_iou_min"])
+        bad += counted and not (task_passed if common.get("policy_version") == 3 else passed)
         pairs.append({"reference_query": rq, "candidate_query": cq, "mask_iou": float(ious[r, c]),
                       "score_error": score_error, "box_fraction": box_error, "counted": counted, "passed": bool(passed)})
+        if common.get("policy_version") == 3:
+            pairs[-1].update(task_passed=bool(task_passed), fidelity_passed=bool(passed))
     missing = [int(r_ids[r]) for r in range(len(r_ids)) if r not in matched_r and high[r]]
     extra = [int(c_ids[c]) for c in range(len(c_ids)) if c not in matched_c and cs[c_ids[c]] >= common["high_confidence_min"]]
-    protected_count, protected_misses = 0, 0
+    protected_count, protected_misses, boundary_flips = 0, 0, 0
     if ground_truth:
         gt = [validate_rle(row, reference["height"], reference["width"]) for row in ground_truth]
         protected = [r for r, q in enumerate(r_ids) if rs[q] >= common["protected_score_min"]
                      and int(masks.area(r_masks[r])) >= common["protected_area_min"]]
-        original_gt = spatial_assignment(mask_ious([r_masks[r] for r in protected], gt),
-                                         [True] * len(protected), minimum=common["protected_gt_iou_min"])
+        reference_gt_ious = mask_ious([r_masks[r] for r in protected], gt)
+        original_gt = spatial_assignment(reference_gt_ious, [True] * len(protected),
+                                         minimum=common.get("protected_reference_gt_iou_min", common["protected_gt_iou_min"]))
         protected_gt = [gt[column] for _, column in original_gt]
         kept = spatial_assignment(mask_ious(protected_gt, c_masks), [True] * len(protected_gt),
                                   minimum=common["protected_gt_iou_min"])
         protected_count, protected_misses = len(protected_gt), len(protected_gt) - len(kept)
+        if common.get("policy_version") == 3:
+            # Keep the old GT-threshold crossing visible, including on the
+            # reference's poorly localized boundary objects. It is not a veto.
+            old_gt = spatial_assignment(reference_gt_ious, [True] * len(protected),
+                                        minimum=common["protected_gt_iou_min"])
+            old_masks = [gt[column] for _, column in old_gt]
+            old_kept = spatial_assignment(mask_ious(old_masks, c_masks), [True] * len(old_masks),
+                                          minimum=common["protected_gt_iou_min"])
+            boundary_flips = len(old_masks) - len(old_kept)
     low, upper = common["gray_interval"]
     changes = [{"query": q, "reference_score": float(rs[q]), "candidate_score": float(cs[q]),
                 "reference_selected": bool(rs[q] > 0.5), "candidate_selected": bool(cs[q] > 0.5),
                 "reference_in_gray_interval": bool(low < rs[q] < upper)} for q in range(200)
                if (rs[q] > 0.5) != (cs[q] > 0.5)]
-    return {"high_reference_objects": int(high.sum()), "bad_objects": int(bad) + len(missing) + len(extra),
+    result = {"high_reference_objects": int(high.sum()), "bad_objects": int(bad) + len(missing) + len(extra),
             "missing_high_objects": len(missing), "extra_high_objects": len(extra),
             "missing_reference_queries": missing, "extra_candidate_queries": extra,
             "unmatched_reference_queries": [int(q) for r, q in enumerate(r_ids) if r not in matched_r],
@@ -275,6 +326,23 @@ def compare_objects(reference, candidate, profile, common, ground_truth=()):
             "protected_objects": protected_count, "protected_misses": protected_misses,
             "reference_detections": len(r_ids), "candidate_detections": len(c_ids),
             "matches": pairs, "fixed_query_selection_changes": changes}
+    if common.get("policy_version") == 3:
+        result["diagnostics"] = {"gt_threshold_losses": boundary_flips,
+                                 "fidelity_bad_pairs": sum(p["counted"] and not p["fidelity_passed"] for p in pairs),
+                                 "task_mask_failures": sum(p["counted"] and not p["task_passed"] for p in pairs)}
+    return result
+
+
+def diagnostic_summary(comparisons):
+    pairs = [pair for row in comparisons for pair in row["matches"]]
+    return {"role": "diagnostic-only; not part of task-quality status",
+            "matched_pairs": len(pairs),
+            "mask_iou_min": min((p["mask_iou"] for p in pairs), default=None),
+            "score_error_max": max((p["score_error"] for p in pairs), default=None),
+            "box_fraction_max": max((p["box_fraction"] for p in pairs), default=None),
+            "fidelity_bad_pairs": sum(row["diagnostics"]["fidelity_bad_pairs"] for row in comparisons),
+            "gt_threshold_losses": sum(row["diagnostics"]["gt_threshold_losses"] for row in comparisons),
+            "fixed_query_selection_changes": sum(len(row["fixed_query_selection_changes"]) for row in comparisons)}
 
 
 def combine_statuses(statuses):

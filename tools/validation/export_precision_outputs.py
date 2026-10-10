@@ -13,7 +13,8 @@ import time
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.validation.precision_acceptance import GATES_SHA256, canonical_hash, required_queries, validate_output
+from tools.validation.precision_acceptance import (canonical_hash, gate_identity, policy_arguments,
+                                                  required_queries, validate_output, version_recipe)
 from tools.maintenance.precision_artifacts import (archive_sources, campaign_check, claim_evaluation, load_inputs, native_recipe,
                                  native_snapshot, packages, runtime_environment, source_snapshot)
 from tools.quantize.runtime_quantization import encode_mask
@@ -193,7 +194,10 @@ def export(args):
         if not requested or len(requested) != len(args.sample_ids) or not requested <= {row["id"] for row in samples}:
             raise ValueError("sample IDs must be unique members of the requested phase")
         samples = [row for row in samples if row["id"] in requested]
-    recipe = oracle_recipe(args) if args.engine == "original" else native_recipe(args.binary, args.model, args.backend, args.compute, args.cache)
+    version = getattr(args, "policy_version", 2)
+    tier = getattr(args, "quality_tier", None)
+    recipe = (version_recipe(oracle_recipe(args), version, tier) if args.engine == "original" else
+              native_recipe(args.binary, args.model, args.backend, args.compute, args.cache, version, tier))
     campaign_hash = campaign_check(args.campaign, args.dataset, recipe, args.phase, partial)
     identities = source_snapshot()
     for path in (args.dataset, args.inputs / "manifest.json"):
@@ -215,12 +219,12 @@ def export(args):
     rows, metadata = (export_original if args.engine == "original" else export_native)(args, samples, input_rows, identities, recipe)
     verify_run_artifacts(identities)
     archived = archive_sources(args.output, identities)
-    write_json(args.output / "manifest.json", {"schema_version": 2, "kind": "sam3-ranked-precision-output-v2", "complete": True,
+    write_json(args.output / "manifest.json", {"schema_version": version, "kind": f"sam3-ranked-precision-output-v{version}", "complete": True,
                 "phase": args.phase, "diagnostic_only": partial or args.phase != "evaluation", "images": len(samples),
                 "sample_ids": [row["id"] for row in samples], "dataset_sha256": sha256_file(args.dataset),
                 "input_manifest_sha256": sha256_file(args.inputs / "manifest.json"),
                 "input_images": {sample["id"]: input_rows[sample["id"]]["sha256"] for sample in samples},
-                "gates_sha256": GATES_SHA256, "recipe": recipe, "recipe_sha256": canonical_hash(recipe),
+                "gates_sha256": gate_identity(version)[1], "recipe": recipe, "recipe_sha256": canonical_hash(recipe),
                 "campaign_sha256": campaign_hash, "campaign_file": str(args.campaign.resolve()) if args.campaign else None,
                 "artifact_sha256": identities, "archived_sources": archived, "outputs": rows,
                 "packages": packages(), **metadata})
@@ -229,6 +233,7 @@ def export(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    policy_arguments(parser)
     for name in ("dataset", "inputs", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--phase", choices=("development", "evaluation"), required=True)

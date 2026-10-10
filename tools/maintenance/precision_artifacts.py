@@ -1,4 +1,4 @@
-"""Shared v2 input/export identities and campaign boundaries."""
+"""Shared input/export identities and versioned campaign boundaries."""
 
 from importlib.metadata import version
 from pathlib import Path
@@ -10,7 +10,8 @@ import re
 import shutil
 import subprocess
 
-from tools.validation.precision_acceptance import GATES_PATH, GATES_SHA256, canonical_hash, load_gates, quality_profile
+from tools.validation.precision_acceptance import (GATES_PATH, canonical_hash, gate_identity,
+                                                  version_recipe)
 from tools.validation.prepare_coco_acceptance import load_precision_dataset
 from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file, verify_run_artifacts
 
@@ -131,7 +132,7 @@ def native_snapshot(binary, model):
     return {str(path): sha256_file(path) for path in sorted(paths)}
 
 
-def native_recipe(binary, model, backend, compute, cache):
+def native_recipe(binary, model, backend, compute, cache, policy_version=2, quality_tier=None):
     manifest = read_json(model.with_suffix(model.suffix + ".manifest.json"))
     if manifest.get("task") != "image":
         raise ValueError("precision export requires a converted image model")
@@ -146,8 +147,7 @@ def native_recipe(binary, model, backend, compute, cache):
               "binary_sha256": sha256_file(binary), "conversion_manifest_sha256": sha256_file(model.with_suffix(model.suffix + ".manifest.json"))}
     if recipe["model_sha256"] != manifest["output"]["sha256"]:
         raise ValueError("model bytes differ from their original conversion manifest")
-    quality_profile(recipe, load_gates())
-    return recipe
+    return version_recipe(recipe, policy_version, quality_tier)
 
 
 def campaign_check(path, dataset_path, recipe, phase, partial=False):
@@ -158,10 +158,13 @@ def campaign_check(path, dataset_path, recipe, phase, partial=False):
     if path is None or partial:
         raise ValueError("final evaluation requires a frozen campaign and the complete split")
     campaign = read_json(path)
-    if (campaign.get("schema_version") != 2 or campaign.get("kind") != "sam3-precision-campaign-v2"
-            or campaign.get("frozen_before_evaluation") is not True or campaign.get("gates_sha256") != GATES_SHA256
+    version = recipe["schema_version"]
+    if (campaign.get("schema_version") != version or campaign.get("kind") != f"sam3-precision-campaign-v{version}"
+            or campaign.get("frozen_before_evaluation") is not True or campaign.get("gates_sha256") != gate_identity(version)[1]
             or campaign.get("dataset_sha256") != sha256_file(dataset_path)):
         raise ValueError("invalid frozen precision campaign")
+    if version == 3:
+        validate_evaluation_history(campaign.get("evaluation_history"), load_precision_dataset(dataset_path))
     if canonical_hash(recipe) not in campaign.get("recipe_sha256", []):
         raise ValueError("recipe was not frozen in the final candidate list")
     verify_run_artifacts(campaign["artifact_sha256"])
@@ -169,6 +172,38 @@ def campaign_check(path, dataset_path, recipe, phase, partial=False):
     if any(campaign["artifact_sha256"].get(path) != digest for path, digest in current.items()):
         raise ValueError("campaign did not freeze every current evaluator/export source")
     return sha256_file(path)
+
+
+def validate_evaluation_history(history, dataset):
+    """Reject exposed holdouts by both COCO identity and content, before inference.
+
+    The declaration must list all prior datasets, including earlier v3 trials.
+    It is a provenance assertion, not automatic discovery of external usage.
+    Prior reserve images remain unopened; an existing reserve may be retained.
+    """
+    if (not isinstance(history, dict) or history.get("complete_declaration") is not True
+            or not isinstance(history.get("datasets"), dict) or not history["datasets"]):
+        raise ValueError("v3 final evaluation requires a complete prior-dataset history")
+    exposed_ids, exposed_hashes, reserve_ids, reserve_hashes = set(), set(), set(), set()
+    for name, digest in history["datasets"].items():
+        if sha256_file(Path(name)) != digest:
+            raise ValueError("prior-dataset history identity changed")
+        prior = load_precision_dataset(Path(name))
+        exposed_ids.update(prior.get("previously_used_image_ids", []))
+        exposed_hashes.update(prior.get("previously_used_content_hashes", []))
+        for row in prior["samples"]:
+            ids, hashes = ((reserve_ids, reserve_hashes) if row["split"] == "reserve"
+                           else (exposed_ids, exposed_hashes))
+            ids.add(row["coco_image_id"])
+            hashes.add(row["source_sha256"])
+    for row in dataset["samples"]:
+        if row["split"] not in ("evaluation", "reserve"):
+            continue
+        if row["coco_image_id"] in exposed_ids or row["source_sha256"] in exposed_hashes:
+            raise ValueError("previously exposed images cannot qualify a v3 holdout")
+        if row["split"] == "evaluation" and (row["coco_image_id"] in reserve_ids or row["source_sha256"] in reserve_hashes):
+            raise ValueError("v3 does not automatically open a prior reserve")
+    return dict(history["datasets"])
 
 
 def claim_evaluation(path, recipe, output):

@@ -8,6 +8,7 @@ No releases have been published.
 
 ### Added
 
+- Opt-in v3 image acceptance with explicit task-quality tiers independent of precision, diagnostic-only score/box/tight-mask differences, and separate performance validity, non-regression and benefit labels. Quality-only campaigns need no performance run; cache increments remain mandatory. Fresh final campaigns bind prior dataset exclusions and require eligible development results. Versioned reports preserve all v2 policy and historical results; no new model/backend qualification is implied.
 - Installable relocatable SDK package: `SAM_ENABLE_INSTALL` (standalone default) adds standard `install(TARGETS)`/`install(EXPORT)` rules with a CMake package config and version file. Static and shared builds both produce a consumable `find_package(sam CONFIG)` package; SAM-prepared GGML is installed and exported with it, a caller-owned GGML must resolve through its own package, and an unexportable build-tree GGML is rejected with an explicit message. Installed shared libraries locate their GGML siblings through an `$ORIGIN` run path. `tests/install_consumer` verifies the package from an isolated build directory and after moving the install prefix.
 - `SAM_BUILD_TOOLS` option (standalone default `ON`, embedded `OFF`) builds the standalone conversion, validation and profiling tools independently of `SAM_BUILD_EXAMPLES`, which now owns only the `sam_image` and `sam_video` applications.
 - Compiled-library source identity: `source_snapshot()` and `archive_sources()` now recursively cover `src/` implementations and build files, with behavior tests proving that changing a new implementation changes its identity, that an archive verifies after the live sources are removed, and that archive tampering fails.
@@ -41,6 +42,7 @@ No releases have been published.
 
 ### Changed
 
+- Organize bilingual performance measurements under `benchmarks/` by operating system and hardware (`MacOS-m4pro` and `Linux-4090`), keeping the root performance pages as indexes and retaining existing measurement values and historical links.
 - Keep the English and Chinese quantization guides focused on conversion, precision limits and scoped results; retain experimental history and diagnostic evidence in the linked plans.
 - Group the repository by ownership: the CLI applications moved to `apps/{image,video}/`, decoding support to `support/image_io/`, vendored STB headers to `third_party/stb/`, tests to `tests/{api,models,runtime/ggml,integration,tools}/`, and the Python tools to `tools/{convert,quantize,validation,benchmark,visualization,maintenance}/`. Historical flat tool module paths remain as forwarding entry points, and the `${build}/examples/` CLI and probe output paths are unchanged. SDK-only builds no longer compile decoding, STB, Python or test code.
 - Extend compiled-library source identity and archives to nested tools, `apps/`, `support/`, the compiled `third_party/stb/` headers and all related CMake files, with migration coverage tests for nested tool changes and offline archive verification.
@@ -66,6 +68,8 @@ No releases have been published.
 
 ### Fixed
 
+- Accept the exact current three-patch GGML build identity for Q6_K/Q5_K/Q4_K conversion, retaining rejection of unknown quantizer builds and compatibility with historical conversion manifests.
+- Release completed prompt tensors and the previous image state in the original-model reference exporter, reducing transient GPU memory when switching images while preserving same-image feature reuse.
 - Preserve source-override compatibility with the previously verified combined GGML archive, upgrading its CUDA corrections in a build-local copy without modifying the supplied source.
 - Use bounded double-precision accumulation for explicit-F32 short CUDA dots, repairing a cancellation failure in the custom Q8 recipe's decoder presence head without changing the arithmetic gate.
 - CUDA Q8_0 MMQ staging now uses correctly rounded F32 inverse-scale division, avoiding nonfinite stored scales for the tested finite extreme inputs.
@@ -91,6 +95,7 @@ No releases have been published.
 
 ### Removed
 
+- Retire the temporary compiled-library migration PRD and technical specification; the historical task plan now points to the retained architecture and migration plan.
 - Legacy custom `.ggml` loading and incomplete-tokenizer repair. Reconvert original checkpoints to GGUF; renaming an old file does not convert it.
 
 ### Security

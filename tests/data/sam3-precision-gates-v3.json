@@ -1,0 +1,144 @@
+{
+  "schema_version": 3,
+  "gate_set": "sam3-precision-acceptance-v3",
+  "status": "versioned-engineering-policy-no-model-qualification",
+  "source_plan": "docs/plans/20261010-101413-precision-acceptance-v3.md",
+  "units": "All probabilities, drops and rates are fractions on 0-1, not percentage points",
+  "common": {
+    "score_threshold": 0.5,
+    "high_confidence_min": 0.6,
+    "gray_interval": [
+      0.4,
+      0.6
+    ],
+    "matching_iou_min": 0.5,
+    "protected_score_min": 0.9,
+    "protected_area_min": 1024,
+    "protected_gt_iou_min": 0.5,
+    "protected_misses_max": 0,
+    "high_reference_objects_min": 1000,
+    "evaluation_images_min": 1024,
+    "ranked_max_detections": 100,
+    "unmatched_budget_fraction": 0.5,
+    "negative_count_budget_multiplier": 2.0,
+    "area_ap_budget_multiplier": 2.0,
+    "area_images_min": 50,
+    "area_instances_min": 200,
+    "category_positive_pairs_min": 20,
+    "category_instances_min": 50,
+    "category_ap_budget_floor": 0.01,
+    "bootstrap_repetitions": 2000,
+    "bootstrap_seed": 20261007,
+    "bootstrap_quantile": 0.95,
+    "bootstrap_method": "higher",
+    "policy_version": 3,
+    "protected_reference_gt_iou_min": 0.75
+  },
+  "profiles": {
+    "high-fidelity": {
+      "ap_drop_max": 0.0025,
+      "miou_drop_max": 0.002,
+      "mask_iou_min": 0.95,
+      "score_error_max": 0.02,
+      "box_fraction_max": 0.01,
+      "bad_object_rate_max": 0.005,
+      "new_negative_rate_max": 0.001,
+      "task_mask_iou_min": 0.9
+    },
+    "balanced": {
+      "ap_drop_max": 0.01,
+      "miou_drop_max": 0.005,
+      "mask_iou_min": 0.94,
+      "score_error_max": 0.03,
+      "box_fraction_max": 0.015,
+      "bad_object_rate_max": 0.01,
+      "new_negative_rate_max": 0.003,
+      "task_mask_iou_min": 0.85
+    },
+    "compact": {
+      "ap_drop_max": 0.02,
+      "miou_drop_max": 0.01,
+      "mask_iou_min": 0.9,
+      "score_error_max": 0.05,
+      "box_fraction_max": 0.03,
+      "bad_object_rate_max": 0.02,
+      "new_negative_rate_max": 0.005,
+      "task_mask_iou_min": 0.8
+    }
+  },
+  "cache_profiles": {
+    "f16": {
+      "ap_drop_max": 0.001,
+      "miou_drop_max": 0.0005,
+      "mask_iou_min": 0.99,
+      "score_error_max": 0.005,
+      "box_fraction_max": 0.002,
+      "bad_object_rate_max": 0.0025,
+      "task_mask_iou_min": 0.95
+    },
+    "mixed-q8_0": {
+      "ap_drop_max": 0.0025,
+      "miou_drop_max": 0.001,
+      "mask_iou_min": 0.98,
+      "score_error_max": 0.01,
+      "box_fraction_max": 0.005,
+      "bad_object_rate_max": 0.005,
+      "task_mask_iou_min": 0.9
+    },
+    "all-q8_0": {
+      "ap_drop_max": 0.0025,
+      "miou_drop_max": 0.001,
+      "mask_iou_min": 0.98,
+      "score_error_max": 0.01,
+      "box_fraction_max": 0.005,
+      "bad_object_rate_max": 0.005,
+      "task_mask_iou_min": 0.9
+    }
+  },
+  "performance": {
+    "cases_min": 8,
+    "process_pairs_min": 3,
+    "warmups_min": 5,
+    "iterations_min": 20,
+    "case_p95_ratio_max": 1.05,
+    "labels": {
+      "latency": {
+        "p50_ratio_max": 0.9,
+        "p95_ratio_max": 1.03,
+        "gpu_peak_ratio_max": 1.03,
+        "rss_peak_ratio_max": 1.05
+      },
+      "gpu-memory": {
+        "p50_ratio_max": 1.03,
+        "p95_ratio_max": 1.03,
+        "gpu_peak_ratio_max": 0.85,
+        "rss_peak_ratio_max": 1.05
+      },
+      "latency-and-gpu-memory": {
+        "p50_ratio_max": 0.9,
+        "p95_ratio_max": 1.03,
+        "gpu_peak_ratio_max": 0.9,
+        "rss_peak_ratio_max": 1.05
+      },
+      "host-memory": {
+        "p50_ratio_max": 1.03,
+        "p95_ratio_max": 1.03,
+        "gpu_peak_ratio_max": 1.03,
+        "rss_peak_ratio_max": 0.85
+      }
+    },
+    "non_regression": {
+      "p50_ratio_max": 1.03,
+      "p95_ratio_max": 1.03,
+      "gpu_peak_ratio_max": 1.03,
+      "rss_peak_ratio_max": 1.05
+    }
+  },
+  "semantics": {
+    "tiers": "Explicit task-quality target independent of storage/compute/cache dtype; no inferred tier.",
+    "diagnostics": "Reference score/box and tight mask fidelity, fixed-query changes and GT threshold flips are reported without vetoing task quality.",
+    "protected": "Reference score >= 0.9, area >= 1024 and one-to-one GT IoU >= 0.75; candidate must preserve those GT at IoU >= 0.5. Zero misses.",
+    "qualification": "Arithmetic, absolute quality, applicable cache increment and regression required; performance labels are optional, never arithmetic evidence.",
+    "history": "v2 receipts are immutable. v3 final inference requires a new campaign and unused evaluation images, with prior dataset identities declared."
+  }
+}

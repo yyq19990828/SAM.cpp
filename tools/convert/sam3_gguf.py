@@ -24,10 +24,12 @@ GGML_VERSION = "0.26.0"
 _PATCH_DIRECTORY = Path(__file__).resolve().parents[2] / "cmake/patches"
 _METAL_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-precise-metal.patch").read_bytes()).hexdigest()
 _CUDA_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-precise-cuda.patch").read_bytes()).hexdigest()
+_SHORT_DOT_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-short-dot-cuda.patch").read_bytes()).hexdigest()
 GGML_QUANTIZER_BUILD_COMMITS = (
     GGML_REVISION,
     f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}",
     f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}-{_CUDA_PATCH_HASH[:12]}",
+    f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}-{_CUDA_PATCH_HASH[:12]}-{_SHORT_DOT_PATCH_HASH[:12]}",
 )
 # Historical encoders remain valid provenance for existing packed weights.
 # New conversions use the current encoder; encoder changes need not be bitwise

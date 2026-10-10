@@ -10,13 +10,13 @@ import sys
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.validation.precision_acceptance import GATES_SHA256, load_gates
+from tools.validation.precision_acceptance import gate_identity, load_gates
 from tools.maintenance.precision_artifacts import load_inputs
 from tools.benchmark.precision_performance import validate_cases
 from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file
 
 
-def prepare(dataset_path, inputs, annotations, output):
+def prepare(dataset_path, inputs, annotations, output, policy_version=2):
     if output.exists():
         raise FileExistsError("performance case manifest already exists")
     dataset, samples, input_rows = load_inputs(inputs, dataset_path, "development")
@@ -62,12 +62,12 @@ def prepare(dataset_path, inputs, annotations, output):
                       "image": str(image.resolve()), "image_sha256": digest, "prompt": prompt, "alternate": alternate,
                       "source_pixels": pixels[sample["id"]], "noncrowd_instances": counts[sample["coco_image_id"]],
                       "small_instances": small[sample["coco_image_id"]], "large_instances": large[sample["coco_image_id"]]})
-    value = {"schema_version": 2, "kind": "sam3-precision-performance-cases-v2", "gates_sha256": GATES_SHA256,
+    value = {"schema_version": policy_version, "kind": f"sam3-precision-performance-cases-v{policy_version}", "gates_sha256": gate_identity(policy_version)[1],
              "dataset_sha256": sha256_file(dataset_path), "cases": cases, "artifact_sha256": artifacts,
              "selection": "Annotation-only, deterministic extrema/median; unique development images",
              "latency_scope": "Decoded RGB input through preprocessing, model execution and deployed postprocessing; model load is reported separately and disk decoding is excluded",
              "workloads": ["full_image", "changed_prompt", "repeated_result"]}
-    validate_cases(value, dataset, sha256_file(dataset_path), load_gates())
+    validate_cases(value, dataset, sha256_file(dataset_path), load_gates(policy_version=policy_version))
     output.parent.mkdir(parents=True, exist_ok=True)
     import json
     with output.open("x") as stream:
@@ -78,11 +78,12 @@ def prepare(dataset_path, inputs, annotations, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--policy-version", type=int, choices=(2, 3), default=2)
     for name in ("dataset", "inputs", "annotations", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     args = parser.parse_args()
     try:
-        prepare(args.dataset, args.inputs, args.annotations, args.output)
+        prepare(args.dataset, args.inputs, args.annotations, args.output, args.policy_version)
     except (OSError, ValueError, KeyError, TypeError) as error:
         parser.exit(1, f"Performance preparation failed: {error}\n")
 

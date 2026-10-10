@@ -13,8 +13,8 @@ if __package__ in (None, ""):
 
 from tools.validation.coco_acceptance import evaluate_ranked, paired_bootstrap, quality_gates
 from tools.validation.evaluate_coco_screening import prompted_ground_truth
-from tools.validation.precision_acceptance import (GATES_SHA256, canonical_hash, combine_statuses, compare_objects,
-                                  load_gates, quality_profile, validate_output)
+from tools.validation.precision_acceptance import (canonical_hash, combine_statuses, compare_objects,
+                                  diagnostic_summary, gate_identity, load_gates, quality_profile, validate_output)
 from tools.maintenance.precision_artifacts import campaign_check, phase_samples, source_snapshot, verify_export_artifacts
 from tools.validation.prepare_coco_acceptance import load_precision_dataset
 from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file, verify_run_artifacts, write_json
@@ -22,10 +22,12 @@ from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file, 
 
 def load_run(directory):
     manifest = read_json(directory / "manifest.json")
-    if (manifest.get("schema_version") != 2 or manifest.get("kind") != "sam3-ranked-precision-output-v2"
-            or manifest.get("complete") is not True or manifest.get("gates_sha256") != GATES_SHA256
+    version = manifest.get("schema_version")
+    if (manifest.get("kind") != f"sam3-ranked-precision-output-v{version}"
+            or manifest.get("complete") is not True or manifest.get("gates_sha256") != gate_identity(version)[1]
             or manifest.get("recipe_sha256") != canonical_hash(manifest["recipe"])):
         raise ValueError("unsupported, incomplete or altered precision run")
+    quality_profile(manifest["recipe"], load_gates(policy_version=version))
     if sha256_file(directory / "dataset.json") != manifest["dataset_sha256"]:
         raise ValueError("exported dataset identity differs")
     dataset = load_precision_dataset(directory / "dataset.json")
@@ -77,7 +79,7 @@ def read_outputs(directory, manifest, lookup):
 
 
 def same_inputs(reference, candidate):
-    keys = ("dataset_sha256", "phase", "sample_ids", "input_manifest_sha256", "input_images", "campaign_sha256")
+    keys = ("schema_version", "gates_sha256", "dataset_sha256", "phase", "sample_ids", "input_manifest_sha256", "input_images", "campaign_sha256")
     if any(reference[key] != candidate[key] for key in keys):
         raise ValueError("reference/candidate input or campaign identities differ")
     if reference["recipe"]["checkpoint_sha256"] != candidate["recipe"]["checkpoint_sha256"]:
@@ -104,6 +106,8 @@ def compare(coco, reference_outputs, candidate_outputs, reference_metrics, candi
         print(f"{label}: bootstrap {done}/{total}", flush=True)
     confidence = paired_bootstrap(reference_cache, candidate_cache, reference_metrics["pairs"], candidate_metrics["pairs"], common, progress)
     result = quality_gates(reference_metrics, candidate_metrics, comparisons, profile, common, confidence, len(reference_cache.image_ids))
+    if common.get("policy_version") == 3:
+        result["diagnostics"] = diagnostic_summary(comparisons)
     write_json(directory / (label + "-objects.json"), {"complete": True, "profile": profile, "pairs": comparisons})
     return {**result, "bootstrap": confidence, "profile": profile,
             "object_report": label + "-objects.json", "object_report_sha256": sha256_file(directory / (label + "-objects.json"))}
@@ -124,7 +128,8 @@ def evaluate(args):
         campaign_check(Path(candidate["campaign_file"]), args.candidate / "dataset.json", candidate["recipe"], "evaluation")
     if sha256_file(args.annotations) != dataset["provenance"]["annotations_sha256"]:
         raise ValueError("COCO annotations differ from the frozen dataset")
-    gates = load_gates()
+    version = candidate["schema_version"]
+    gates = load_gates(policy_version=version)
     quality_name, profile = quality_profile(candidate["recipe"], gates)
     identities = source_snapshot()
     for path in (args.annotations, args.reference / "manifest.json", args.candidate / "manifest.json"):
@@ -165,16 +170,20 @@ def evaluate(args):
     status = combine_statuses([absolute["status"], incremental["status"]])
     from tools.maintenance.precision_artifacts import archive_sources
     archived = archive_sources(args.output, identities)
-    write_json(args.output / "metrics.json", {"schema_version": 2, "kind": "sam3-precision-quality-v2", "complete": True,
+    separation = ({"task_quality_status": status, "qualification_status": "FAIL" if status == "FAIL" else "NOT_RUN",
+                   "diagnostics_affect_quality": False, "performance_required_for_qualification": False}
+                  if version == 3 else {})
+    write_json(args.output / "metrics.json", {"schema_version": version, "kind": f"sam3-precision-quality-v{version}", "complete": True,
                 "phase": candidate["phase"], "final_evaluation_completed": candidate["phase"] == "evaluation",
                 "full_model_qualification": False, "scope": "Prompted COCO subset ranked AP and deployed outputs; no arithmetic or performance certification",
                 "images": len(samples), "prompted_pairs": len(lookup), "quality_profile": quality_name,
-                "gates_sha256": GATES_SHA256, "dataset_sha256": candidate["dataset_sha256"],
+                "gates_sha256": gate_identity(version)[1], "dataset_sha256": candidate["dataset_sha256"],
                 "candidate_recipe_sha256": candidate["recipe_sha256"], "campaign_sha256": candidate["campaign_sha256"],
                 "arithmetic_status": "NOT_RUN", "absolute_quality_status": absolute["status"],
                 "incremental_quality_status": incremental["status"], "quality_status": status,
                 "performance_labels": [], "deployment_status": "FAIL" if status == "FAIL" else "NOT_RUN",
-                "absolute": absolute, "incremental": incremental, "artifact_sha256": identities, "archived_sources": archived,
+                "absolute": absolute, "incremental": incremental, **separation,
+                "artifact_sha256": identities, "archived_sources": archived,
                 "metric_definition": {"ap": "Ranked COCO segm AP .50:.05:.95, maxDets=100, no deployment score cutoff",
                                       "miou": "Macro positive image/prompt union-mask IoU at score > 0.5, excluding crowd pixels",
                                       "negative": "Unannotated-category proxy; increases cannot cancel across prompts"}})

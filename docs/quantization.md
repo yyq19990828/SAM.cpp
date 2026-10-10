@@ -83,12 +83,13 @@ Linux x86_64 CUDA with an RTX 4090. These are bounded
 image-set results, not dataset-wide accuracy guarantees. Output checks cover the resulting detections, masks, scores and
 boxes. Passing them does not mean every intermediate tensor is identical to the
 original checkpoint; quantization changes intermediate values. Validation
-criteria are precision-specific rather than one shared tolerance for every
-format.
+criteria for these historical runs are precision-specific rather than one shared
+tolerance for every format.
 
-Output-quality acceptance evaluates the final masks, scores and boxes.
-Complete deployment acceptance also requires correct arithmetic and measured
-benefits for the stated workload. Relative L2 and maximum
+The historical fixed-corpus output acceptance evaluates masks, scores and boxes.
+Its v2 deployment extension also requires measured workload benefits. New v3
+acceptance separates task quality from optional benefit labels, as described
+below. Relative L2 and maximum
 absolute errors of intermediate tensors are reported separately for diagnosis
 and model selection. Exceeding a tensor-fidelity tolerance does not directly
 fail a quantized model. Tokenization, input transforms, shapes, finite values
@@ -173,6 +174,42 @@ additional supported image-inference modes. The legacy schema-3
 `image-linear-*` family also quantizes text-encoder linears and remains
 diagnostic; it differs from the schema-4 full preset and does not cover fusion
 or decoder linears. These image profiles do not support quantized video.
+
+## v3 quality tiers and optional benefits
+
+New campaigns can explicitly select the [v3 policy](../tests/data/sam3-precision-gates-v3.json).
+Choose `high-fidelity`, `balanced` or `compact` before inference according to the
+application's permitted task loss. The tier is independent of weight, compute
+and cache precision; a Q4 recipe does not automatically receive a larger budget.
+These are initial engineering budgets, not a guarantee for another task or dataset.
+
+| Tier | Maximum mask AP drop | Maximum union-mask mIoU drop | Task mask IoU floor | Maximum bad-object rate |
+| --- | ---: | ---: | ---: | ---: |
+| `high-fidelity` | 0.25 pp | 0.20 pp | 0.90 | 0.5% |
+| `balanced` | 1.00 pp | 0.50 pp | 0.85 | 1.0% |
+| `compact` | 2.00 pp | 1.00 pp | 0.80 | 2.0% |
+
+Arithmetic, task quality and fixed regressions remain required. Task quality
+retains confidence bounds, missing/extra objects, size/category coverage and
+negative prompts. Protected objects must have reference score ≥ 0.9, area ≥
+1,024 pixels and reference-to-GT IoU ≥ 0.75; the candidate must retain a unique
+match at GT IoU ≥ 0.5. Score/box errors, tighter reference-mask fidelity and GT
+threshold flips are diagnostics. A score change that loses a deployed object
+still affects task quality. Compressed caches retain a separate incremental
+budget against their exact F32-cache parent.
+
+Performance reports separate measurement validity, non-regression and optional
+benefit labels. A 10% latency reduction or 15% memory reduction remains a strong
+benefit label; a valid smaller gain is recorded without making quality fail.
+Full-image, changed-prompt and repeated-result results remain separate. A
+non-regression failure affects deployment choice, not the task-quality verdict.
+No performance measurement is required for a quality-only campaign.
+
+The tools remain v2 by default for compatibility. Use `--policy-version 3
+--quality-tier balanced` for v3 exports and fixed regressions. The [validation
+guide](validation.md#v3-image-acceptance) and [implementation plan](plans/20261010-101413-precision-acceptance-v3.md)
+describe the workflow. All results above remain historical v2/fixed-corpus
+evidence; this policy/tool update does not qualify any model under v3.
 
 ## Convert a checkpoint
 

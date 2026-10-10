@@ -175,8 +175,14 @@ def table_facts(text):
 
 def check(root):
     root = Path(root).resolve()
-    for name in ("BENCHMARK", "MODEL_ZOO", "docs/quantization", "docs/visual-examples"):
+    bilingual = ["BENCHMARK", "MODEL_ZOO", "docs/quantization", "docs/visual-examples"]
+    bilingual.extend(path.relative_to(root).with_suffix("").as_posix()
+                     for path in sorted((root / "benchmarks").glob("*.md"))
+                     if not path.stem.endswith("_zh") and path.name != "README.md")
+    for name in bilingual:
         english, chinese = root / (name + ".md"), root / (name + "_zh.md")
+        if not chinese.is_file():
+            raise ValueError(f"missing Chinese measurement document: {name}_zh.md")
         if table_facts(english.read_text()) != table_facts(chinese.read_text()):
             raise ValueError(f"bilingual measurement/artifact table differs: {name}")
     # Check source documents (including newly written ones) without walking

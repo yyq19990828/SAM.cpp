@@ -10,8 +10,9 @@
 
 用户指定分配新合入的编译库架构迁移计划，执行代理使用 OpenCode 2、DeepSeek
 V4.1 Flash、max。此次将总计划中的三批结构迁移及最终验收写入一个新的 Orca Run，
-并保存 [PRD](../PRD.md) 与 [技术规格](../TECH_SPEC.md)。新模型移植、C/Python
-绑定和补齐精度整配方算术证据仍属于后续专项，不包含在本 Run。
+并保存当时的 PRD 与技术规格（原路径为 `docs/PRD.md` 和 `docs/TECH_SPEC.md`，
+现已删除）。迁移范围保留在上方总计划，当前结构见[仓库架构](../architecture.md)。
+新模型移植、C/Python 绑定和补齐精度整配方算术证据仍属于后续专项，不包含在本 Run。
 
 总计划的历史基线是 `54b1df7`。当前已合入 CUDA、运行时量化、压缩缓存及 v2
 验收工具，不能继续按“等待 GPU 分支接入”安排任务。迁移须保留 CPU、Metal、CUDA
@@ -58,8 +59,9 @@ flowchart LR
 ## 所有节点的执行约束
 
 项目是 `/home/john/桌面/SAM.cpp`。这是已经审定的编译库迁移任务，直接完成当前
-节点，不重新规划。阅读 `AGENTS.md`、`docs/PRD.md`、`docs/TECH_SPEC.md`、
-`docs/plans/20261008-181312-compiled-library-structure.md` 及本计划的前序结果。
+节点，不重新规划。原执行清单中的 `docs/PRD.md` 和 `docs/TECH_SPEC.md` 现已删除；
+保留的阅读入口为 `AGENTS.md`、[仓库架构](../architecture.md)、
+[编译库迁移总计划](20261008-181312-compiled-library-structure.md)及本计划的前序结果。
 目标基线为 `113e165e78970cab3713e6e7b3b325c8a16c7561`；后继节点继承本 Run
 前序节点的提交。若出现无关代码变化或基线不明，先报告具体差异，不覆盖它。
 
