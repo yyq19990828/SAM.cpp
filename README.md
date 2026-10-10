@@ -48,6 +48,9 @@ F32 outputs. Quality limits are optional user advice; repository COCO results
 are reference measurements, not universal deployment requirements. Historical
 v2/v3 policies are archived; historical results remain unchanged. Performance
 benchmarks run independently of quality, with explicit precision descriptions.
+The [unified image configuration](docs/quantization-config.md) supplies weight,
+activation, compute and cache policies to conversion and benchmark tools, with
+explicit rejection of unsupported combinations.
 
 ## Build
 

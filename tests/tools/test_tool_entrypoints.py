@@ -21,6 +21,7 @@ COMMANDS = {
     "quantize": (
         "export_calibration", "prepare_coco_calibration", "screen_runtime_quantization",
         "study_activation_quantization",
+        "quantization_config",
     ),
     "validation": (
         "evaluate_coco_screening", "export_memory_selection_goldens",

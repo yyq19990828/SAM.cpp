@@ -24,6 +24,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.convert.sam3_artifacts import BPE_SHA256, PAB_REVISION, SAM3_REVISION, sha256_file, write_json
+from tools.quantize.quantization_config import (conversion_options, load_config, resolve_weights, validate_receipt)
 from tools.convert.sam3_gguf import (KEEP_F32, HYBRID_PROFILE, HYBRID_F32_PREFIXES, QUANTIZATION_PROFILES,
                        QUANTIZATION_VERSION, QUANTIZED_ARITHMETIC_PROFILE, GGML_REVISION, GGML_VERSION,
                        supported_ggml_quantizer, bytes_to_unicode,
@@ -239,7 +240,14 @@ def quantize_native_rows(name, array, qtype, quantizer, workdir):
 
 
 def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=None, storage_profile=None,
-            quantize_modules=None):
+            quantize_modules=None, *, configuration=None, configuration_inputs=None):
+    from tools.convert.sam3_artifacts import verify_run_artifacts
+    if configuration is not None:
+        config = validate_receipt(configuration)
+        actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, "modules": quantize_modules})
+        if task != "image" or actual != config["weights"]:
+            raise ValueError("conversion arguments differ from the resolved quantization configuration")
+    verify_run_artifacts(configuration_inputs or {})
     quantized = precision in QUANTIZATION_PROFILES
     gguf_version = importlib.metadata.version("gguf")
     if storage_profile is not None and quantize_modules is not None:
@@ -388,6 +396,7 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             "precision": precision, "sam3_revision": SAM3_REVISION, "converter_revision": PAB_REVISION,
             "converter_sha256": sha256_file(__file__),
             "gguf_helper_sha256": sha256_file(Path(__file__).with_name("sam3_gguf.py")),
+            "weight_policy_sha256": sha256_file(Path(__file__).resolve().parents[1] / "quantize/weight_policy.py"),
             "gguf_package_version": gguf_version,
             "checkpoint": {"file": Path(checkpoint).name, "sha256": checkpoint_sha256},
             "bpe": {"file": Path(bpe_path).name, "sha256": sha256_file(bpe_path)},
@@ -441,6 +450,14 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
         if precision == "hybrid":
             manifest["storage_profile"] = HYBRID_PROFILE
             manifest["options"]["original_f32_prefixes"] = list(HYBRID_F32_PREFIXES)
+        if configuration is not None:
+            manifest["quantization_configuration"] = configuration
+            manifest["quantization_config_resolver_sha256"] = sha256_file(
+                Path(__file__).resolve().parents[1] / "quantize/quantization_config.py")
+            manifest["configuration_application"] = {"weights": "applied", "activation": "runtime-request-only",
+                                                      "compute": "runtime-request-only", "cache": "runtime-request-only",
+                                                      "runtime_execution_performed": False}
+        verify_run_artifacts(configuration_inputs or {})
         descriptor, manifest_tmp = tempfile.mkstemp(prefix=".sam3-manifest-", dir=output.parent)
         os.close(descriptor)
         temporary.append(Path(manifest_tmp))
@@ -465,9 +482,9 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             shutil.rmtree(quant_workdir, ignore_errors=True)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--task", choices=("image", "video"), default="image")
+    parser.add_argument("--task", choices=("image", "video"))
     parser.add_argument("--checkpoint", required=True, type=Path)
     parser.add_argument("--bpe", required=True, type=Path)
     parser.add_argument("--precision", choices=("f32", "f16", "hybrid", "q8_0", "q6_k", "q5_k", "q4_k"),
@@ -477,19 +494,32 @@ def main():
                         help="exact versioned image allocation profile; omitted preserves legacy behavior")
     parser.add_argument("--quantize-modules",
                         help="comma-separated SAM 3 modules for schema-4 custom quantization: vision,text,fusion,decoder")
+    parser.add_argument("--quantization-config", type=Path, help="shared four-axis image configuration; exclusive with task/precision/profile/module flags")
     parser.add_argument("--output", required=True, type=Path)
-    args = parser.parse_args()
-    if args.precision is None:
-        if args.task != "video":
-            parser.error("--precision is required for --task image")
-        args.precision = "hybrid"
+    args = parser.parse_args(argv)
     try:
+        options = {}
+        if args.quantization_config is not None:
+            if any(value is not None for value in (args.task, args.precision, args.storage_profile, args.quantize_modules)):
+                raise ValueError("--quantization-config cannot be combined with --task/--precision/--storage-profile/--quantize-modules")
+            receipt = load_config(args.quantization_config)
+            for name, value in conversion_options(receipt).items():
+                setattr(args, name, value)
+            args.task = "image"
+            options = {"configuration": receipt,
+                       "configuration_inputs": {str(args.quantization_config.resolve()): receipt["source"]["sha256"]}}
+        else:
+            args.task = args.task or "image"
+            if args.precision is None:
+                if args.task != "video":
+                    parser.error("--precision is required for --task image (or use --quantization-config)")
+                args.precision = "hybrid"
         arguments = (args.checkpoint, args.bpe, args.precision, args.output, args.task,
                      args.quantizer, args.storage_profile)
         if args.quantize_modules is None:
-            convert(*arguments)
+            convert(*arguments, **options)
         else:
-            convert(*arguments, args.quantize_modules)
+            convert(*arguments, args.quantize_modules, **options)
     except (OSError, ValueError, RuntimeError, KeyError) as error:
         parser.exit(1, f"conversion failed: {error}\n")
 

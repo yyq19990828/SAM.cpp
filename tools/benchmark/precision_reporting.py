@@ -3,21 +3,9 @@
 from collections import Counter
 from pathlib import Path
 
-from tools.convert.sam3_artifacts import read_json, sha256_file, write_json
-
-
-WEIGHTS = ("f32", "f16", "q8_0", "q6_k", "q5_k", "q4_k")
-CACHES = {"f32": ["f32", "f32", "f32"], "f16": ["f16", "f16", "f16"],
-          "mixed-q8_0": ["q8_0", "q8_0", "f32"]}
-
-
-def validate_configuration(backend, compute, cache, activation="backend-selected"):
-    if backend not in ("cpu", "metal", "cuda") or compute not in ("f32", "f16") or cache not in CACHES:
-        raise ValueError("unsupported backend/compute/image-feature-cache configuration")
-    if activation != "backend-selected":
-        raise ValueError("native activation precision is backend-selected; independent INT8/FP8/F16 activation settings are not implemented")
-    if backend != "cuda" and (compute != "f32" or cache != "f32"):
-        raise ValueError("native reduced compute/cache settings currently require explicit CUDA")
+from tools.convert.sam3_artifacts import read_json, sha256_file, verify_run_artifacts, write_json
+from tools.quantize.quantization_config import (CACHES, WEIGHTS, resolve_model_configuration,
+                                               validate_configuration, validate_recipe_configuration)
 
 
 def conversion_manifest(model):
@@ -31,20 +19,24 @@ def conversion_manifest(model):
     return manifest, digest, sha256_file(sidecar)
 
 
-def native_recipe(args):
+def native_recipe(args, *, collect_environment=True):
     from tools.maintenance.artifact_snapshot import runtime_environment
     activation = getattr(args, "activation", "backend-selected")
     validate_configuration(args.backend, args.compute, args.cache, activation)
     manifest, model_digest, sidecar_digest = conversion_manifest(args.model)
+    configuration = resolve_model_configuration(args, manifest)
     storage = manifest.get("storage_profile") or "dense"
-    return {"task": "image", "engine": "native", "backend": args.backend,
+    recipe = {"task": "image", "engine": "native", "backend": args.backend,
             "weight_precision": manifest["precision"], "storage_profile": storage,
-            "quantization_modules": manifest.get("quantization_modules", ["vision"] if storage.startswith("image-vision-") else []),
+            "quantization_modules": manifest.get("quantization_modules", []),
             "activation": activation, "compute_mode": args.compute, "feature_cache": args.cache, "threads": 4,
             "checkpoint_sha256": manifest["checkpoint"]["sha256"], "model_sha256": model_digest,
             "binary_sha256": sha256_file(args.binary), "conversion_manifest_sha256": sidecar_digest,
             "model_bytes": args.model.stat().st_size, "cuda_device": 0 if args.backend == "cuda" else None,
-            "weight_inventory": weight_inventory(manifest), "environment": runtime_environment(args.backend)}
+            "weight_inventory": weight_inventory(manifest), "quantization_configuration": configuration}
+    if collect_environment:
+        recipe["environment"] = runtime_environment(args.backend)
+    return recipe
 
 
 def weight_inventory(manifest):
@@ -77,6 +69,7 @@ def expected_runtime_profile(recipe):
 
 def precision_description(manifest):
     recipe = manifest["recipe"]
+    validate_recipe_configuration(recipe)
     backend, compute, cache = (recipe[key] for key in ("backend", "compute_mode", "feature_cache"))
     activation = recipe.get("activation", "backend-selected")
     validate_configuration(backend, compute, cache, activation)
@@ -97,6 +90,7 @@ def precision_description(manifest):
                 "native quantized CUDA dispatch may stage RHS as Q8 and use integer dot products, or decode to floating-point operands"
                 if quantized and backend == "cuda" else "floating-point operands selected by the backend")
     return {"weight_storage": recipe["weight_precision"], "storage_profile": recipe["storage_profile"],
+            "configuration": recipe.get("quantization_configuration"),
             "quantization_modules": recipe["quantization_modules"], "backend": backend,
             "requested": {"weight_storage": recipe["weight_precision"], "activation": activation,
                           "compute": compute, "image_feature_cache": cache},
@@ -129,13 +123,15 @@ def inspect(args):
     validate_configuration(args.backend, args.compute, args.cache, args.activation)
     if args.output.exists():
         raise FileExistsError("precision description requires a new output file")
+    verify_run_artifacts(getattr(args, "configuration_inputs", {}))
     manifest, digest, sidecar_digest = conversion_manifest(args.model)
+    configuration = resolve_model_configuration(args, manifest)
     inventory = weight_inventory(manifest)
     # Read bounded GGUF tensor headers, not the multi-GB dequantized payload.
     from tools.convert.sam3_gguf import read_gguf, validate_metadata
     reader = read_gguf(args.model)
     storage = manifest.get("storage_profile") or "dense"
-    modules = manifest.get("quantization_modules", ["vision"] if storage.startswith("image-vision-") else [])
+    modules = manifest.get("quantization_modules", [])
     validate_metadata(reader, manifest["precision"], manifest["checkpoint"]["sha256"],
                       storage_profile=None if storage == "dense" else storage,
                       quantization_modules=modules or None)
@@ -147,11 +143,13 @@ def inspect(args):
     inventory["evidence"] = "GGUF tensor headers and hash-bound conversion manifest"
     recipe = {"engine": "native", "backend": args.backend, "weight_precision": manifest["precision"],
               "storage_profile": storage, "quantization_modules": modules, "compute_mode": args.compute,
-              "feature_cache": args.cache, "activation": args.activation}
+              "feature_cache": args.cache, "activation": args.activation,
+              "quantization_configuration": configuration}
     result = {"schema_version": 1, "kind": "sam3-precision-description-v1", "complete": True,
               "model_sha256": digest, "conversion_manifest_sha256": sidecar_digest,
               "inference_executed": False,
               "precision": precision_description({"recipe": recipe, "weight_inventory": inventory})}
+    verify_run_artifacts(getattr(args, "configuration_inputs", {}))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     write_json(args.output, result)
     print(f"Stored precision inspected; inference not executed: {args.output}", flush=True)

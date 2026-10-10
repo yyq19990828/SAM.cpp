@@ -9,6 +9,7 @@ from tools.validation.ranked_outputs import required_queries, validate_output
 from tools.maintenance.artifact_snapshot import packages, runtime_environment
 from tools.quantize.runtime_quantization import encode_mask
 from tools.convert.sam3_artifacts import BPE_SHA256, artifact_path, read_json, sha256_file, write_json
+from tools.quantize.quantization_config import resolve_model_configuration
 
 
 def capture_ranked(state, raw, prompt, tokenizer, torch):
@@ -43,6 +44,8 @@ def oracle_recipe(args):
     return {"schema_version": 2, "task": "image", "engine": "original", "backend": "cuda",
             "weight_precision": "f32", "storage_profile": "dense", "quantization_modules": [],
             "compute_mode": "f32", "feature_cache": "f32", "threads": 4,
+            "activation": "backend-selected",
+            "quantization_configuration": resolve_model_configuration(args, {"precision": "f32"}),
             "environment": runtime_environment("cuda"),
             "checkpoint_sha256": sha256_file(args.checkpoint), "bpe_sha256": BPE_SHA256,
             "reference_kind": "official-checkpoint", "sam3_source": str(source), "runtime_source": str(runtime_source),

@@ -8,6 +8,7 @@ No releases have been published.
 
 ### Added
 
+- Shared four-axis SAM 3 image configuration for conversion, quality exports, precision inspection and paired performance benchmarks. A standard-library-only validator lists supported combinations; explicit allocation, conflict checks and model binding prevent silent unsupported settings. Reports preserve requested runtime policies separately from conversion-applied weights and uncollected kernel arithmetic.
 - Quality-independent application performance benchmarks with paired latency and separate process-memory measurements, small-case selection, configurable iteration counts, offline summaries and advisory benefit tags. Slowdowns or missing quality reports do not block valid measurements.
 - Precision inspection and consistent quality/performance descriptions distinguish stored tensor types, requested compute/cache policies, runtime identifiers and uncollected kernel arithmetic. Opt-in graph diagnostics expose operand/output types and precision hints without treating them as kernel traces.
 
@@ -72,6 +73,7 @@ No releases have been published.
 
 ### Fixed
 
+- Keep schema-3 vision preset module metadata empty in precision/benchmark recipes to match native probe output; the resolved configuration still describes the vision allocation. Schema-4 module selection continues to be explicit.
 - Accept the exact current three-patch GGML build identity for Q6_K/Q5_K/Q4_K conversion, retaining rejection of unknown quantizer builds and compatibility with historical conversion manifests.
 - Release completed prompt tensors and the previous image state in the original-model reference exporter, reducing transient GPU memory when switching images while preserving same-image feature reuse.
 - Preserve source-override compatibility with the previously verified combined GGML archive, upgrading its CUDA corrections in a build-local copy without modifying the supplied source.

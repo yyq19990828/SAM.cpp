@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "sam-quantization-config",
+  "task": "image",
+  "backend": "cuda",
+  "weights": {"precision": "q4_k", "modules": ["vision", "text"]},
+  "activation": {"mode": "backend-selected"},
+  "compute": {"mode": "f16"},
+  "cache": {"mode": "mixed-q8_0"}
+}

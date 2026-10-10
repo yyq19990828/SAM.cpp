@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "kind": "sam-quantization-config",
+  "task": "image",
+  "backend": "cpu",
+  "weights": {"precision": "f32"},
+  "activation": {"mode": "backend-selected"},
+  "compute": {"mode": "f32"},
+  "cache": {"mode": "f32"}
+}

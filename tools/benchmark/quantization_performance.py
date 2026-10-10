@@ -10,7 +10,8 @@ from tools.benchmark.performance_measurement import run_process
 from tools.benchmark.performance_statistics import WORKLOADS, pair_order, summarize_measurements
 from tools.benchmark.precision_reporting import expected_runtime_profile, native_recipe, precision_description, validate_configuration
 from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file, verify_run_artifacts, write_json
-from tools.maintenance.artifact_snapshot import archive_sources, native_snapshot, source_snapshot
+from tools.maintenance.artifact_snapshot import archive_sources, native_snapshot, source_snapshot, runtime_environment
+from tools.quantize.quantization_config import validate_recipe_configuration
 from tools.validation.ranked_outputs import canonical_hash
 
 
@@ -83,6 +84,7 @@ def load_run(path):
     if set(run["recipes"]) != {"baseline", "candidate"} or run["protocol"].get("graph_observer") is not False:
         raise ValueError("performance run requires two recipes and no graph observer")
     for recipe in run["recipes"].values():
+        validate_recipe_configuration(recipe)
         validate_configuration(recipe["backend"], recipe["compute_mode"], recipe["feature_cache"], recipe["activation"])
         if recipe["backend"] != run["backend"] or recipe["engine"] != "native" or recipe["threads"] != 4:
             raise ValueError("performance recipe backend/engine/threads differ")
@@ -149,6 +151,7 @@ def run(args):
         raise RuntimeError("use the isolated reference environment on Linux for process memory measurement")
     if args.output.exists():
         raise FileExistsError("performance run requires a new output directory")
+    verify_run_artifacts(getattr(args, "configuration_inputs", {}))
     protocol = {"pairs": args.pairs, "latency": {"warmups": args.warmups, "iterations": args.iterations},
                 "memory": {"warmups": 0, "iterations": args.memory_iterations}, "graph_observer": False}
     if not 1 <= args.pairs <= 100 or not 0 <= args.warmups <= 10000 or not 1 <= min(args.iterations, args.memory_iterations) <= max(args.iterations, args.memory_iterations) <= 10000:
@@ -166,10 +169,14 @@ def run(args):
         models[variant] = getattr(args, variant + "_model")
         recipes[variant] = native_recipe(argparse.Namespace(model=models[variant], binary=args.binary, backend=args.backend,
                                                            compute=getattr(args, variant + "_compute"), cache=getattr(args, variant + "_cache"),
-                                                           activation=args.activation))
-    if recipes["baseline"]["environment"] != recipes["candidate"]["environment"]:
-        raise ValueError("hardware or software environment changed between recipes")
+                                                           activation=args.activation,
+                                                           quantization_configuration=getattr(args, "quantization_configurations", {}).get(variant)),
+                                         collect_environment=False)
+    environment = runtime_environment(args.backend)
+    for recipe in recipes.values():
+        recipe["environment"] = environment
     identities = source_snapshot()
+    identities.update(getattr(args, "configuration_inputs", {}))
     identities[str(args.cases.resolve())] = sha256_file(args.cases)
     for model in set(models.values()):
         identities.update(native_snapshot(args.binary, model))

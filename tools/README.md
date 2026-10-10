@@ -8,7 +8,7 @@ tools when `SAM_BUILD_TOOLS=ON` (default); CUDA-only probes follow
 | Group | Contents |
 | --- | --- |
 | `convert/` | Checkpoint conversion (`convert_sam3.py`), GGUF schema (`sam3_gguf.py`, `sam3_tensor_schema.json`) and shared artifact contracts (`sam3_artifacts.py`) |
-| `quantize/` | Calibration export, runtime quantization helpers, native cache codecs and `quantize_rows.cpp` |
+| `quantize/` | Unified image configuration, shared weight policies, calibration export, runtime quantization helpers, native cache codecs and `quantize_rows.cpp` |
 | `validation/` | Reference export, image/video validation, ranked output exports, COCO evaluation and probe verification |
 | `benchmark/` | Image/video timing, independent quantization performance, precision inspection, linear probes, graph profiling and video fixtures |
 | `visualization/` | Comparison image rendering |
@@ -55,6 +55,13 @@ commands, precision boundaries and interpretation. `performance` runs paired lat
 `summarize-performance` reads existing raw records offline, and `inspect-precision`
 checks stored tensors without inference. Native activation and arbitrary per-layer
 mixed-format settings are not implemented.
+
+`quantize/quantization_config.py capabilities` lists supported four-axis choices;
+`validate --config CONFIG.json` resolves them without model dependencies or GPU
+initialization. Conversion, quality exports and precision inspection accept
+`--quantization-config`; performance accepts `--baseline-config` and
+`--candidate-config`. Conflicting flags and model/config weight disagreements
+fail before inference. See the [configuration guide](../docs/quantization-config.md).
 
 ## Archived precision policies
 

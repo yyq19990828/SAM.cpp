@@ -10,6 +10,11 @@
 v2/v3 质量预算、最低样本数或性能收益。导出目前面向 Linux CPU/CUDA，原始
 checkpoint 需要已准备好的 CUDA 参考环境。它没有新增推理 kernel 或公共缓存选择 API。
 
+优先使用[统一量化配置](quantization-config_zh.md)：`export` 和 `inspect-precision`
+接受 `--quantization-config`，`performance` 同时接受 `--baseline-config` 和
+`--candidate-config`。工具会核对配置与模型的实际权重分配。旧独立参数继续可用，
+但不能与配置文件混用。
+
 ## 参考模型与样例
 
 原始 `sam3.pt` 参考反映转换、运行时与压缩的共同影响；使用 F32 计算策略及缓存的
@@ -44,13 +49,14 @@ AP/mIoU 与参考一致性分开，并说明样本覆盖和调参使用情况。
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py export \
   --cases models/application-cases.json --input-root models/application-images \
   --engine native --binary build/cuda/examples/sam_precision_image_probe \
-  --model models/sam3-f32.gguf --backend cuda --compute f32 --cache f32 \
+  --model models/sam3-f32.gguf --quantization-config docs/configs/quantization/image-f32-cuda.json \
   --output build/application-f32
 
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py export \
   --cases models/application-cases.json --input-root models/application-images \
   --engine native --binary build/cuda/examples/sam_precision_image_probe \
-  --model models/sam3-custom-q4_k.gguf --backend cuda --compute f16 --cache f32 \
+  --model models/sam3-custom-q4_k.gguf \
+  --quantization-config docs/configs/quantization/image-q4-vision-text-cuda.json \
   --output build/application-custom
 
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py compare \
@@ -116,10 +122,11 @@ CUDA 使用可见设备 0，可通过 `CUDA_VISIBLE_DEVICES` 选择物理设备�
 ```sh
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py performance \
   --cases models/application-cases.json --input-root models/application-images \
-  --binary build/cuda/examples/sam_precision_benchmark_probe --backend cuda \
-  --baseline-model models/sam3-f32.gguf --baseline-compute f32 --baseline-cache f32 \
-  --candidate-model models/sam3-custom-q4_k.gguf --candidate-compute f16 \
-  --candidate-cache mixed-q8_0 --limit 1 \
+  --binary build/cuda/examples/sam_precision_benchmark_probe \
+  --baseline-model models/sam3-f32.gguf --candidate-model models/sam3-custom-q4_k.gguf \
+  --baseline-config docs/configs/quantization/image-f32-cuda.json \
+  --candidate-config docs/configs/quantization/image-q4-vision-text-cuda.json \
+  --limit 1 --pairs 1 --warmups 0 --iterations 2 --memory-iterations 1 \
   --output build/application-performance
 
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py summarize-performance \
@@ -159,10 +166,10 @@ CUDA 使用可见设备 0，可通过 `CUDA_VISIBLE_DEVICES` 选择物理设备�
 
 | 维度 | 配置 | 实际含义与证据 |
 | --- | --- | --- |
-| 权重 | 转换时 `--precision` 与模块选择 | GGUF 可同时有 F32、目标 Q 格式和 Q8 回退；检查逐类型张量数量／字节数及保留原因 |
-| 激活 | `--activation backend-selected` | 原生暂不支持独立 INT8/FP8/F16 激活开关；后端可内部转换或量化 RHS，研究 probe 不等于可部署配置 |
-| 计算 | `--compute` 或基线／候选 compute | CUDA F16 只给符合条件的浮点矩阵／attention 设置提示，量化矩阵保留自己的分派；F32 也不保证内核所有临时表示都是 F32 |
-| 缓存 | `--cache` 或基线／候选 cache | 图像特征 0/1/2：F32 为 F32/F32/F32，F16 为 F16/F16/F16，mixed-Q8_0 为 Q8_0/Q8_0/F32；不是 LLM KV cache |
+| 权重 | `weights.precision` 及 `modules` / `storage_profile` | GGUF 可同时有 F32、目标 Q 格式和 Q8 回退；检查逐类型张量数量／字节数及保留原因 |
+| 激活 | `activation.mode=backend-selected` | 原生暂不支持独立 INT8/FP8/F16 激活开关；后端可内部转换或量化 RHS，研究 probe 不等于可部署配置 |
+| 计算 | `compute.mode` | CUDA F16 只给符合条件的浮点矩阵／attention 设置提示，量化矩阵保留自己的分派；F32 也不保证内核所有临时表示都是 F32 |
+| 缓存 | `cache.mode` | 图像特征 0/1/2：F32 为 F32/F32/F32，F16 为 F16/F16/F16，mixed-Q8_0 为 Q8_0/Q8_0/F32；不是 LLM KV cache |
 
 权重格式在转换时确定；计算和实验缓存策略在加载时选择。CPU/Metal 在这里仅接入
 F32 计算及 F32 缓存，低精度设置需显式 CUDA；实验缓存开关属于 probe，未增加公共
@@ -174,8 +181,9 @@ F32 计算及 F32 缓存，低精度设置需显式 CUDA；实验缓存开关属
 
 ```sh
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py inspect-precision \
-  --model models/sam3-custom-q4_k.gguf --backend cuda --compute f16 \
-  --cache mixed-q8_0 --output build/application-precision.json
+  --model models/sam3-custom-q4_k.gguf \
+  --quantization-config docs/configs/quantization/image-q4-vision-text-cuda.json \
+  --output build/application-precision.json
 ```
 
 该命令核对模型／manifest 哈希、GGUF 张量头与存储清单，`inference_executed=false`。

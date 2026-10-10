@@ -9,6 +9,11 @@ recipes on your images and prompts. COCO results are descriptive references;
 quality limits are optional application advice. Historical v2/v3 qualification
 rules are archived and are no longer current benchmark prerequisites.
 
+Use the [unified configuration](quantization-config.md) to share weight,
+activation, compute and cache choices across conversion and image tools. It
+documents supported custom combinations and rejects unsupported ones before
+inference; the existing separate CLI options remain available.
+
 ## Precision choices and current limits
 
 | Dimension | Current implementation | Configuration boundary |

@@ -16,6 +16,8 @@ import numpy as np
 from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file, verify_run_artifacts, write_json
 from tools.validation.ranked_outputs import canonical_hash, mask_ious, spatial_assignment, validate_output
 from tools.benchmark.precision_reporting import native_recipe, precision_description, validate_configuration
+from tools.quantize.quantization_config import (resolve_runtime_arguments, resolve_performance_arguments,
+                                               validate_recipe_configuration)
 
 
 RUN_KIND = "sam3-quantization-benchmark-run-v1"
@@ -58,10 +60,12 @@ def export(args):
         raise RuntimeError("use the isolated reference environment")
     if args.output.exists():
         raise FileExistsError("benchmark export requires a new output directory")
+    verify_run_artifacts(getattr(args, "configuration_inputs", {}))
     samples = load_cases(args.cases)
     validate_configuration(args.backend, args.compute, args.cache, getattr(args, "activation", "backend-selected"))
     recipe = oracle_recipe(args) if args.engine == "original" else native_recipe(args)
     identities = source_snapshot()
+    identities.update(getattr(args, "configuration_inputs", {}))
     identities[str(args.cases.resolve())] = sha256_file(args.cases)
     if args.engine == "native":
         identities.update(native_snapshot(args.binary, args.model))
@@ -115,6 +119,7 @@ def load_bundle(directory, *, manifest_name="manifest.json"):
         raise ValueError("incomplete, unsupported or altered benchmark bundle")
     if read_json(directory / "recipe.json") != manifest["recipe"]:
         raise ValueError("archived recipe differs from the bundle")
+    validate_recipe_configuration(manifest["recipe"])
     inputs = manifest["input_images"]
     sample_ids = manifest["sample_ids"]
     if (not isinstance(inputs, dict) or not inputs or len(sample_ids) != len(set(sample_ids))
@@ -312,10 +317,11 @@ def main(argv=None):
     run.add_argument("--engine", choices=("original", "native"), required=True)
     for name in ("model", "binary", "checkpoint", "sam3-source", "sam3-runtime-source", "bpe"):
         run.add_argument("--" + name, type=Path)
-    run.add_argument("--backend", choices=("cpu", "cuda"), default="cuda")
-    run.add_argument("--compute", choices=("f32", "f16"), default="f32")
-    run.add_argument("--cache", choices=("f32", "f16", "mixed-q8_0"), default="f32")
-    run.add_argument("--activation", default="backend-selected", help="native mode: only backend-selected is implemented")
+    run.add_argument("--quantization-config", type=Path, help="shared four-axis configuration; exclusive with separate precision/backend flags")
+    run.add_argument("--backend", choices=("cpu", "cuda"))
+    run.add_argument("--compute", choices=("f32", "f16"))
+    run.add_argument("--cache", choices=("f32", "f16", "mixed-q8_0"))
+    run.add_argument("--activation", help="native mode: only backend-selected is implemented")
     measure = commands.add_parser("compare", help="compare bundles; optional limits are advisory")
     for name in ("reference", "candidate", "output"):
         measure.add_argument("--" + name, type=Path, required=True)
@@ -325,11 +331,12 @@ def main(argv=None):
     performance = commands.add_parser("performance", help="paired timing/memory without quality prerequisites")
     for name in ("cases", "input-root", "binary", "baseline-model", "candidate-model", "output"):
         performance.add_argument("--" + name, type=Path, required=True)
-    performance.add_argument("--backend", choices=("cpu", "cuda"), default="cuda")
-    performance.add_argument("--activation", default="backend-selected", help="only backend-selected is implemented")
+    performance.add_argument("--backend", choices=("cpu", "cuda"))
+    performance.add_argument("--activation", help="only backend-selected is implemented")
     for variant in ("baseline", "candidate"):
-        performance.add_argument("--" + variant + "-compute", choices=("f32", "f16"), default="f32")
-        performance.add_argument("--" + variant + "-cache", choices=("f32", "f16", "mixed-q8_0"), default="f32")
+        performance.add_argument("--" + variant + "-config", type=Path, help="shared configuration; supply both baseline and candidate files")
+        performance.add_argument("--" + variant + "-compute", choices=("f32", "f16"))
+        performance.add_argument("--" + variant + "-cache", choices=("f32", "f16", "mixed-q8_0"))
     performance.add_argument("--pairs", type=int, default=3, help="alternating AB/BA process pairs")
     performance.add_argument("--warmups", type=int, default=5)
     performance.add_argument("--iterations", type=int, default=20)
@@ -345,12 +352,17 @@ def main(argv=None):
     inspect = commands.add_parser("inspect-precision", help="inspect stored weights and resolved policies without inference")
     for name in ("model", "output"):
         inspect.add_argument("--" + name, type=Path, required=True)
-    inspect.add_argument("--backend", choices=("cpu", "metal", "cuda"), default="cuda")
-    inspect.add_argument("--compute", choices=("f32", "f16"), default="f32")
-    inspect.add_argument("--cache", choices=("f32", "f16", "mixed-q8_0"), default="f32")
-    inspect.add_argument("--activation", default="backend-selected", help="only backend-selected is implemented")
+    inspect.add_argument("--quantization-config", type=Path, help="shared four-axis configuration checked against the GGUF manifest")
+    inspect.add_argument("--backend", choices=("cpu", "metal", "cuda"))
+    inspect.add_argument("--compute", choices=("f32", "f16"))
+    inspect.add_argument("--cache", choices=("f32", "f16", "mixed-q8_0"))
+    inspect.add_argument("--activation", help="only backend-selected is implemented")
     args = parser.parse_args(argv)
     try:
+        if args.command in ("export", "inspect-precision"):
+            resolve_runtime_arguments(args)
+        elif args.command == "performance":
+            resolve_performance_arguments(args)
         if args.command == "export":
             required = ("checkpoint", "sam3_source", "sam3_runtime_source", "bpe") if args.engine == "original" else ("binary", "model")
             if any(getattr(args, name) is None for name in required):

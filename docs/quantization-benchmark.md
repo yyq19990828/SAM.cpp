@@ -14,6 +14,12 @@ counts or performance prerequisites. Export currently targets Linux CPU/CUDA;
 original checkpoint export requires the prepared CUDA reference environment.
 This tool adds no inference kernel or public cache-selection API.
 
+Prefer the [unified configuration](quantization-config.md): `export` and
+`inspect-precision` accept `--quantization-config`; `performance` accepts both
+`--baseline-config` and `--candidate-config`. Each is checked against the
+model's actual weight allocation. Separate CLI settings remain available but
+cannot be mixed with configuration files.
+
 ## Reference and cases
 
 An original `sam3.pt` reference measures combined conversion/runtime/compression
@@ -53,13 +59,14 @@ and options with your own:
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py export \
   --cases models/application-cases.json --input-root models/application-images \
   --engine native --binary build/cuda/examples/sam_precision_image_probe \
-  --model models/sam3-f32.gguf --backend cuda --compute f32 --cache f32 \
+  --model models/sam3-f32.gguf --quantization-config docs/configs/quantization/image-f32-cuda.json \
   --output build/application-f32
 
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py export \
   --cases models/application-cases.json --input-root models/application-images \
   --engine native --binary build/cuda/examples/sam_precision_image_probe \
-  --model models/sam3-custom-q4_k.gguf --backend cuda --compute f16 --cache f32 \
+  --model models/sam3-custom-q4_k.gguf \
+  --quantization-config docs/configs/quantization/image-q4-vision-text-cuda.json \
   --output build/application-custom
 
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py compare \
@@ -132,10 +139,11 @@ device through `CUDA_VISIBLE_DEVICES`.
 ```sh
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py performance \
   --cases models/application-cases.json --input-root models/application-images \
-  --binary build/cuda/examples/sam_precision_benchmark_probe --backend cuda \
-  --baseline-model models/sam3-f32.gguf --baseline-compute f32 --baseline-cache f32 \
-  --candidate-model models/sam3-custom-q4_k.gguf --candidate-compute f16 \
-  --candidate-cache mixed-q8_0 --limit 1 \
+  --binary build/cuda/examples/sam_precision_benchmark_probe \
+  --baseline-model models/sam3-f32.gguf --candidate-model models/sam3-custom-q4_k.gguf \
+  --baseline-config docs/configs/quantization/image-f32-cuda.json \
+  --candidate-config docs/configs/quantization/image-q4-vision-text-cuda.json \
+  --limit 1 --pairs 1 --warmups 0 --iterations 2 --memory-iterations 1 \
   --output build/application-performance
 
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py summarize-performance \
@@ -185,10 +193,10 @@ policies and `execution_evidence`; a model name is not its whole-graph arithmeti
 
 | Dimension | Setting | Meaning and evidence |
 | --- | --- | --- |
-| Weights | Conversion `--precision` and module selection | GGUF may mix protected F32, target Q storage and Q8 fallbacks; inspect per-type counts/bytes and assignment reasons |
-| Activations | `--activation backend-selected` | No independent native INT8/FP8/F16 activation switch; kernels may transform/quantize RHS; numerical probes are not deployment modes |
-| Compute | `--compute` or baseline/candidate compute | CUDA F16 hints apply to eligible floating-point matmuls/attention; quantized matmuls retain their dispatch; F32 does not imply all private kernel representations are F32 |
-| Cache | `--cache` or baseline/candidate cache | Image levels 0/1/2 use F32/F32/F32, F16/F16/F16 or mixed Q8_0/Q8_0/F32; this is not an LLM KV cache |
+| Weights | `weights.precision` and `modules` / `storage_profile` | GGUF may mix protected F32, target Q storage and Q8 fallbacks; inspect per-type counts/bytes and assignment reasons |
+| Activations | `activation.mode=backend-selected` | No independent native INT8/FP8/F16 activation switch; kernels may transform/quantize RHS; numerical probes are not deployment modes |
+| Compute | `compute.mode` | CUDA F16 hints apply to eligible floating-point matmuls/attention; quantized matmuls retain their dispatch; F32 does not imply all private kernel representations are F32 |
+| Cache | `cache.mode` | Image levels 0/1/2 use F32/F32/F32, F16/F16/F16 or mixed Q8_0/Q8_0/F32; this is not an LLM KV cache |
 
 Weight storage is fixed at conversion; compute and experimental cache policies
 are selected at load. CPU/Metal expose only F32 compute/cache here; reduced
@@ -202,8 +210,9 @@ Inspect stored weights and resolved policies without inference:
 
 ```sh
 .venv-reference/bin/python tools/benchmark/quantization_benchmark.py inspect-precision \
-  --model models/sam3-custom-q4_k.gguf --backend cuda --compute f16 \
-  --cache mixed-q8_0 --output build/application-precision.json
+  --model models/sam3-custom-q4_k.gguf \
+  --quantization-config docs/configs/quantization/image-q4-vision-text-cuda.json \
+  --output build/application-precision.json
 ```
 
 The command verifies model/manifest hashes and GGUF tensor headers against the
