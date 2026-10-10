@@ -11,12 +11,12 @@ import time
 
 # Allow direct execution from any working directory.
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from tools.validation.precision_acceptance import gate_identity, load_gates
-from tools.maintenance.precision_artifacts import (archive_sources, campaign_check, native_recipe, native_snapshot,
+from tools.archive.precision_v2_v3.precision_acceptance import gate_identity, load_gates
+from tools.archive.precision_v2_v3.precision_artifacts import (archive_sources, campaign_check, native_recipe, native_snapshot,
                                  source_snapshot, verify_export_artifacts)
-from tools.benchmark.precision_performance import ORDER, assess_performance, validate_cases
+from tools.archive.precision_v2_v3.precision_performance import ORDER, assess_performance, validate_cases
 from tools.validation.prepare_coco_acceptance import load_precision_dataset
 from tools.convert.sam3_artifacts import read_json, sha256_file, verify_run_artifacts, write_json
 

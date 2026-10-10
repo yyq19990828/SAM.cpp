@@ -9,11 +9,11 @@ import re
 
 # Allow direct execution from any working directory.
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from tools.validation.evaluate_precision import load_run, same_inputs
-from tools.validation.precision_acceptance import canonical_hash, gate_identity, load_gates, quality_profile
-from tools.maintenance.precision_artifacts import (native_snapshot, phase_samples, source_snapshot,
+from tools.archive.precision_v2_v3.evaluate_precision import load_run, same_inputs
+from tools.archive.precision_v2_v3.precision_acceptance import canonical_hash, gate_identity, load_gates, quality_profile
+from tools.archive.precision_v2_v3.precision_artifacts import (native_snapshot, phase_samples, source_snapshot,
                                                  validate_evaluation_history, verify_export_artifacts)
 from tools.convert.sam3_artifacts import read_json, sha256_file, verify_run_artifacts
 
@@ -137,7 +137,7 @@ def freeze(selection_path, output):
     if version == 2 or selection.get("performance_cases") is not None:
         cases_path = Path(selection["performance_cases"])
         cases = read_json(cases_path)
-        from tools.benchmark.precision_performance import validate_cases
+        from tools.archive.precision_v2_v3.precision_performance import validate_cases
         validate_cases(cases, dataset, reference["dataset_sha256"], gates)
         identities[str(cases_path.resolve())] = sha256_file(cases_path)
         identities.update(cases["artifact_sha256"])

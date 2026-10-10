@@ -8,8 +8,8 @@ import unittest
 
 import numpy as np
 
-from tools.validation.coco_acceptance import evaluate_ranked, paired_bootstrap, quality_gates
-from tools.validation.precision_acceptance import compare_objects, load_gates, required_queries
+from tools.archive.precision_v2_v3.coco_acceptance import evaluate_ranked, paired_bootstrap, quality_gates
+from tools.archive.precision_v2_v3.precision_acceptance import compare_objects, load_gates, required_queries
 from tools.quantize.runtime_quantization import encode_mask
 from tests.tools import test_coco_screening
 from tests.tools.test_precision_acceptance import output_fixture

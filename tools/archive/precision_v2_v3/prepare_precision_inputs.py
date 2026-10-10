@@ -7,9 +7,9 @@ import sys
 
 # Allow direct execution from any working directory.
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from tools.maintenance.precision_artifacts import phase_samples
+from tools.archive.precision_v2_v3.precision_artifacts import phase_samples
 from tools.validation.prepare_coco_acceptance import load_precision_dataset
 from tools.convert.sam3_artifacts import artifact_path, sha256_file, write_json
 

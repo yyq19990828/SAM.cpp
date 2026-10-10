@@ -9,14 +9,14 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.benchmark.precision_performance import assess_performance, deployment_status
-from tools.maintenance.freeze_precision_campaign import development_eligible, freeze
-from tools.maintenance.precision_artifacts import validate_evaluation_history
-from tools.validation.evaluate_precision import load_run, same_inputs
-from tools.validation.precision_acceptance import (canonical_hash, compare_objects, diagnostic_summary,
+from tools.archive.precision_v2_v3.precision_performance import assess_performance, deployment_status
+from tools.archive.precision_v2_v3.freeze_precision_campaign import development_eligible, freeze
+from tools.archive.precision_v2_v3.precision_artifacts import validate_evaluation_history
+from tools.archive.precision_v2_v3.evaluate_precision import load_run, same_inputs
+from tools.archive.precision_v2_v3.precision_acceptance import (canonical_hash, compare_objects, diagnostic_summary,
                                                    gate_identity, load_gates, object_gates,
                                                    quality_profile, version_recipe)
-from tools.validation.validate_precision_regression import compare_cases, fixed_cases
+from tools.archive.precision_v2_v3.validate_precision_regression import compare_cases, fixed_cases
 from tools.convert.sam3_artifacts import read_json, sha256_file, write_json
 from tests.tools import test_precision_acceptance, test_precision_artifacts, test_precision_performance
 from tests.tools.test_precision_acceptance import output_fixture
@@ -265,9 +265,9 @@ class PrecisionV3ArtifactChecks(unittest.TestCase):
                          {"id": "native", "development_run": str(directory), "development_quality": str(metrics_path)}]})
             dataset = {"samples": [{"split": "development"}] + [{"split": "evaluation"}] * 1024 + [{"split": "reserve"}] * 1024}
             rows = [(value, dataset, dataset["samples"][:1]) for value in (original, native)]
-            with patch("tools.maintenance.freeze_precision_campaign.load_run", side_effect=rows), \
-                    patch("tools.maintenance.freeze_precision_campaign.source_snapshot", side_effect=lambda: {}), \
-                    patch("tools.maintenance.freeze_precision_campaign.validate_evaluation_history", return_value={}):
+            with patch("tools.archive.precision_v2_v3.freeze_precision_campaign.load_run", side_effect=rows), \
+                    patch("tools.archive.precision_v2_v3.freeze_precision_campaign.source_snapshot", side_effect=lambda: {}), \
+                    patch("tools.archive.precision_v2_v3.freeze_precision_campaign.validate_evaluation_history", return_value={}):
                 freeze(selection, root / "campaign.json")
             campaign = read_json(root / "campaign.json")
             self.assertIsNone(campaign["performance_cases"])
@@ -311,7 +311,7 @@ class PrecisionV3ArtifactChecks(unittest.TestCase):
                 row["sha256"] = sha256_file(directory / row["file"])
             write_json(directory / "manifest.json", manifest)
             output = root / "metrics"
-            command = [sys.executable, "tools/validation/evaluate_precision.py", "--reference", str(original_dir),
+            command = [sys.executable, "tools/archive/precision_v2_v3/evaluate_precision.py", "--reference", str(original_dir),
                        "--candidate", str(directory), "--annotations", str(root / "annotations.json"), "--output", str(output)]
             completed = subprocess.run(command, text=True, capture_output=True, cwd=Path(__file__).resolve().parents[2])
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)

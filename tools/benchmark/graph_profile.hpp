@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <iterator>
 #include <map>
@@ -28,11 +29,41 @@ struct Tensor {
     std::array<std::int64_t, GGML_MAX_DIMS> shape{};
     std::array<std::size_t, GGML_MAX_DIMS> strides{};
     std::vector<int> sources;
+    std::vector<int> source_slots;
+    std::string accumulation_hint = "NOT_APPLICABLE", rhs_representation_hint = "NOT_APPLICABLE";
     int buffer = -1, view_source = -1, allocation_root = -1, node = -1;
     int first = 0, last = 0;
     std::size_t offset = 0, bytes = 0, view_offset = 0;
     bool owned = false, input = false, output = false;
 };
+
+inline std::string precision_hint(std::int32_t value) {
+    switch (value) {
+        case GGML_PREC_UNDEFINED: return "backend-selected";
+        case GGML_PREC_F32: return "f32";
+        case GGML_PREC_F16: return "f16";
+        case GGML_PREC_BF16: return "bf16";
+        case GGML_PREC_Q8: return "q8";
+        case GGML_PREC_Q4: return "q4";
+        default: return "unknown-" + std::to_string(value);
+    }
+}
+
+inline void capture_precision_hints(const ggml_tensor* tensor, Tensor& row) {
+    // Pinned GGML ggml_prec_set_acc/src op_params layout. These are hints,
+    // not observations of backend-private staging, multiplication or sums.
+    auto parameter = [&](std::size_t index) {
+        std::int32_t value;
+        std::memcpy(&value, reinterpret_cast<const char*>(tensor->op_params) + index * sizeof(value), sizeof(value));
+        return precision_hint(value);
+    };
+    if (tensor->op == GGML_OP_MUL_MAT || tensor->op == GGML_OP_MUL_MAT_ID) {
+        row.accumulation_hint = parameter(0);
+        row.rhs_representation_hint = parameter(3);
+    } else if (tensor->op == GGML_OP_FLASH_ATTN_EXT) {
+        row.accumulation_hint = parameter(3);
+    }
+}
 
 struct Span {
     int buffer;
@@ -156,6 +187,7 @@ inline GraphSnapshot capture_graph(ggml_context* context, ggml_cgraph* graph,
         row.name = ggml_get_name(tensor);
         row.type = ggml_type_name(tensor->type);
         row.operation = ggml_op_name(tensor->op);
+        capture_precision_hints(tensor, row);
         row.owned = owned.count(tensor) != 0;
         row.input = tensor->flags & GGML_TENSOR_FLAG_INPUT;
         row.output = tensor->flags & GGML_TENSOR_FLAG_OUTPUT;
@@ -168,7 +200,12 @@ inline GraphSnapshot capture_graph(ggml_context* context, ggml_cgraph* graph,
             row.backend = ggml_backend_name(backend);
         if (tensor->view_src) row.view_source = ids.at(tensor->view_src);
         row.view_offset = tensor->view_offs;
-        for (auto* source : tensor->src) if (source) row.sources.push_back(ids.at(source));
+        for (int slot = 0; slot < GGML_MAX_SRC; ++slot) {
+            if (tensor->src[slot]) {
+                row.sources.push_back(ids.at(tensor->src[slot]));
+                row.source_slots.push_back(slot);
+            }
+        }
         if (tensor->buffer && tensor->data) {
             const auto found = buffers.emplace(tensor->buffer, static_cast<int>(result.buffers.size()));
             row.buffer = found.first->second;

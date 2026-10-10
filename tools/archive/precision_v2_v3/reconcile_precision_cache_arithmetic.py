@@ -9,9 +9,9 @@ import sys
 from pathlib import Path
 
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from tools.validation.precision_acceptance import GATES_PATH, GATES_SHA256, canonical_hash
+from tools.archive.precision_v2_v3.precision_acceptance import GATES_PATH, GATES_SHA256, canonical_hash
 from tools.validation.verify_precision_q8_cache import check_native_report, sha256_file, verify
 
 
@@ -112,7 +112,7 @@ def reconcile(campaign_path, parent_path, candidate_path, quality_path, performa
     bindings = {str(path): sha256_file(path) for path in
                 (campaign_path, parent_path, candidate_path, quality_path, performance_path,
                  legacy_path, cache_binary, image_binary, cuda_library,
-                 GATES_PATH, Path(__file__), Path(__file__).with_name("verify_precision_q8_cache.py"),
+                 GATES_PATH, Path(__file__), Path(__file__).resolve().parents[2] / "validation/verify_precision_q8_cache.py",
                  Path(__file__).with_name("precision_acceptance.py"))}
     for name, channels in CASES.items():
         receipt_path = receipts_dir / (name + ".json")
@@ -125,7 +125,7 @@ def reconcile(campaign_path, parent_path, candidate_path, quality_path, performa
         native = check_native_report(report_path, checked["rows"], channels)
         old = legacy_steps.get((name, "q8_0", "cuda"))
         if (receipt.get("passed") is not True or checked.get("passed") is not True or
-                receipt.get("verifier_sha256") != bindings[str(Path(__file__).with_name("verify_precision_q8_cache.py"))] or
+                receipt.get("verifier_sha256") != bindings[str(Path(__file__).resolve().parents[2] / "validation/verify_precision_q8_cache.py")] or
                 any(receipt.get(key) != checked[key] for key in
                     ("rows", "channels", "blocks", "scale_tie_allowances", "integer_tie_allowances",
                      "scale_errors", "integer_errors", "decoded_bit_errors", "sha256")) or

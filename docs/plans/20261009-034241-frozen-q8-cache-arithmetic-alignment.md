@@ -60,7 +60,7 @@ The earlier v1 codec report's FPN 0/1 `passed: false` fields remain unchanged:
 they used an older expected-byte arithmetic contract. The new independent
 verdict is a separate receipt bound to those exact old payload hashes.
 
-The [reconciler](../../tools/validation/reconcile_precision_cache_arithmetic.py)
+The [reconciler](../../tools/archive/precision_v2_v3/reconcile_precision_cache_arithmetic.py)
 re-runs the independent verifier, checks the retained v1 payload identities,
 resolves both binaries' loaded GGML CUDA library, and requires identical
 frozen campaign/recipe/gate/dataset identities. Its immutable local result is

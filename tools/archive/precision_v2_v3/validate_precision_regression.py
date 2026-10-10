@@ -16,19 +16,19 @@ import numpy as np
 
 # Allow direct execution from any working directory.
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from tools.validation.precision_acceptance import (GATES_SHA256, canonical_hash, combine_statuses, compare_objects,
+from tools.archive.precision_v2_v3.precision_acceptance import (GATES_SHA256, canonical_hash, combine_statuses, compare_objects,
                                   diagnostic_summary, gate_identity, load_gates, object_gates, policy_arguments,
                                   quality_profile, validate_output)
-from tools.maintenance.precision_artifacts import (archive_sources, native_recipe, native_snapshot, packages,
+from tools.archive.precision_v2_v3.precision_artifacts import (archive_sources, native_recipe, native_snapshot, packages,
                                  runtime_environment, source_snapshot, verify_export_artifacts)
 from tools.convert.sam3_artifacts import (BPE_SHA256, SAM3_REVISION, artifact_path, load_case_manifest, read_array,
                            read_json, read_tensor_index, sha256_file, validate_cuda_oracle_provenance,
                            verify_run_artifacts, write_json)
 
 
-CASES_PATH = Path(__file__).resolve().parents[2] / "tests/data/sam3-image-cases.json"
+CASES_PATH = Path(__file__).resolve().parents[3] / "tests/data/sam3-image-cases.json"
 CASES_SHA256 = "543a2f0a696c6540bf9201c51fb56f3bea979f63c1139f74da78aab4773b9f45"
 
 
@@ -94,7 +94,7 @@ def selected_parity(payload, results, directory):
 def prepare_reference(args):
     import torch
     from tools.validation.export_reference import validate_source
-    from tools.validation.export_precision_outputs import capture_ranked
+    from tools.archive.precision_v2_v3.export_precision_outputs import capture_ranked
     manifest, artifacts = original_bundle(args.reference)
     source, runtime_source, adaptations = validate_source(args.sam3_source, args.sam3_runtime_source)
     if (manifest["oracle"]["packages"].get("torch") != packages()["torch"]

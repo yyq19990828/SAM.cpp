@@ -55,7 +55,7 @@ part of this work. Existing unrelated documentation deletions stay untouched.
 ## Frozen v3 contract
 
 The machine-readable policy is
-[sam3-precision-gates-v3.json](../../tests/data/sam3-precision-gates-v3.json),
+[sam3-precision-gates-v3.json](../../tools/archive/precision_v2_v3/sam3-precision-gates-v3.json),
 SHA-256 `822a617b90dcd5b45153b777d5e720272f234d38ae8908b3422d27357d842281`.
 The existing v2 file remains SHA-256
 `4cf06bdc609e5a143b2d74b42f394480bbe39e7510726ecedfe44fde3212a802`.
@@ -196,21 +196,21 @@ models and built probes already exist. They illustrate future real inference;
 they were not run on final model data during this tool implementation.
 
 ```sh
-.venv-reference/bin/python tools/validation/prepare_precision_inputs.py \
+.venv-reference/bin/python tools/archive/precision_v2_v3/prepare_precision_inputs.py \
   --dataset build/v3/dataset.json --input-root models/coco \
   --phase development --output build/v3/inputs-dev
-.venv-reference/bin/python tools/validation/export_precision_outputs.py \
+.venv-reference/bin/python tools/archive/precision_v2_v3/export_precision_outputs.py \
   --policy-version 3 --quality-tier balanced --engine original \
   --dataset build/v3/dataset.json --inputs build/v3/inputs-dev --phase development \
   --sam3-source "$SAM3_SOURCE_DIR" --sam3-runtime-source build/reference-runtime/sam3-cuda \
   --checkpoint models/original/sam3.pt --bpe "$sam3_weights_dir/bpe_simple_vocab_16e6.txt.gz" \
   --output build/v3/original-dev
-.venv-reference/bin/python tools/validation/export_precision_outputs.py \
+.venv-reference/bin/python tools/archive/precision_v2_v3/export_precision_outputs.py \
   --policy-version 3 --quality-tier balanced --engine native \
   --dataset build/v3/dataset.json --inputs build/v3/inputs-dev --phase development \
   --binary build/cuda/examples/sam_precision_image_probe --model models/sam3-f32.gguf \
   --backend cuda --compute f32 --cache f32 --output build/v3/f32-dev
-.venv-reference/bin/python tools/validation/evaluate_precision.py \
+.venv-reference/bin/python tools/archive/precision_v2_v3/evaluate_precision.py \
   --reference build/v3/original-dev --candidate build/v3/f32-dev \
   --annotations models/coco/annotations-v3.json --output build/v3/f32-dev-quality
 ```
@@ -248,12 +248,12 @@ If comparing speed/memory, prepare cases with the command below, add top-level
 row's `performance_baseline` to `f32`. Keep that baseline at the same tier.
 
 ```sh
-.venv-reference/bin/python tools/benchmark/prepare_precision_performance.py \
+.venv-reference/bin/python tools/archive/precision_v2_v3/prepare_precision_performance.py \
   --policy-version 3 --dataset build/v3/dataset.json --inputs build/v3/inputs-dev \
   --annotations models/coco/annotations-v3.json --output build/v3/performance-cases.json
-.venv-reference/bin/python tools/maintenance/freeze_precision_campaign.py \
+.venv-reference/bin/python tools/archive/precision_v2_v3/freeze_precision_campaign.py \
   --selection build/v3/selection.json --output build/v3/campaign.json
-.venv-reference/bin/python tools/validation/prepare_precision_inputs.py \
+.venv-reference/bin/python tools/archive/precision_v2_v3/prepare_precision_inputs.py \
   --dataset build/v3/dataset.json --input-root models/coco \
   --phase evaluation --output build/v3/inputs-final
 ```
@@ -266,12 +266,12 @@ recipe; keep the claim even when inference fails. Fixed regressions can use the
 existing verified seven-case original ranked bundle:
 
 ```sh
-.venv-reference/bin/python tools/validation/validate_precision_regression.py run \
+.venv-reference/bin/python tools/archive/precision_v2_v3/validate_precision_regression.py run \
   --policy-version 3 --quality-tier balanced \
   --binary build/cuda/examples/sam_precision_image_probe --model models/sam3-f32.gguf \
   --backend cuda --compute f32 --cache f32 \
   --reference models/reference/fixed-ranked-original --output build/v3/f32-fixed
-.venv-reference/bin/python tools/benchmark/benchmark_precision.py \
+.venv-reference/bin/python tools/archive/precision_v2_v3/benchmark_precision.py \
   --campaign build/v3/campaign.json --candidate mixed \
   --candidate-quality build/v3/mixed-final-quality/metrics.json \
   --baseline-quality build/v3/f32-final-quality/metrics.json \

@@ -8,11 +8,13 @@ No releases have been published.
 
 ### Added
 
-- Opt-in v3 image acceptance with explicit task-quality tiers independent of precision, diagnostic-only score/box/tight-mask differences, and separate performance validity, non-regression and benefit labels. Quality-only campaigns need no performance run; cache increments remain mandatory. Fresh final campaigns bind prior dataset exclusions and require eligible development results. Versioned reports preserve all v2 policy and historical results; no new model/backend qualification is implied.
+- Quality-independent application performance benchmarks with paired latency and separate process-memory measurements, small-case selection, configurable iteration counts, offline summaries and advisory benefit tags. Slowdowns or missing quality reports do not block valid measurements.
+- Precision inspection and consistent quality/performance descriptions distinguish stored tensor types, requested compute/cache policies, runtime identifiers and uncollected kernel arithmetic. Opt-in graph diagnostics expose operand/output types and precision hints without treating them as kernel traces.
+
+- Advisory application-image quantization benchmarks against original-checkpoint or native-F32 outputs, with custom image/prompt exports, one-to-one mask agreement, per-case missing/added reference objects and optional user limits that do not veto valid reports. Completed ranked v2/v3 exports are reusable without regrading historical receipts; production accuracy and performance are explicitly separate from reference agreement.
 - Installable relocatable SDK package: `SAM_ENABLE_INSTALL` (standalone default) adds standard `install(TARGETS)`/`install(EXPORT)` rules with a CMake package config and version file. Static and shared builds both produce a consumable `find_package(sam CONFIG)` package; SAM-prepared GGML is installed and exported with it, a caller-owned GGML must resolve through its own package, and an unexportable build-tree GGML is rejected with an explicit message. Installed shared libraries locate their GGML siblings through an `$ORIGIN` run path. `tests/install_consumer` verifies the package from an isolated build directory and after moving the install prefix.
 - `SAM_BUILD_TOOLS` option (standalone default `ON`, embedded `OFF`) builds the standalone conversion, validation and profiling tools independently of `SAM_BUILD_EXAMPLES`, which now owns only the `sam_image` and `sam_video` applications.
 - Compiled-library source identity: `source_snapshot()` and `archive_sources()` now recursively cover `src/` implementations and build files, with behavior tests proving that changing a new implementation changes its identity, that an archive verifies after the live sources are removed, and that archive tampering fails.
-- Experimental v2 precision acceptance tools with separate quality budgets, one-to-one object matching, ranked COCO mask AP, paired confidence bounds, independent data splits and frozen performance comparisons. Native F16 codec bit patterns and the seven fixed image cases have separate checks. Results distinguish failure, insufficient evidence and untested configurations; existing model support and v1 receipts retain their original scope.
 - Independent CUDA Q8_0 feature-cache codec verification and frozen-library reconciliation, checking native block scales, signed values, layout and decoded bits against their F32 inputs. Arithmetic evidence remains separate from model quality and measured benefits.
 - Hash-bound stage and original-weight comparators for the CUDA F32 reference configuration, preserving declared layout transformations and keeping intermediate differences separate from final-output acceptance.
 - Opt-in CUDA Q8_1 right-operand staging and Q8_0 MMVQ/MMQ raw-dot probes, with independent packed-byte and same-operand checks bound to the measured GGML library. Kernel boundary, model quality and complete recipe conclusions remain separately scoped.
@@ -41,6 +43,8 @@ No releases have been published.
 - SAM 3 tracker graph caches and shared workspaces, current-frame feature residency, and compatible-object propagation batches with bounded memory and serial fallback.
 
 ### Changed
+
+- Archive v2/v3 quality tiers, hard budgets and campaign-dependent qualification commands; remove their active grouped and flat entry points. Current quantization selection uses independent reference agreement and performance reports. Historical policy JSON bytes and result receipts are unchanged.
 
 - Organize bilingual performance measurements under `benchmarks/` by operating system and hardware (`MacOS-m4pro` and `Linux-4090`), keeping the root performance pages as indexes and retaining existing measurement values and historical links.
 - Keep the English and Chinese quantization guides focused on conversion, precision limits and scoped results; retain experimental history and diagnostic evidence in the linked plans.

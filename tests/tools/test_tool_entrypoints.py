@@ -11,25 +11,26 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 COMMANDS = {
     "benchmark": (
-        "benchmark_precision", "benchmark_video", "generate_video_benchmark",
-        "generate_video_cases", "prepare_linear_probe", "prepare_precision_performance",
+        "benchmark_video", "generate_video_benchmark",
+        "generate_video_cases", "prepare_linear_probe",
         "qualify_video_benchmark",
+        "quantization_benchmark",
     ),
     "convert": ("convert_sam3",),
-    "maintenance": ("archive_validation", "freeze_precision_campaign"),
+    "maintenance": ("archive_validation",),
     "quantize": (
         "export_calibration", "prepare_coco_calibration", "screen_runtime_quantization",
         "study_activation_quantization",
     ),
     "validation": (
-        "evaluate_coco_screening", "evaluate_precision", "export_memory_selection_goldens",
-        "export_precision_outputs", "export_quantized_reference", "export_reference",
-        "export_video_reference", "prepare_coco_acceptance", "prepare_precision_inputs",
+        "evaluate_coco_screening", "export_memory_selection_goldens",
+        "export_quantized_reference", "export_reference",
+        "export_video_reference", "prepare_coco_acceptance",
         "prepare_reference_source", "validate_image", "validate_linear_probes",
-        "validate_precision_regression", "validate_video", "verify_fp8_dots", "verify_int8_dots",
+        "validate_video", "verify_fp8_dots", "verify_int8_dots",
         "verify_linear_probe", "verify_precision_f16", "verify_precision_q8_cache",
         "verify_q8_mmvq_dots", "verify_q8_rhs_staging", "verify_q8_mmq_rhs_staging",
-        "verify_q8_mmq_dots", "reconcile_precision_cache_arithmetic",
+        "verify_q8_mmq_dots",
     ),
     "visualization": ("render_image_comparison",),
 }

@@ -3,8 +3,8 @@
 import copy
 import unittest
 
-from tools.validation.precision_acceptance import load_gates
-from tools.benchmark.precision_performance import ORDER, WORKLOADS, assess_performance
+from tools.archive.precision_v2_v3.precision_acceptance import load_gates
+from tools.archive.precision_v2_v3.precision_performance import ORDER, WORKLOADS, assess_performance
 
 
 class PrecisionPerformanceChecks(unittest.TestCase):

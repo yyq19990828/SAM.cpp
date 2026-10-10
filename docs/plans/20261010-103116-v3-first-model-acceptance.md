@@ -309,3 +309,13 @@ orchestration helpers/receipts are Git-ignored and are not distributed in a clea
 checkout. A guard-triggered pause preserves completed numerical evidence and
 requires explicitly restoring the saved progress status and resuming the
 recorded process identities after space is available; it does not resume itself.
+
+### Post-reboot interruption
+
+The campaign stopped after a PCIe/NVIDIA GPU-loss event at 13:44:04, followed by
+host reboot at 13:45:22. Three quality evaluations and four native exports had
+completed; the mixed-Q8 export and F32 mixed-cache scoring were interrupted.
+The coordinator, reporter and storage guard did not survive reboot. Their
+mutable reports now record the interruption explicitly. See the
+[investigation and duration evidence](20261010-142235-v3-gpu-crash-investigation.md)
+for the correlated kernel/native logs, retained results and recovery scope.

@@ -1,24 +1,14 @@
-#!/usr/bin/env python3
-"""Export original or native ranked SAM outputs for a versioned precision run."""
+"""Shared original/native ranked exporters; no quality thresholds or campaigns."""
 
-import argparse
-from pathlib import Path
 import os
-import shutil
 import subprocess
 import sys
 import time
 
-# Allow direct execution from any working directory.
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
-from tools.validation.precision_acceptance import (canonical_hash, gate_identity, policy_arguments,
-                                                  required_queries, validate_output, version_recipe)
-from tools.maintenance.precision_artifacts import (archive_sources, campaign_check, claim_evaluation, load_inputs, native_recipe,
-                                 native_snapshot, packages, runtime_environment, source_snapshot)
+from tools.validation.ranked_outputs import required_queries, validate_output
+from tools.maintenance.artifact_snapshot import packages, runtime_environment
 from tools.quantize.runtime_quantization import encode_mask
-from tools.convert.sam3_artifacts import BPE_SHA256, artifact_path, read_json, sha256_file, verify_run_artifacts, write_json
+from tools.convert.sam3_artifacts import BPE_SHA256, artifact_path, read_json, sha256_file, write_json
 
 
 def capture_ranked(state, raw, prompt, tokenizer, torch):
@@ -45,7 +35,6 @@ def capture_ranked(state, raw, prompt, tokenizer, torch):
     validate_output(value)
     return value
 
-
 def oracle_recipe(args):
     from tools.validation.export_reference import validate_source
     source, runtime_source, adaptations = validate_source(args.sam3_source, args.sam3_runtime_source)
@@ -58,7 +47,6 @@ def oracle_recipe(args):
             "checkpoint_sha256": sha256_file(args.checkpoint), "bpe_sha256": BPE_SHA256,
             "reference_kind": "official-checkpoint", "sam3_source": str(source), "runtime_source": str(runtime_source),
             "source_adaptations": adaptations, "packages": packages()}
-
 
 def export_original(args, samples, input_rows, identities, recipe):
     import torch
@@ -132,8 +120,8 @@ def export_original(args, samples, input_rows, identities, recipe):
     return rows, {"oracle": {**oracle, "precision": "float32", "tf32": False, "autocast": False, "compile": False,
                              "fp32_adaptation": adaptation}, "reference_kind": "official-checkpoint"}
 
-
 def export_native(args, samples, input_rows, identities, recipe):
+    from tools.benchmark.precision_reporting import expected_runtime_profile
     table = args.output / "cases.tsv"
     entries = []
     for sample in samples:
@@ -163,6 +151,9 @@ def export_native(args, samples, input_rows, identities, recipe):
             validate_output(value)
             if (value["prompt"] != prompt or value.get("precision") != recipe["weight_precision"]
                     or (value.get("storage_profile") or "dense") != recipe["storage_profile"]
+                    or value.get("quantization_modules") != recipe["quantization_modules"]
+                    or value.get("arithmetic_profile") != expected_runtime_profile(recipe)
+                    or (args.backend == "cuda" and value.get("cuda_device") != recipe.get("cuda_device", 0))
                     or value.get("feature_cache") != args.cache or value.get("cuda_compute") != args.compute):
                 raise ValueError("native payload model/compute/cache identity differs")
             stats = value["runtime"]
@@ -175,87 +166,3 @@ def export_native(args, samples, input_rows, identities, recipe):
     if len(device_names) != 1 or len(arithmetic) != 1:
         raise ValueError("native backend identity changed within a run")
     return rows, {"device_name": device_names.pop(), "arithmetic_profile": arithmetic.pop(), "reference_kind": "converted-model"}
-
-
-def export(args):
-    if sys.prefix == sys.base_prefix:
-        raise RuntimeError("use the isolated reference environment")
-    if args.output.exists():
-        raise FileExistsError("precision output must be a new directory")
-    dataset, all_samples, input_rows = load_inputs(args.inputs, args.dataset, args.phase)
-    samples = all_samples
-    partial = args.limit is not None or args.sample_ids is not None
-    if args.limit is not None:
-        if args.limit <= 0 or args.sample_ids is not None:
-            raise ValueError("a positive limit cannot be combined with explicit sample IDs")
-        samples = samples[:args.limit]
-    if args.sample_ids is not None:
-        requested = set(args.sample_ids)
-        if not requested or len(requested) != len(args.sample_ids) or not requested <= {row["id"] for row in samples}:
-            raise ValueError("sample IDs must be unique members of the requested phase")
-        samples = [row for row in samples if row["id"] in requested]
-    version = getattr(args, "policy_version", 2)
-    tier = getattr(args, "quality_tier", None)
-    recipe = (version_recipe(oracle_recipe(args), version, tier) if args.engine == "original" else
-              native_recipe(args.binary, args.model, args.backend, args.compute, args.cache, version, tier))
-    campaign_hash = campaign_check(args.campaign, args.dataset, recipe, args.phase, partial)
-    identities = source_snapshot()
-    for path in (args.dataset, args.inputs / "manifest.json"):
-        identities[str(path.resolve())] = sha256_file(path)
-    if args.engine == "original":
-        identities.update({str(path.resolve()): sha256_file(path) for path in (args.checkpoint, args.bpe)})
-    else:
-        identities.update(native_snapshot(args.binary, args.model))
-    for sample in samples:
-        row = input_rows[sample["id"]]
-        identities[str(artifact_path(args.inputs, row["file"]))] = row["sha256"]
-    args.output.mkdir(parents=True)
-    if args.phase == "evaluation":
-        claim = claim_evaluation(args.campaign, recipe, args.output)
-        identities[str(claim.resolve())] = sha256_file(claim)
-        identities[str(args.campaign.resolve())] = campaign_hash
-    write_json(args.output / "recipe.json", recipe)
-    shutil.copyfile(args.dataset, args.output / "dataset.json")
-    rows, metadata = (export_original if args.engine == "original" else export_native)(args, samples, input_rows, identities, recipe)
-    verify_run_artifacts(identities)
-    archived = archive_sources(args.output, identities)
-    write_json(args.output / "manifest.json", {"schema_version": version, "kind": f"sam3-ranked-precision-output-v{version}", "complete": True,
-                "phase": args.phase, "diagnostic_only": partial or args.phase != "evaluation", "images": len(samples),
-                "sample_ids": [row["id"] for row in samples], "dataset_sha256": sha256_file(args.dataset),
-                "input_manifest_sha256": sha256_file(args.inputs / "manifest.json"),
-                "input_images": {sample["id"]: input_rows[sample["id"]]["sha256"] for sample in samples},
-                "gates_sha256": gate_identity(version)[1], "recipe": recipe, "recipe_sha256": canonical_hash(recipe),
-                "campaign_sha256": campaign_hash, "campaign_file": str(args.campaign.resolve()) if args.campaign else None,
-                "artifact_sha256": identities, "archived_sources": archived, "outputs": rows,
-                "packages": packages(), **metadata})
-    print(f"Completed {len(samples)} images / {len(rows)} ranked prompts: {args.output}", flush=True)
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    policy_arguments(parser)
-    for name in ("dataset", "inputs", "output"):
-        parser.add_argument("--" + name, type=Path, required=True)
-    parser.add_argument("--phase", choices=("development", "evaluation"), required=True)
-    parser.add_argument("--engine", choices=("original", "native"), required=True)
-    for name in ("binary", "model", "checkpoint", "sam3-source", "sam3-runtime-source", "bpe", "campaign"):
-        parser.add_argument("--" + name, type=Path)
-    parser.add_argument("--backend", choices=("cpu", "metal", "cuda"), default="cuda")
-    parser.add_argument("--cache", choices=("f32", "f16", "mixed-q8_0"), default="f32")
-    parser.add_argument("--compute", choices=("f32", "f16"), default="f32")
-    parser.add_argument("--limit", type=int)
-    parser.add_argument("--sample-ids", nargs="+")
-    args = parser.parse_args()
-    try:
-        required = ("checkpoint", "sam3_source", "sam3_runtime_source", "bpe") if args.engine == "original" else ("binary", "model")
-        if any(getattr(args, name) is None for name in required):
-            raise ValueError(f"{args.engine} export requires {', '.join(required)}")
-        if args.engine == "original" and (args.backend != "cuda" or args.cache != "f32" or args.compute != "f32"):
-            raise ValueError("original reference requires CUDA F32 with unmodified F32 cache")
-        export(args)
-    except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        parser.exit(1, f"Precision export failed: {error}\n")
-
-
-if __name__ == "__main__":
-    main()

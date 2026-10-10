@@ -15,7 +15,7 @@ import numpy as np
 from tools.convert.sam3_artifacts import read_json, sha256_file
 
 
-GATES_PATH = Path(__file__).resolve().parents[2] / "tests/data/sam3-precision-gates-v2.json"
+GATES_PATH = Path(__file__).with_name("sam3-precision-gates-v2.json")
 GATES_SHA256 = "4cf06bdc609e5a143b2d74b42f394480bbe39e7510726ecedfe44fde3212a802"
 GATES_V3_PATH = GATES_PATH.with_name("sam3-precision-gates-v3.json")
 GATES_V3_SHA256 = "822a617b90dcd5b45153b777d5e720272f234d38ae8908b3422d27357d842281"

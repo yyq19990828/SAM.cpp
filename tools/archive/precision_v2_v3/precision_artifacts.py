@@ -10,7 +10,7 @@ import re
 import shutil
 import subprocess
 
-from tools.validation.precision_acceptance import (GATES_PATH, canonical_hash, gate_identity,
+from tools.archive.precision_v2_v3.precision_acceptance import (GATES_PATH, canonical_hash, gate_identity,
                                                   version_recipe)
 from tools.validation.prepare_coco_acceptance import load_precision_dataset
 from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file, verify_run_artifacts
@@ -61,7 +61,7 @@ def load_inputs(directory, dataset_path, phase):
 
 
 def repository_root():
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
 
 
 def source_snapshot():

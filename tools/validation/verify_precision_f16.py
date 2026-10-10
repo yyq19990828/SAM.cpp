@@ -13,7 +13,7 @@ import numpy as np
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.maintenance.precision_artifacts import archive_sources, runtime_environment, source_snapshot
+from tools.maintenance.artifact_snapshot import archive_sources, runtime_environment, source_snapshot
 from tools.convert.sam3_artifacts import sha256_file, verify_run_artifacts, write_json
 
 

@@ -9,13 +9,13 @@ import sys
 
 # Allow direct execution from any working directory.
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from tools.validation.coco_acceptance import evaluate_ranked, paired_bootstrap, quality_gates
+from tools.archive.precision_v2_v3.coco_acceptance import evaluate_ranked, paired_bootstrap, quality_gates
 from tools.validation.evaluate_coco_screening import prompted_ground_truth
-from tools.validation.precision_acceptance import (canonical_hash, combine_statuses, compare_objects,
+from tools.archive.precision_v2_v3.precision_acceptance import (canonical_hash, combine_statuses, compare_objects,
                                   diagnostic_summary, gate_identity, load_gates, quality_profile, validate_output)
-from tools.maintenance.precision_artifacts import campaign_check, phase_samples, source_snapshot, verify_export_artifacts
+from tools.archive.precision_v2_v3.precision_artifacts import campaign_check, phase_samples, source_snapshot, verify_export_artifacts
 from tools.validation.prepare_coco_acceptance import load_precision_dataset
 from tools.convert.sam3_artifacts import artifact_path, read_json, sha256_file, verify_run_artifacts, write_json
 
@@ -168,7 +168,7 @@ def evaluate(args):
     write_json(args.output / "reference-metrics.json", r_metrics)
     write_json(args.output / "candidate-metrics.json", c_metrics)
     status = combine_statuses([absolute["status"], incremental["status"]])
-    from tools.maintenance.precision_artifacts import archive_sources
+    from tools.archive.precision_v2_v3.precision_artifacts import archive_sources
     archived = archive_sources(args.output, identities)
     separation = ({"task_quality_status": status, "qualification_status": "FAIL" if status == "FAIL" else "NOT_RUN",
                    "diagnostics_affect_quality": False, "performance_required_for_qualification": False}

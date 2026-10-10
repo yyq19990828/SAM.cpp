@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tools.validation.precision_acceptance import combine_statuses, gate_identity
+from tools.archive.precision_v2_v3.precision_acceptance import combine_statuses, gate_identity
 from tools.convert.sam3_artifacts import verify_run_artifacts
 
 

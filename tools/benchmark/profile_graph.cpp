@@ -94,6 +94,15 @@ void write_record(std::ostream& out, const Record& record) {
         array(out, tensor.shape);
         out << ",\"strides\":"; array(out, tensor.strides);
         out << ",\"sources\":"; array(out, tensor.sources);
+        out << ",\"operands\":[";
+        for (std::size_t j = 0; j < tensor.sources.size(); ++j) {
+            if (j) out << ',';
+            const auto id = tensor.sources[j];
+            out << "{\"slot\":" << tensor.source_slots[j] << ",\"tensor\":" << id
+                << ",\"storage_type\":" << json_string(graph.tensors.at(id).type) << '}';
+        }
+        out << "],\"precision_hints\":{\"accumulation\":" << json_string(tensor.accumulation_hint)
+            << ",\"rhs_representation\":" << json_string(tensor.rhs_representation_hint) << '}';
         out << ",\"buffer\":" << tensor.buffer << ",\"offset\":" << tensor.offset
             << ",\"bytes\":" << tensor.bytes << ",\"view_source\":" << tensor.view_source
             << ",\"view_offset\":" << tensor.view_offset << ",\"allocation_root\":" << tensor.allocation_root
@@ -109,16 +118,32 @@ void write_record(std::ostream& out, const Record& record) {
 
 int main(int argc, char** argv) {
     try {
-        const auto options = sam_example::parse_options(argc, argv, false);
+        std::string cache = "f32";
+        std::vector<char*> arguments{argv[0]};
+        bool cache_set = false;
+        for (int i = 1; i < argc; ++i) {
+            if (std::string(argv[i]) == "--feature-cache") {
+                if (cache_set || ++i == argc) throw std::invalid_argument("--feature-cache requires one value");
+                cache = argv[i];
+                cache_set = true;
+            } else arguments.push_back(argv[i]);
+        }
+        if (cache != "f32" && cache != "f16" && cache != "mixed-q8_0")
+            throw std::invalid_argument("--feature-cache must be f32, f16 or mixed-q8_0");
+        const auto options = sam_example::parse_options(static_cast<int>(arguments.size()), arguments.data(), false);
         if (options.help) {
             std::cout << "Usage: sam_profile_graph --model FILE --image FILE --text PROMPT --output NEW_DIR\n"
                          "  [--backend cpu|metal|cuda] [--cuda-device N] [--cuda-compute f32|f16] [--threads N]\n"
-                         "Diagnostic allocation snapshots; timings are not release benchmarks.\n";
+                         "  [--feature-cache f32|f16|mixed-q8_0]\n"
+                         "Diagnostic tensor types and precision hints; kernel-internal arithmetic is not traced.\n"
+                         "Allocation snapshots perturb execution; timings are not performance benchmarks.\n";
             return 0;
         }
         sam_example::OutputDirectory output(options.output);
         const auto image = sam_example::read_image(options.image);
-        auto state = sam::internal::sam3::load_state(options.model.string(), options.backend);
+        using sam::internal::FeatureCacheMode;
+        const auto cache_mode = cache == "f32" ? FeatureCacheMode::F32 : cache == "f16" ? FeatureCacheMode::F16 : FeatureCacheMode::Q8_0;
+        auto state = sam::internal::sam3::load_state(options.model.string(), options.backend, cache_mode);
         if (state->model_info.task != "text_image") throw std::invalid_argument("graph profiler requires image weights");
         auto observer = std::make_shared<Observer>(*state->runtime);
         state->runtime->set_graph_observer(observer);
@@ -129,11 +154,16 @@ int main(int argc, char** argv) {
         const auto result = session.segment_text(options.text, options.score_threshold);
         state->runtime->set_graph_observer({});
         auto json = sam_example::output_file(options.output / "graphs.json");
-        json << "{\"schema_version\":1,\"diagnostic_only\":true,\"scope\":"
+        json << "{\"schema_version\":1,\"complete\":true,\"diagnostic_only\":true,\"scope\":"
              << sam_example::json_string("Operator-boundary owned allocation spans; views pin their root; overlapping ranges count once. Excludes backend scratch pools, padding, external storage and context. Per-stage peaks must not be summed.")
              << ",\"model\":" << sam_example::json_string(options.model.string())
              << ",\"image\":" << sam_example::json_string(options.image.string())
-             << ",\"prompt\":" << sam_example::json_string(options.text);
+             << ",\"prompt\":" << sam_example::json_string(options.text)
+             << ",\"feature_cache\":" << sam_example::json_string(cache)
+             << ",\"cuda_compute\":" << sam_example::json_string(options.backend.cuda_compute == sam::CudaComputeMode::F16 ? "f16" : "f32")
+             << ",\"precision_evidence\":{\"tensor_types\":\"observed at graph allocation boundaries\","
+                "\"precision_hints\":\"requested op parameters; backend may select another kernel representation\","
+                "\"kernel_internal_arithmetic\":\"NOT_COLLECTED\"}";
         sam_example::write_model_profile(json, state->model_info);
         json << ",\"runtime\":";
         sam_example::write_runtime_stats(json, session.stats());

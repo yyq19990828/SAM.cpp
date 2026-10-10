@@ -4,8 +4,8 @@ import copy
 import unittest
 from pathlib import Path
 
-from tools.validation.precision_acceptance import canonical_hash
-from tools.validation.reconcile_precision_cache_arithmetic import check_recipe_alignment
+from tools.archive.precision_v2_v3.precision_acceptance import canonical_hash
+from tools.archive.precision_v2_v3.reconcile_precision_cache_arithmetic import check_recipe_alignment
 
 
 class FrozenCacheAlignmentChecks(unittest.TestCase):

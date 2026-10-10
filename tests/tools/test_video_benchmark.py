@@ -99,7 +99,7 @@ class VideoBenchmarkChecks(unittest.TestCase):
 
                 with patch.object(benchmark_video, "__file__", str(project / "tools/benchmark/benchmark_video.py")), \
                      patch.object(benchmark_video.sys, "platform", "linux"), \
-                     patch("tools.maintenance.precision_artifacts.repository_root", return_value=project), \
+                     patch("tools.maintenance.artifact_snapshot.repository_root", return_value=project), \
                      patch.object(benchmark_video, "check_provenance", return_value=("f32", reference, None)), \
                      patch.object(benchmark_video, "freeze_run_artifacts", return_value=artifacts), \
                      patch.object(benchmark_video, "conditions", return_value={}), \

@@ -355,7 +355,7 @@ COCO 标注 + 旧用量清单 -> v2 切分 -> 统一 RGB 输入
                                              独立性能测量 -> 分别判定
 ```
 
-- `tests/data/sam3-precision-gates-v2.json` 的 SHA-256 为
+- `tools/archive/precision_v2_v3/sam3-precision-gates-v2.json` 的 SHA-256 为
   `4cf06bdc609e5a143b2d74b42f394480bbe39e7510726ecedfe44fde3212a802`。
   JSON 内统一使用 0–1 比例；本计划中的 pp 表格保持原义。
 - `tools/prepare_coco_acceptance.py` 已生成

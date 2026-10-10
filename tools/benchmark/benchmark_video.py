@@ -27,7 +27,7 @@ from tools.convert.sam3_artifacts import (artifact_path, freeze_output_files, fr
                            read_array, read_json, sha256_file, verify_output_files,
                            verify_run_artifacts, write_json)
 from tools.convert.sam3_gguf import HYBRID_PROFILE
-from tools.maintenance.precision_artifacts import source_snapshot
+from tools.maintenance.artifact_snapshot import source_snapshot
 from tools.validation.validate_video import check_provenance, read_objects
 from tools.validation.validate_image import CUDA_F16_ARITHMETIC_PROFILE, validate_cuda_compute_mode
 

@@ -9,13 +9,13 @@ tools when `SAM_BUILD_TOOLS=ON` (default); CUDA-only probes follow
 | --- | --- |
 | `convert/` | Checkpoint conversion (`convert_sam3.py`), GGUF schema (`sam3_gguf.py`, `sam3_tensor_schema.json`) and shared artifact contracts (`sam3_artifacts.py`) |
 | `quantize/` | Calibration export, runtime quantization helpers, native cache codecs and `quantize_rows.cpp` |
-| `validation/` | Reference export, image/video validation, precision acceptance, COCO evaluation and probe verification |
-| `benchmark/` | Image/video timing, precision performance, linear probes, graph profiling and video fixtures |
+| `validation/` | Reference export, image/video validation, ranked output exports, COCO evaluation and probe verification |
+| `benchmark/` | Image/video timing, independent quantization performance, precision inspection, linear probes, graph profiling and video fixtures |
 | `visualization/` | Comparison image rendering |
 | `maintenance/` | Documentation checks, archive validation, campaign freezing and shared identities |
 
-The flat `tools/<name>.py` files from earlier revisions are thin compatibility
-entry points. Running them as scripts and importing them both keep working;
+The retained flat `tools/<name>.py` files from earlier revisions are thin compatibility
+entry points. Retired v2/v3 policy entry points are excluded. Running retained scripts and importing them both keep working;
 each one forwards to `tools/<group>/<name>.py`, which is the only copy of the
 implementation.
 
@@ -41,25 +41,26 @@ C++ tool sources use the private `sam_private` and `sam_image_io` targets and
 are never installed. `quantize_rows.cpp` provides the pinned GGML quantization
 provenance required by conversion receipts.
 
-## Versioned precision acceptance
+## Application quantization benchmarks
 
-Existing commands default to v2. For new v3 image runs, pass `--policy-version 3
---quality-tier balanced` to `validation/export_precision_outputs.py` and
-`validation/validate_precision_regression.py run`; `high-fidelity` and
-`compact` are the other explicit tiers. Evaluation infers the version from the
-run and never silently regrades v2 receipts. All output directories must be new.
+Use `benchmark/quantization_benchmark.py export` with a custom image/prompt cases
+file, then `compare` against an original-checkpoint or native-F32 run. Reports
+measure reference agreement without COCO quality prerequisites. Optional user
+limits produce advice and never change a valid report's success exit code;
+invalid inputs or altered/missing evidence remain errors. Completed ranked
+v2/v3 exports can be compared without changing their original receipts.
 
-`maintenance/freeze_precision_campaign.py` accepts a
-`sam3-precision-selection-v3` document with a complete hash-bound
-`evaluation_history`. Quality-only campaigns can omit performance settings.
-Cache increments use `cache_baseline`; optional performance comparisons use
-`performance_baseline`, `performance_cases` and `benchmark_binary`.
-`benchmark/prepare_precision_performance.py --policy-version 3` prepares v3
-cases. `benchmark/benchmark_precision.py` consumes the campaign and passing final
-quality for both recipes; it reports valid measurements, non-regression and
-benefit labels separately. A quality report does not replace arithmetic evidence.
+See the [application benchmark guide](../docs/quantization-benchmark.md) for
+commands, precision boundaries and interpretation. `performance` runs paired latency/memory processes independently;
+`summarize-performance` reads existing raw records offline, and `inspect-precision`
+checks stored tensors without inference. Native activation and arbitrary per-layer
+mixed-format settings are not implemented.
 
-See the [v3 plan](../docs/plans/20261010-101413-precision-acceptance-v3.md) for a
-selection example and the complete command sequence, and [model verification](../docs/validation.md#v3-image-acceptance)
-for report semantics. Policy versions do not change GGUF or ranked tensor
-payload formats.
+## Archived precision policies
+
+The [v2/v3 archive](archive/precision_v2_v3/README.md) holds historical policy
+JSON, evaluators and campaign-dependent performance qualification. Those
+commands no longer exist under active validation/benchmark/maintenance groups
+or as flat compatibility entry points. Earlier result receipts are unchanged.
+The current application tools have no quality tier, quality veto or campaign
+requirement; see the [benchmark guide](../docs/quantization-benchmark.md).

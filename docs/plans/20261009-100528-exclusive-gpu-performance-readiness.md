@@ -53,7 +53,7 @@ two-case shared-GPU screen remains diagnostic only. An exclusive window
 would run the unchanged protocol with:
 
 ```sh
-rtk proxy .venv-reference/bin/python -B tools/benchmark/benchmark_precision.py \
+rtk proxy .venv-reference/bin/python -B tools/archive/precision_v2_v3/benchmark_precision.py \
   --campaign build/precision-q8-followup-20261009/campaign.json \
   --candidate q8-nonvision \
   --candidate-quality build/precision-q8-followup-20261009/quality-evaluation-q8/metrics.json \

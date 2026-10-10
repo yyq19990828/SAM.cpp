@@ -79,6 +79,38 @@ void check(sam::Backend backend) {
     require(observer->computes == 3, "disabled observer still called");
     require(!snapshot.tensors.empty(), "snapshot lifetime depended on graph binding");
 }
+
+void check_precision() {
+    sam::internal::GgmlRuntime runtime({sam::Backend::Cpu, 1}, true);
+    auto observer = std::make_shared<Observer>();
+    runtime.set_graph_observer(observer);
+    sam::RuntimeStats stats;
+    sam::internal::GraphExecution graph(runtime, 32, stats);
+    auto* weights = ggml_new_tensor_2d(graph.context(), GGML_TYPE_F16, 4, 4);
+    ggml_set_input(weights);
+    auto* input = sam::internal::input_tensor(graph.context(), "precision_input", 4, 1);
+    auto* output = ggml_mul_mat(graph.context(), weights, input);
+    ggml_set_name(output, "precision_output");
+    require(ggml_prec_set_src(output, GGML_PREC_F16, 1), "source precision hint rejected");
+    graph.output(output);
+    graph.allocate();
+    const std::vector<ggml_fp16_t> values(16, ggml_fp32_to_fp16(1));
+    ggml_backend_tensor_set(weights, values.data(), 0, values.size() * sizeof(ggml_fp16_t));
+    sam::internal::upload(input, std::vector<float>(4, 1), stats);
+    graph.compute();
+    for (const auto value : sam::internal::download(output, stats)) require(value == 4, "precision observer changed output");
+    bool found = false;
+    for (const auto& tensor : observer->snapshot.tensors) {
+        if (tensor.name != "precision_output") continue;
+        found = true;
+        require(tensor.type == "f32" && tensor.accumulation_hint == "f32" && tensor.rhs_representation_hint == "f16",
+                "precision hints were confused with the output type");
+        require(tensor.source_slots == std::vector<int>({0, 1}), "operand slots changed");
+        require(observer->snapshot.tensors.at(tensor.sources[0]).type == "f16"
+                && observer->snapshot.tensors.at(tensor.sources[1]).type == "f32", "operand storage types changed");
+    }
+    require(found, "matrix precision evidence omitted");
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -86,7 +118,10 @@ int main(int argc, char** argv) {
         if (sam::test::cuda_requested(argc, argv)) {
             if (!sam::test::cuda_available()) return 77;
             check(sam::Backend::Cuda);
-        } else check(sam::Backend::Cpu);
+        } else {
+            check(sam::Backend::Cpu);
+            check_precision();
+        }
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "graph profiling check: " << error.what() << '\n';

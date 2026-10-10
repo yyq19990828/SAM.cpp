@@ -22,17 +22,30 @@ void write_times(std::ostream& output, const std::vector<double>& times) {
     output << ']';
 }
 
+int parse_count(const char* argument) {
+    const std::string text(argument);
+    std::size_t consumed = 0;
+    const auto value = std::stoll(text, &consumed);
+    if (consumed != text.size() || value < 0 || value > 10000)
+        throw std::invalid_argument("benchmark counts must be integers in [0,10000]");
+    return static_cast<int>(value);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 10)
-            throw std::invalid_argument("usage: sam_precision_benchmark_probe MODEL IMAGE PROMPT ALTERNATE cpu|cuda CACHE COMPUTE latency|memory NEW_DIR");
+        if (argc != 10 && argc != 12)
+            throw std::invalid_argument("usage: sam_precision_benchmark_probe MODEL IMAGE PROMPT ALTERNATE cpu|cuda CACHE COMPUTE latency|memory NEW_DIR [WARMUPS ITERATIONS]");
         const std::string prompt = argv[3], alternate = argv[4], backend = argv[5], cache = argv[6], compute = argv[7], kind = argv[8];
         if (prompt.empty() || alternate.empty() || prompt == alternate || (backend != "cpu" && backend != "cuda") ||
             (cache != "f32" && cache != "f16" && cache != "mixed-q8_0") || (compute != "f32" && compute != "f16") ||
             (kind != "latency" && kind != "memory") || (backend == "cpu" && (cache != "f32" || compute != "f32")))
             throw std::invalid_argument("invalid precision benchmark recipe/workload");
+        const int warmups = argc == 12 ? parse_count(argv[10]) : 5;
+        const int iterations = argc == 12 ? parse_count(argv[11]) : 20;
+        if (warmups < 0 || warmups > 10000 || iterations < 1 || iterations > 10000)
+            throw std::invalid_argument("benchmark requires warmups in [0,10000] and iterations in [1,10000]");
         sam_example::OutputDirectory destination(argv[9], true);
         const std::filesystem::path directory = argv[9];
         mark_phase(directory, "load");
@@ -50,7 +63,6 @@ int main(int argc, char** argv) {
         session.set_image(sam_example::image_view(image));
         auto result = session.segment_text(prompt, .5f);
         const auto initial_stats = session.stats();
-        constexpr int warmups = 5, iterations = 20;
         std::vector<double> full, changed, repeated;
         auto measure = [&](const char* phase, std::vector<double>& times, auto&& operation) {
             mark_phase(directory, phase);

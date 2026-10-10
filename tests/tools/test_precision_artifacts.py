@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.validation.evaluate_precision import load_run, read_outputs, same_inputs
-from tools.validation.precision_acceptance import GATES_SHA256, canonical_hash
-from tools.maintenance.precision_artifacts import (archive_sources, campaign_check, claim_evaluation, phase_samples,
+from tools.archive.precision_v2_v3.evaluate_precision import load_run, read_outputs, same_inputs
+from tools.archive.precision_v2_v3.precision_acceptance import GATES_SHA256, canonical_hash
+from tools.archive.precision_v2_v3.precision_artifacts import (archive_sources, campaign_check, claim_evaluation, phase_samples,
                                  source_snapshot, verify_export_artifacts)
 from tools.validation.prepare_coco_acceptance import make_dataset
 from tools.convert.sam3_artifacts import sha256_file, write_json
@@ -93,14 +93,14 @@ class PrecisionArtifactChecks(unittest.TestCase):
             write_json(campaign, {"schema_version": 2, "kind": "sam3-precision-campaign-v2", "frozen_before_evaluation": True,
                                   "gates_sha256": GATES_SHA256, "dataset_sha256": sha256_file(dataset_path),
                                   "recipe_sha256": [canonical_hash(recipe)], "artifact_sha256": sources})
-            with patch("tools.maintenance.precision_artifacts.source_snapshot", return_value=sources):
+            with patch("tools.archive.precision_v2_v3.precision_artifacts.source_snapshot", return_value=sources):
                 self.assertEqual(campaign_check(campaign, dataset_path, recipe, "evaluation"), sha256_file(campaign))
                 for path, partial in ((None, False), (campaign, True)):
                     with self.assertRaises(ValueError):
                         campaign_check(path, dataset_path, recipe, "evaluation", partial)
                 with self.assertRaises(ValueError):
                     campaign_check(campaign, dataset_path, {**recipe, "feature_cache": "f16"}, "evaluation")
-            with patch("tools.maintenance.precision_artifacts.source_snapshot", return_value={**sources, "missing.py": "3" * 64}):
+            with patch("tools.archive.precision_v2_v3.precision_artifacts.source_snapshot", return_value={**sources, "missing.py": "3" * 64}):
                 with self.assertRaisesRegex(ValueError, "every current"):
                     campaign_check(campaign, dataset_path, recipe, "evaluation")
             claim_evaluation(campaign, recipe, root / "output")
@@ -153,7 +153,7 @@ class PrecisionArtifactChecks(unittest.TestCase):
             test_module.write_text("class ToolChecks: pass\n")
             golden = root / "tests" / "data" / "cases.json"
             golden.write_text("{}\n")
-            with patch("tools.maintenance.precision_artifacts.repository_root", return_value=root):
+            with patch("tools.archive.precision_v2_v3.precision_artifacts.repository_root", return_value=root):
                 before = source_snapshot()
                 for path in (implementation, build_file, nested_tool, legacy_entry, vendor_header,
                              support_header, test_module, golden):

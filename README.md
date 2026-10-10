@@ -42,10 +42,12 @@ Experimental mixed-Q8_0 cache-tool recipes for F32 and those custom Q8_0
 weights also have scoped full-image/changed-prompt latency acceptance on
 RTX 4090. Public model loading retains its existing cache precision.
 
-New image acceptance campaigns can opt into [v3 quality tiers](docs/quantization.md#v3-quality-tiers-and-optional-benefits),
-separating task-quality floors, fidelity diagnostics and optional speed/memory
-benefits. Existing v2 measurements retain their original scope; the v3 tooling
-does not by itself qualify a model or backend.
+Use [application-image reference benchmarks](docs/quantization-benchmark.md) to
+compare a custom quantization recipe with the original checkpoint or native
+F32 outputs. Quality limits are optional user advice; repository COCO results
+are reference measurements, not universal deployment requirements. Historical
+v2/v3 policies are archived; historical results remain unchanged. Performance
+benchmarks run independently of quality, with explicit precision descriptions.
 
 ## Build
 

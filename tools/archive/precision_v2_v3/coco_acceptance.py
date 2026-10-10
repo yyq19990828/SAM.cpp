@@ -12,7 +12,7 @@ import io
 import numpy as np
 
 from tools.validation.evaluate_coco_screening import union_mask
-from tools.validation.precision_acceptance import combine_statuses, object_gates, upper_gate, validate_output
+from tools.archive.precision_v2_v3.precision_acceptance import combine_statuses, object_gates, upper_gate, validate_output
 
 
 class CocoAPCache:

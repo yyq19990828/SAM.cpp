@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from tools.validation.precision_acceptance import (combine_statuses, compare_objects, load_gates, object_gates,
+from tools.archive.precision_v2_v3.precision_acceptance import (combine_statuses, compare_objects, load_gates, object_gates,
                                   quality_profile, required_queries, spatial_assignment, upper_gate,
                                   validate_output, validate_rle)
 from tools.quantize.runtime_quantization import encode_mask

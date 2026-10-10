@@ -10,7 +10,7 @@ import numpy as np
 from tools.convert.sam3_artifacts import dump_array
 from tests.tools import test_precision_acceptance
 from tests.tools.test_precision_acceptance import output_fixture
-from tools.validation.validate_precision_regression import compare_cases, fixed_cases, selected_parity
+from tools.archive.precision_v2_v3.validate_precision_regression import compare_cases, fixed_cases, selected_parity
 
 
 class PrecisionRegressionChecks(unittest.TestCase):
