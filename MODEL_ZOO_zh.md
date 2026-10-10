@@ -57,11 +57,14 @@ Linux CPU 配合 OpenBLAS 的 F32/F16 图像也已通过。其他 CPU/GPU 硬件
 | F32 | 原始 F32 | F32 |
 | F16 | 混合 F16/F32 | 保存的 F16 升为 F32 |
 | Hybrid | 视觉与跟踪器 F32，检测及文本混合 | 剩余 F16 升为 F32 |
-| 视觉／全模块量化 | 所选线性层保留压缩 Q8/K，其余 F32 | 压缩权重驻留，计算使用临时 F32 矩阵权重 |
+| 视觉／全模块量化 | 所选线性层保留压缩 Q8/K，其余 F32 | 压缩权重驻留；默认使用临时 F32 矩阵，或显式原生量化矩阵乘 |
 
 升格保留已舍入的值，不能恢复原始 F32。量化 Metal 和 CUDA 使用不同算术 profile
 的原生 kernel；CUDA 已验证的 MMVQ/MMQ 路径使用 RHS Q8_1 staging。CPU 保留压缩
-权重，并以临时 F32 权重完成矩阵运算。`ModelInfo::precision`、`storage_profile` 和
+权重；默认使用临时 F32 矩阵运算。显式 `--cpu-compute native-quantized` 使用 CPU
+packed 权重 kernel、内部 Q8 RHS，图上输入／输出为 F32。该模式通过小型算子验证，
+完整模型质量／性能尚未测量，见[配置](docs/quantization-config_zh.md#cpu-原生量化矩阵乘)。
+`ModelInfo::precision`、`storage_profile` 和
 `arithmetic_profile` 表示实际加载配置，具体名称见[量化指南](docs/quantization_zh.md)。
 
 CUDA 计算精度通过 `--cuda-compute f32|f16` 单独选择，C++ 对应

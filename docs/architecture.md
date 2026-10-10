@@ -141,8 +141,12 @@ The current GGML modules are split by responsibility:
 Backend drivers use GGML's device registry. CPU, Metal and CUDA use the shared SAM 3
 graphs; backend-specific precision and fallback rules remain in the runtime.
 On CPU, eligible matrix operations may use a registered BLAS device before the
-native CPU backend. Quantized CPU weights remain packed and shared F32 cast
-nodes prepare `MUL_MAT` operands. Quantized Metal and CUDA use native packed-weight
+native CPU backend. Default quantized CPU execution keeps packed weights and
+prepares `MUL_MAT` operands with shared F32 cast nodes. Opt-in native CPU compute
+skips those casts and pins packed-weight matmuls to CPU; the backend owns RHS
+Q8 packing/precision validation while dense operations retain existing placement.
+Public `BackendOptions::cpu_compute`, unified configuration and arithmetic profiles
+expose the choice without model-specific graph branches. Quantized Metal and CUDA use native packed-weight
 kernels with separate staging and arithmetic profiles; see the
 [quantization guide](quantization.md) for the profile contract.
 

@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | 权重存储 | F32/F16 及 Q8_0/Q6_K/Q5_K/Q4_K 图像线性权重；混合 F32/Q 格式 | 模块格式用配置 schema 2／GGUF schema 5；精确张量覆盖用配置 schema 3／GGUF schema 6；保留保护／Q8 例外，混合 F16 未开放 |
 | 激活 | 图缓冲主要为 F32，后端 kernel 可能内部转换或量化操作数 | W8A8/FP8 工具仍是研究／probe，不是可部署的完整模型配置 |
-| 算术 | CUDA F32/F16 策略；量化 kernel 根据类型、形状和后端分派 | 策略名称不保证整图统一的操作数／累加类型；F16 提示面向支持的浮点操作 |
+| 算术 | CPU F32 或显式原生量化矩阵乘；CUDA F32/F16 策略；kernel 根据类型、形状和后端分派 | CPU 原生矩阵乘可在内部将 F32 RHS 打包为 Q8；策略名称不保证整图统一的操作数／累加类型 |
 | 特征缓存 | F32 及实验 F16/mixed-Q8_0 图像缓存 | CUDA probe 可选；混合 Q8 保留 F32 低分辨率检测特征，公共加载保持现有缓存选项 |
 
 权重、激活和缓存格式描述值的存储／表示；算术精度另指操作数、乘法、累加和输出
@@ -156,9 +156,19 @@ CUDA 的 `--cuda-device N` 表示可见设备序号。当前量化模型的 `aut
 
 ## Backend 行为
 
-GGUF 精度说明权重的存储方式，不等同于端到端算术精度。CPU 会保持 packed
+GGUF 精度说明权重的存储方式，不等同于端到端算术精度。默认 CPU 计算保持 packed
 量化权重常驻，并在共享计算图的 `MUL_MAT` 前创建临时 F32 cast；这部分工作区
 会影响峰值内存。`ModelInfo` 将该策略报告为 `ggml-quantized-weights-f32-v1`。
+
+显式 `--backend cpu --cpu-compute native-quantized`，或设置
+`BackendOptions::cpu_compute = CpuComputeMode::NativeQuantized`，会保留 packed
+矩阵操作数，报告 `ggml-quantized-cpu-native-v1`。标准 CPU dot/tiled kernel 将 F32
+RHS 打包为 Q8_0（Q8_0 权重）或 Q8_K（K 权重）；整数局部点积、浮点缩放／归约及
+F32 输出属于不同精度边界。其余图激活／运算保留现有策略，不代表完整模型 INT8
+激活量化。此模式要求实际 Q 权重，并将相应矩阵乘固定到 CPU，即使注册了 BLAS。
+小型 fixture 已验证，新模式完整模型的质量／性能尚未测量。
+用法见[配置](quantization-config_zh.md#cpu-原生量化矩阵乘)和[有界算子试验](quantization-benchmark_zh.md#有界-cpu-矩阵乘试验)。
+
 Metal 使用带 half staging 的原生量化 kernel，并报告 `ggml-quantized-native-v1`。
 CUDA 同样保持 packed 权重常驻，在已验证设备的原生 MMVQ/MMQ 中使用 RHS Q8_1
 staging，报告 `ggml-quantized-cuda-native-v1`，并拒绝 CPU/Metal/BLAS 图计算回退。

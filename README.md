@@ -240,8 +240,13 @@ Inspect `model.backend()` and `model.info()` for the resolved backend, task,
 storage profile, and arithmetic profile.
 
 Weight precision describes storage. CPU loading promotes F16 values to F32;
-Metal and CUDA retain mixed F16/F32 weights. Quantized CPU execution retains packed
-weights and uses temporary F32 matrix weights; Metal and CUDA use native quantized
+Metal and CUDA retain mixed F16/F32 weights. Default quantized CPU execution retains
+packed weights and uses temporary F32 matrix weights. Opt-in
+`--backend cpu --cpu-compute native-quantized` keeps packed matrix operands;
+standard CPU kernels dynamically pack F32 activations into Q8 RHS and return F32.
+This mode has small CPU fixture validation; full-model quality/performance remain
+unmeasured. See the [CPU compute configuration](docs/quantization-config.md#native-cpu-quantized-matmul).
+Metal and CUDA use native quantized
 kernels. See [precision details](MODEL_ZOO.md#precision-contract) before choosing
 a model for memory-sensitive applications.
 

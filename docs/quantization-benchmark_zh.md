@@ -168,13 +168,14 @@ CUDA 使用可见设备 0，可通过 `CUDA_VISIBLE_DEVICES` 选择物理设备�
 | --- | --- | --- |
 | 权重 | `weights.precision` 及 `modules` / `storage_profile`、schema 2 的 `base_precision` / `module_precisions` 或 schema 3 的精确 `tensor_precisions` | GGUF 可同时有受保护的 F32、各 Q 格式和 Q8 回退；检查策略哈希、逐类型张量数量／字节数及保留原因 |
 | 激活 | `activation.mode=backend-selected` | 原生暂不支持独立 INT8/FP8/F16 激活开关；后端可内部转换或量化 RHS，研究 probe 不等于可部署配置 |
-| 计算 | `compute.mode` | CUDA F16 只给符合条件的浮点矩阵／attention 设置提示，量化矩阵保留自己的分派；F32 也不保证内核所有临时表示都是 F32 |
+| 计算 | `compute.mode` | CPU `f32` 解码 Q 权重；CPU `native-quantized` 保留 packed 权重并允许内部 Q8 RHS 打包。CUDA F16 只给符合条件的浮点矩阵／attention 设置提示，量化矩阵保留自己的分派 |
 | 缓存 | `cache.mode` | 图像特征 0/1/2：F32 为 F32/F32/F32，F16 为 F16/F16/F16，mixed-Q8_0 为 Q8_0/Q8_0/F32；不是 LLM KV cache |
 
-权重格式在转换时确定；计算和实验缓存策略在加载时选择。CPU/Metal 在这里仅接入
-F32 计算及 F32 缓存，低精度设置需显式 CUDA；实验缓存开关属于 probe，未增加公共
-模型加载 API。CPU 加载 F16 权重会提升到 F32，量化矩阵在 CPU matmul 前转换到
-临时 F32；文件变小不保证运行内存同比变小。合资格张量的精确名称覆盖已支持；正则／
+权重格式在转换时确定；计算和实验缓存策略在加载时选择。CPU 支持 F32 和显式原生
+量化计算，缓存仍为 F32；Metal 在这里接入 F32 计算／缓存。低精度缓存需显式 CUDA，
+属于 probe 选项。CPU 加载 F16 权重会提升到 F32；默认量化矩阵乘先生成临时 F32
+操作数，原生模式保留 Q 操作数。文件变小不保证运行内存同比变小。
+合资格张量的精确名称覆盖已支持；正则／
 通配符、混合 F16、独立激活量化及统一内核计算精度承诺尚未实现。
 
 无需推理即可检查 GGUF 的存储和策略：
@@ -195,6 +196,40 @@ F32 计算及 F32 缓存，低精度设置需显式 CUDA；实验缓存开关属
 观察，不能证明 kernel 内部乘法／累加类型。该 observer 会影响执行，不用于性能计时。
 内核证据没有采集时始终为 `NOT_COLLECTED`。
 
+CPU 原生模式使用 `ggml-quantized-cpu-native-v1`。标准 dot/tiled kernel 将图上 F32
+RHS 动态打包为 Q8_0（Q8_0 权重）或 Q8_K（K 权重），使用整数局部点积、浮点缩放／
+归约，输出 F32。这是源码解析的行为；可选构建／ISA 分派可能不同，报告不声称抓取
+了 kernel 暂存或启用了全图 INT8 激活。新 producer 回执分别记录 `compute_mode`、
+`cpu_compute`、`cuda_compute`；历史 F32/F16 回执含义保留，原生声明必须有新字段
+及匹配的算术 profile。公共 API 和错误组合见[配置说明](quantization-config_zh.md#cpu-原生量化矩阵乘)。
+配对 `performance` 接受原生 CPU 配置，或显式 CPU 下的
+`--candidate-compute native-quantized`；质量报告仍为可选。
+
+## 有界 CPU 矩阵乘试验
+
+无需 checkpoint 或图片，输出目录必须不存在：
+
+```sh
+cmake -S . -B build/quant-cpu -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF
+cmake --build build/quant-cpu --target sam_cpu_quantized_matmul_probe -j 2
+build/quant-cpu/examples/sam_cpu_quantized_matmul_probe \
+  --threads 4 --warmups 3 --iterations 15 --output build/cpu-native-study
+```
+
+同一份 packed 权重和图上 F32 激活分别执行当前 Q→F32 路径与原生 CPU 路径。
+21 个有界矩阵覆盖四种格式、单列／多列、QKV 视图、行尾及 Q8 的 4736 行宽。
+计时复用已分配的图，排除初始化／传输，不启用节点 observer，交替 AB/BA 顺序。
+`report.json` 保留原始样本、P50/P95、速度比、实际 GGML 身份／构建选项／ISA、
+packed 载荷与 scheduler arena 字节。arena 不等于 RSS，不含常驻权重和 backend
+私有 scratch。基线在每次图计算时解码权重，没有缓存完整解码后的 F32 模型。
+
+正确性用独立解码的权重和 CPU 打包 RHS 做 scalar 点积，同时报告相对原始 F32 RHS
+的差异。性能试验只检查选定位置；小型 CPU CTest 检查其全部输出。这是算术验证，
+不代表分割质量。单独的单线程 RHS 打包试验只用于诊断，不是 kernel 内部计时，
+不能从矩阵乘耗时中相减。结论仅适用于实测形状／构建／线程，不能据此宣称完整 SAM
+提速。实现发现和测量保存在[计划](plans/20261010-174613-cpu-native-quantized-matmul.md)。
+
 ## CPU 执行开销诊断
 
 `execution-cost` 独立观察 CPU 上一张图、一个提示词的执行成本，不依赖质量报告或
@@ -213,6 +248,11 @@ cmake --build build/quant-cpu --target sam_execution_cost_probe -j 2
 此命令会真正运行一次完整图像推理，使用 CPU/F32 计算/F32 缓存及 4 线程，区别于
 只读转换预览。不会把模型复制到结果目录。子进程默认超时 1,800 秒，可用 `--timeout`
 调整。本轮仅用小型矩阵 fixture 验证实现，没有运行完整模型或 GPU campaign。
+
+要诊断原生 CPU 计算，可对匹配的模型使用
+`docs/configs/quantization/image-tensor-mixed-cpu-native.json`。实际 packed 矩阵乘
+必须位于 CPU，图上 RHS／输出为 F32。报告增加 `cpu_rhs_dot_type` 及源码证据标签，
+不把未采集的 kernel 暂存和内部打包耗时误报为执行追踪。
 
 `report.json`、`report.md` 绑定模型、manifest、二进制／动态库、图片及可选配置哈希；
 `probe/execution-cost.json` 保留原始图／节点／传输观察。报告分别给出 graph bind、

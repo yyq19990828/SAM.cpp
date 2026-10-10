@@ -32,6 +32,10 @@ inline void validate_backend_options(const BackendOptions& options) {
         throw std::invalid_argument("unknown CUDA compute mode");
     if (options.cuda_compute != CudaComputeMode::F32 && options.backend != Backend::Cuda)
         throw std::invalid_argument("reduced CUDA compute requires an explicit CUDA backend");
+    if (options.cpu_compute != CpuComputeMode::F32 && options.cpu_compute != CpuComputeMode::NativeQuantized)
+        throw std::invalid_argument("unknown CPU compute mode");
+    if (options.cpu_compute != CpuComputeMode::F32 && options.backend != Backend::Cpu)
+        throw std::invalid_argument("native quantized CPU compute requires an explicit CPU backend");
 }
 
 inline void validate_score_threshold(float threshold) {

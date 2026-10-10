@@ -7,12 +7,12 @@ int main(int argc, char** argv) {
         const auto options = sam_example::parse_options(argc, argv, false);
         if (options.help) {
             std::cout << "Usage: sam_execution_cost_probe --model FILE --image FILE --text PROMPT --output NEW_DIR\n"
-                         "  --backend cpu [--threads N]\n"
+                         "  --backend cpu [--threads N] [--cpu-compute f32|native-quantized]\n"
                          "One observed CPU image inference; serialized node timings are diagnostics, not a speed benchmark.\n";
             return 0;
         }
         if (options.backend.backend != sam::Backend::Cpu || options.backend.cuda_compute != sam::CudaComputeMode::F32)
-            throw std::invalid_argument("execution cost probe requires explicit --backend cpu and F32 compute");
+            throw std::invalid_argument("execution cost probe requires explicit --backend cpu");
         sam_example::OutputDirectory destination(options.output, true);
         const auto image = sam_example::read_image(options.image);
         const auto load_start = sam_example::Clock::now();
@@ -40,6 +40,7 @@ int main(int argc, char** argv) {
         output << ",\"runtime\":";
         sam_example::write_runtime_stats(output, session.stats());
         sam_example::write_model_profile(output, state->model_info);
+        sam_example::write_compute_policy(output, options.backend);
         output << ",\"detections\":" << result.detections.size() << "}\n";
         output.close();
         destination.complete();

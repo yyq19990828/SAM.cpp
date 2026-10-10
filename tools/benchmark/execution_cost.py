@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 import subprocess
 
-from tools.benchmark.precision_reporting import (expected_runtime_profile, native_recipe,
+from tools.benchmark.precision_reporting import (expected_runtime_profile, native_recipe, native_compute_policy_matches,
                                                 native_weight_policy_matches, precision_description)
 from tools.convert.sam3_artifacts import read_json, sha256_file, verify_run_artifacts, write_json
 
@@ -75,8 +75,8 @@ def run(args):
     from tools.maintenance.artifact_snapshot import native_snapshot
     if args.output.exists():
         raise FileExistsError("execution-cost requires a new output directory")
-    if (args.backend, args.compute, args.cache) != ("cpu", "f32", "f32"):
-        raise ValueError("execution-cost currently supports explicit CPU/F32 compute/F32 cache only")
+    if args.backend != "cpu" or args.compute not in ("f32", "native-quantized") or args.cache != "f32":
+        raise ValueError("execution-cost supports explicit CPU F32/native-quantized compute and F32 cache only")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError("execution-cost timeout must be finite and positive")
     recipe = native_recipe(args)
@@ -87,6 +87,8 @@ def run(args):
     args.output.mkdir(parents=True)
     command = [str(args.binary.resolve()), "--model", str(args.model.resolve()), "--image", str(args.image.resolve()),
                "--text", args.text, "--backend", "cpu", "--threads", "4", "--output", str((args.output / "probe").resolve())]
+    if args.compute == "native-quantized":
+        command.extend(["--cpu-compute", "native-quantized"])
     try:
         process = subprocess.run(command, check=True, capture_output=True, text=True, timeout=args.timeout)
     except subprocess.TimeoutExpired as error:
@@ -101,9 +103,12 @@ def run(args):
             or raw.get("prompt") != args.text or raw.get("threads") != 4
             or raw.get("precision") != recipe["weight_precision"] or raw.get("storage_profile") != recipe["storage_profile"]
             or raw.get("arithmetic_profile") != expected_runtime_profile(recipe)
+            or (args.compute == "native-quantized" and not native_compute_policy_matches(raw, recipe))
             or raw.get("quantization_modules") != recipe["quantization_modules"] or not native_weight_policy_matches(raw, recipe)):
         raise ValueError("cost probe result differs from the requested model/runtime recipe")
     validate_cost(raw["execution_cost"])
+    if args.compute == "native-quantized":
+        validate_native_cpu_cost(raw["execution_cost"])
     stats = raw["runtime"]
     if not stats["cpu_nodes"] or stats["cuda_nodes"] or stats["metal_nodes"]:
         raise ValueError("cost inference escaped CPU placement")
@@ -130,3 +135,16 @@ def run(args):
     write_json(args.output / "report.json", report)
     print(f"CPU execution cost diagnostics complete: {args.output}")
     return report
+
+
+def validate_native_cpu_cost(cost):
+    matmuls = [node for node in cost["nodes"] if node["calls"] and node["operation"] == "MUL_MAT"
+               and node.get("inputs") and node["inputs"][0]["type"] in ("q8_0", "q6_K", "q5_K", "q4_K")]
+    if not matmuls:
+        raise ValueError("native CPU cost report contains no executed packed-weight matmul")
+    for node in matmuls:
+        expected = "q8_0" if node["inputs"][0]["type"] == "q8_0" else "q8_K"
+        if (node["backend"] != "CPU" or node["output_type"] != "f32" or len(node["inputs"]) != 2
+                or node["inputs"][1]["type"] != "f32" or node.get("cpu_rhs_dot_type") != expected
+                or node.get("cpu_rhs_dot_type_evidence") != "source-resolved pinned CPU type traits; not kernel scratch capture"):
+            raise ValueError("native CPU matmul graph or source-resolved RHS contract differs")

@@ -23,6 +23,9 @@ public:
                 FeatureCacheMode cache = FeatureCacheMode::F32) {
         validate_backend_options(options);
         feature_cache_storage_type(cache); // Reject invalid enums before device allocation.
+        if (options.cpu_compute == CpuComputeMode::NativeQuantized && !quantized_profile)
+            throw std::invalid_argument("native quantized CPU compute requires actual quantized weights");
+        cpu_compute_ = options.cpu_compute;
         if (cache != FeatureCacheMode::F32 && options.backend != Backend::Cuda)
             throw std::invalid_argument("experimental feature caches require an explicit CUDA backend");
         drivers_.push_back(make_cpu_backend(options.threads));
@@ -58,9 +61,19 @@ public:
     ggml_backend_t weights_backend() const { return drivers_[selected_].handle.get(); }
     const std::vector<ggml_backend_t>& backends() const { return backends_; }
     bool promote_f16_weights() const { return drivers_[selected_].promote_f16_weights; }
-    bool quantized_cpu_f32_weights() const { return quantized_profile_ && backend() == Backend::Cpu; }
+    bool quantized_cpu_f32_weights() const {
+        return quantized_profile_ && backend() == Backend::Cpu && cpu_compute_ == CpuComputeMode::F32;
+    }
+    bool quantized_native_cpu() const {
+        return quantized_profile_ && backend() == Backend::Cpu && cpu_compute_ == CpuComputeMode::NativeQuantized;
+    }
     bool quantized_native_metal_only() const { return quantized_native_metal_only_; }
     bool requires_primary_compute() const { return backend() == Backend::Cuda || quantized_native_metal_only_; }
+    ggml_backend_t required_compute_backend(const ggml_tensor* node) const {
+        if (requires_primary_compute() || (quantized_native_cpu() && node->op == GGML_OP_MUL_MAT &&
+            node->src[0] && ggml_is_quantized(node->src[0]->type))) return weights_backend();
+        return nullptr;
+    }
     const std::string& device_name() const { return drivers_[selected_].device_name; }
     int cuda_device() const { return drivers_[selected_].cuda_device; }
     const AttentionExecutionPolicy& attention_policy() const { return drivers_[selected_].attention; }
@@ -70,6 +83,7 @@ public:
     void set_graph_observer(std::shared_ptr<GraphObserver> observer) { observer_ = std::move(observer); }
     const std::shared_ptr<GraphObserver>& graph_observer() const { return observer_; }
     void configure_node(ggml_tensor* node) const {
+        if (quantized_native_cpu()) validate_cpu_quantized_matmul(node);
         if (drivers_[selected_].configure_node) drivers_[selected_].configure_node(node);
     }
     const char* arithmetic_profile() const {
@@ -77,6 +91,7 @@ public:
             return quantized_profile_ ? "ggml-quantized-cuda-f16-v1" : "ggml-cuda-f16-v1";
         if (!quantized_profile_) return "";
         if (backend() == Backend::Cuda) return "ggml-quantized-cuda-native-v1";
+        if (quantized_native_cpu()) return "ggml-quantized-cpu-native-v1";
         return quantized_cpu_f32_weights() ? "ggml-quantized-weights-f32-v1" : "ggml-quantized-native-v1";
     }
 
@@ -99,6 +114,7 @@ private:
     std::size_t selected_ = 0;
     bool quantized_profile_ = false;
     bool quantized_native_metal_only_ = false;
+    CpuComputeMode cpu_compute_ = CpuComputeMode::F32;
     std::shared_ptr<GraphObserver> observer_;
 };
 

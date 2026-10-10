@@ -153,18 +153,62 @@ Real conversion still checks values and provenance. Remove `--dry-run`, provide
 checkpoint/BPE and any required native encoder, and use a new `.gguf` output for
 conversion. Each K matrix is encoded once after its layout is planned.
 
+## Native CPU quantized matmul
+
+Select `compute.mode=native-quantized` with explicit `backend=cpu` and quantized
+weights. The [native CPU example](configs/quantization/image-tensor-mixed-cpu-native.json)
+uses the same weight allocation as the F32-compute tensor example, so an existing
+matching GGUF can be reused. Configuration and GGUF schema versions do not change.
+The default remains `f32`.
+
+| CPU mode | Quantized matrix operands and arithmetic |
+| --- | --- |
+| `f32` | Resident Q weights are decoded into temporary F32 matrices; graph activations and matrix outputs are F32 |
+| `native-quantized` | Packed Q weights reach the CPU kernel; graph activations and outputs remain F32; standard dot/tiled kernels dynamically pack RHS activations into Q8_0 for Q8_0 weights or Q8_K for Q6_K/Q5_K/Q4_K weights |
+
+The native kernels use integer partial dot products with floating-point scales
+and reduction, returning F32. This changes activation rounding inside those
+matmuls; it is not whole-graph INT8 activation quantization or a promise of one
+accumulator type throughout the model. RHS types are resolved from pinned CPU
+traits, not captured kernel scratch. Optional build/ISA dispatch can differ.
+Quantized matmuls are pinned to CPU even if BLAS is registered; other operations
+keep their existing placement. The runtime profile is
+`ggml-quantized-cpu-native-v1`. Small CPU fixtures validate this path; full SAM
+quality and performance under the new mode remain unmeasured.
+
+Use the public API or image CLI:
+
+```cpp
+sam::BackendOptions options{sam::Backend::Cpu, 4};
+options.cpu_compute = sam::CpuComputeMode::NativeQuantized;
+auto model = sam::Model::load("sam3-quantized.gguf", options);
+```
+
+```sh
+build/quant-cpu/examples/sam_image --backend cpu --cpu-compute native-quantized \
+  --model models/sam3-quantized.gguf --image image.jpg --text truck \
+  --output outputs/truck-native-cpu
+```
+
+Explicit CPU, at least one actual Q8_0/Q6_K/Q5_K/Q4_K weight matrix and F32 cache
+are required. Auto/Metal/CUDA, entirely dense models, independent INT8 activation
+requests and unsupported operand types/layouts fail. See the
+[bounded CPU study](quantization-benchmark.md#bounded-cpu-matmul-study) for a
+correctness/performance check without loading a model.
+
 ## Supported combinations
 
 | Choice | CPU | Metal | CUDA |
 | --- | --- | --- | --- |
 | Image weights | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K; module/exact tensor mixed policy | Same stored formats; mixed hardware unverified | Same stored formats; mixed hardware unverified |
 | Independent activation mode | `backend-selected` only | `backend-selected` only | `backend-selected` only |
-| Compute policy | `f32` | `f32` | `f32` / `f16` |
+| Compute policy | `f32` / opt-in `native-quantized` | `f32` | `f32` / `f16` |
 | Image-feature cache | `f32` | `f32` | `f32` / `f16` / `mixed-q8_0` in private image probes |
 | Current export/performance runner | Supported path | Unavailable; inspection only | Supported path |
 
 This table describes code paths, not new hardware qualification. CPU loading
-promotes F16 weights to F32; quantized CPU matrices use temporary F32 weights.
+promotes F16 weights to F32. Default quantized CPU matmuls use temporary F32
+weights; native mode preserves packed matrix operands as described above.
 CUDA F16 selects eligible reduced-operand/attention policies, while quantized
 kernels keep their backend dispatch. It cannot promise W4A16 or FP16
 accumulation throughout the model. `backend-selected` does not assert that all
@@ -184,14 +228,15 @@ The following requests fail instead of falling back silently:
 | Regex/wildcard tensor rules, protected tensor overrides or mixed F16 | Unavailable; schema 3 accepts exact eligible tensor names with F32/Q8/Q6/Q5/Q4 |
 | Explicit INT8/FP8/F16 activation mode | Not implemented; studies/probes do not enable a native mode |
 | CPU/Metal F16 compute or reduced image cache | Unsupported by this configuration |
+| Native CPU mode without actual Q matrices or with another backend | Error; no silent fallback under the native profile |
 | Reduced cache through the public C++ API | Unavailable; private native image probes only |
 | Metal image export/performance through this runner | Unavailable; inspect the requested policy without inference |
 | Video tracking/memory policy in this file | Outside the image configuration; existing video workflow is separate |
 | Existing GGUF with a different weight allocation | Error before inference; reconvert or select its matching configuration |
 | Backend `auto` or unknown axes/options | Error; explicit backend and known fields are required |
 
-The public C++ `BackendOptions` still selects backend/threads/device and CUDA
-compute policy; it has no JSON loader, independent activation option or reduced
+The public C++ `BackendOptions` selects backend/threads/device, CPU matmul policy
+and CUDA compute policy; it has no JSON loader, independent activation option or reduced
 cache selector. `validate --context public-api` checks whether these settings
 can be represented there; it does not load a model or create that API.
 

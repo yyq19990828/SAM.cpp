@@ -196,15 +196,16 @@ policies and `execution_evidence`; a model name is not its whole-graph arithmeti
 | --- | --- | --- |
 | Weights | `weights.precision` with `modules` / `storage_profile`, schema-2 `base_precision` / `module_precisions`, or schema-3 exact `tensor_precisions` | GGUF may mix protected F32, selected Q formats and Q8 fallbacks; inspect policy hash, per-type counts/bytes and assignment reasons |
 | Activations | `activation.mode=backend-selected` | No independent native INT8/FP8/F16 activation switch; kernels may transform/quantize RHS; numerical probes are not deployment modes |
-| Compute | `compute.mode` | CUDA F16 hints apply to eligible floating-point matmuls/attention; quantized matmuls retain their dispatch; F32 does not imply all private kernel representations are F32 |
+| Compute | `compute.mode` | CPU `f32` decodes Q weights; CPU `native-quantized` keeps packed weights and permits internal Q8 RHS packing. CUDA F16 hints apply to eligible floating-point matmuls/attention; quantized matmuls retain their dispatch |
 | Cache | `cache.mode` | Image levels 0/1/2 use F32/F32/F32, F16/F16/F16 or mixed Q8_0/Q8_0/F32; this is not an LLM KV cache |
 
 Weight storage is fixed at conversion; compute and experimental cache policies
-are selected at load. CPU/Metal expose only F32 compute/cache here; reduced
-settings require explicit CUDA. Cache settings belong to probes, not a new public
-model-loading API. CPU loading promotes F16 weights to F32 and casts quantized
-matrices to temporary F32 operands before matmul; smaller files need not reduce
-runtime memory proportionally. Exact eligible tensor overrides are supported;
+are selected at load. CPU supports F32 or opt-in native quantized compute with
+F32 cache; Metal exposes F32 compute/cache here. Reduced cache settings require
+explicit CUDA and belong to probes. CPU loading promotes F16 weights to F32;
+the default casts Q matrices to temporary F32 operands, while native mode keeps
+Q operands. Smaller files need not reduce runtime memory proportionally.
+Exact eligible tensor overrides are supported;
 regex/wildcards, mixed F16, independent activation quantization and universal
 kernel precision guarantees are not implemented.
 
@@ -230,6 +231,51 @@ kernel multiplication/accumulation types. The observer perturbs execution and
 must not provide performance timing. Untraced kernel evidence remains
 `NOT_COLLECTED`.
 
+CPU native mode uses `ggml-quantized-cpu-native-v1`. Standard dot/tiled kernels
+pack F32 graph RHS into Q8_0 for Q8_0 weights and Q8_K for K weights, then use
+integer partial dots and floating-point scales/reduction with F32 outputs.
+This is source-resolved behavior; optional build/ISA dispatch can differ, and
+the report does not claim captured scratch or whole-graph INT8 activations.
+New producer receipts separate `compute_mode`, `cpu_compute` and `cuda_compute`.
+Historical F32/F16 receipts retain their original meaning; a native claim requires
+the new fields and matching arithmetic profile. See the
+[configuration](quantization-config.md#native-cpu-quantized-matmul) for the public
+API and invalid combinations. Paired `performance` accepts native CPU configs or
+`--candidate-compute native-quantized` with an explicit CPU backend; quality
+reports remain optional.
+
+## Bounded CPU matmul study
+
+The following tool requires no checkpoint or images and creates a new directory:
+
+```sh
+cmake -S . -B build/quant-cpu -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_BLAS=OFF -DGGML_LLAMAFILE=OFF
+cmake --build build/quant-cpu --target sam_cpu_quantized_matmul_probe -j 2
+build/quant-cpu/examples/sam_cpu_quantized_matmul_probe \
+  --threads 4 --warmups 3 --iterations 15 --output build/cpu-native-study
+```
+
+It compares the current Q→F32 graph path with native CPU execution on the same
+packed weights and graph F32 activations. Twenty-one bounded matrices cover all
+four formats, single/multiple columns, QKV views, row tails and a Q8 width of
+4736. Timings reuse allocated graphs, exclude setup/transfers and alternate
+AB/BA order without a node observer. `report.json` retains raw samples, P50/P95,
+speed ratios, linked GGML identity/build options/ISA, packed payload and scheduler
+arena bytes. Arena is not RSS and excludes resident weights/backend-private scratch.
+The baseline decodes weights during each graph compute; it does not cache an
+already-decoded F32 model.
+
+Correctness compares outputs to independent scalar dots over decoded weights
+and CPU-packed RHS, with separate differences against the original F32 RHS.
+Performance runs check selected positions; the CPU CTest covers every output
+of its smaller cases. This verifies arithmetic, not segmentation quality.
+A separate single-thread RHS-packing experiment is diagnostic; it is not kernel
+instrumentation and must not be subtracted from matmul time. Results apply only
+to these shapes/build/thread settings, and do not establish full SAM speedups.
+Implementation findings and measurements are retained in the
+[plan](plans/20261010-174613-cpu-native-quantized-matmul.md).
+
 ## CPU execution cost diagnostics
 
 Use `execution-cost` to inspect the cost of one image and one prompt on CPU,
@@ -251,6 +297,12 @@ cache and four threads; it is not a schema-only preview. No model weights are
 copied into the result directory. The default timeout is 1,800 seconds per child;
 set `--timeout` as needed. Validation in this delivery used bounded matrix
 fixtures, not a complete-model run or a GPU campaign.
+
+To diagnose native CPU compute, use
+`docs/configs/quantization/image-tensor-mixed-cpu-native.json` with a matching
+model. Executed packed matmuls must be placed on CPU with F32 graph RHS/output.
+The report adds a source-resolved `cpu_rhs_dot_type` and evidence label; this
+does not turn uncollected kernel scratch or internal packing time into a trace.
 
 `report.json` and `report.md` bind the model, manifest, binary/libraries, image
 and optional configuration hashes. `probe/execution-cost.json` retains raw

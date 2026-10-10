@@ -63,9 +63,9 @@ private:
             if (node->op == GGML_OP_MUL_MAT) ggml_prec_set_acc(node, GGML_PREC_F32);
             if (node->op == GGML_OP_FLASH_ATTN_EXT) ggml_prec_set_acc(node, GGML_PREC_F32);
             runtime_.configure_node(node);
-            bool supported = runtime_.requires_primary_compute()
-                ? ggml_backend_supports_op(runtime_.weights_backend(), node) : false;
-            if (!runtime_.requires_primary_compute())
+            const auto required_backend = runtime_.required_compute_backend(node);
+            bool supported = required_backend ? ggml_backend_supports_op(required_backend, node) : false;
+            if (!required_backend)
                 for (auto* backend : runtime_.backends()) supported = supported || ggml_backend_supports_op(backend, node);
             if (!supported) {
                 std::string message = std::string("no backend supports SAM operation ") +

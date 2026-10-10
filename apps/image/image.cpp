@@ -8,6 +8,7 @@ int main(int argc, char** argv) {
         if (options.help) {
             std::cout << "Usage: sam_image --model FILE --image FILE --text PROMPT --output NEW_DIR\n"
                          "  [--backend auto|cpu|metal|cuda] [--cuda-device N] [--cuda-compute f32|f16]\n"
+                         "  [--cpu-compute f32|native-quantized]\n"
                          "  [--threads N] [--score-threshold 0.5] [--repeat N]\n"
                          "Repeat measures warmed full-image and repeated-result-cache calls separately.\n";
             return 0;
@@ -54,6 +55,7 @@ int main(int argc, char** argv) {
              << ",\"image\":" << sam_example::json_string(options.image.string())
              << ",\"architecture\":" << sam_example::json_string(info.architecture);
         sam_example::write_model_profile(json, info);
+        sam_example::write_compute_policy(json, options.backend);
         json << ",\"tokenizer_compatibility_repaired\":" << (info.tokenizer_compatibility_repaired ? "true" : "false")
              << ",\"backend\":" << sam_example::json_string(sam_example::backend_name(model.backend()))
              << ",\"threads\":" << info.threads << ",\"repeat\":" << options.repeat

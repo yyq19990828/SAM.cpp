@@ -16,6 +16,16 @@ def native_weight_policy_matches(value, recipe):
     return recipe["weight_precision"] != "mixed" or mixed_weight_fields(value) == mixed_weight_fields(recipe)
 
 
+def native_compute_policy_matches(value, recipe):
+    # Historical producers only wrote cuda_compute, including for CPU F32.
+    if "compute_mode" not in value:
+        return recipe["compute_mode"] != "native-quantized" and value.get("cuda_compute") == recipe["compute_mode"]
+    expected_cuda = recipe["compute_mode"] if recipe["backend"] == "cuda" else "f32"
+    expected_cpu = recipe["compute_mode"] if recipe["backend"] == "cpu" else "f32"
+    return (value["compute_mode"] == recipe["compute_mode"] and value.get("cuda_compute") == expected_cuda
+            and value.get("cpu_compute") == expected_cpu)
+
+
 def has_quantized_weights(recipe):
     if recipe["weight_precision"] == "mixed":
         inventory = recipe.get("weight_inventory", {})
@@ -53,6 +63,8 @@ def native_recipe(args, *, collect_environment=True):
             "weight_inventory": weight_inventory(manifest), "quantization_configuration": configuration}
     if manifest["precision"] == "mixed":
         recipe.update(mixed_weight_fields(manifest))
+    if args.compute == "native-quantized" and not has_quantized_weights(recipe):
+        raise ValueError("native-quantized compute requires actual quantized tensors in the model")
     if collect_environment:
         recipe["environment"] = runtime_environment(args.backend)
     return recipe
@@ -78,6 +90,10 @@ def weight_inventory(manifest):
 
 def expected_runtime_profile(recipe):
     quantized = has_quantized_weights(recipe)
+    if recipe["compute_mode"] == "native-quantized":
+        if recipe["backend"] != "cpu" or not quantized:
+            raise ValueError("native-quantized runtime profile requires CPU quantized weights")
+        return "ggml-quantized-cpu-native-v1"
     if recipe["compute_mode"] == "f16":
         return "ggml-quantized-cuda-f16-v1" if quantized else "ggml-cuda-f16-v1"
     if not quantized:
@@ -102,9 +118,14 @@ def precision_description(manifest):
         if backend == "cuda" and compute == "f16":
             compute_scope = ("F16 operand hint for eligible dense F32/F16 MUL_MAT; eligible unmasked attention uses F16 accumulation hint; "
                              "quantized MUL_MAT, masked attention and other operations retain their own backend policies")
+        elif compute == "native-quantized":
+            compute_scope = ("CPU quantized MUL_MAT keeps packed weights and permits internal Q8 RHS; integer partial dot products and "
+                             "floating-point scale/reduction in the pinned dot/tiled paths; graph output is F32; other operations retain F32 hints")
         else:
             compute_scope = "F32 accumulation hint for MUL_MAT/attention; operand representation and kernel internals remain backend-selected"
         path = ("stored F16 weights promoted to F32 when loading on CPU" if backend == "cpu" and recipe["weight_precision"] == "f16" else
+                "packed quantized CPU dispatch; standard pinned CPU traits use Q8_0 RHS for Q8_0 weights and Q8_K RHS for K weights"
+                if compute == "native-quantized" else
                 "quantized weights cast to F32 before CPU MUL_MAT" if quantized and backend == "cpu" else
                 "native quantized CUDA dispatch may stage RHS as Q8 and use integer dot products, or decode to floating-point operands"
                 if quantized and backend == "cuda" else "floating-point operands selected by the backend")
@@ -120,6 +141,11 @@ def precision_description(manifest):
             "activation_policy": "backend-selected; no independent native activation setting",
             "activation": {"independent_setting_supported": False, "policy": "backend-selected",
                            "scope": "operator tensor types and temporary kernel RHS representations can differ",
+                           "cpu_native_rhs": ({"graph_input": "f32", "q8_0_weights": "q8_0", "q6_k_q5_k_q4_k_weights": "q8_k",
+                                               "evidence": "source-resolved pinned CPU traits; not runtime kernel capture",
+                                               "packing": "dynamic per MUL_MAT; included in matmul wall time",
+                                               "scope": "dot/tiled kernels; optional build/ISA dispatch may differ; not full-graph INT8 activation quantization"}
+                                              if compute == "native-quantized" else None),
                            "int8_fp8_studies": "separate numerical prototypes; not native model execution modes"},
             "requested_compute_mode": compute,
             "compute": {"scope": compute_scope, "source_resolved_path": path,

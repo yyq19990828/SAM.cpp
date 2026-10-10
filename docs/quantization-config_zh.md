@@ -133,18 +133,56 @@ schema 6、`image-tensor-mixed-linear-v1` 及独立版本化哈希，见[格式�
 权重加载。真正转换仍检查数值和来源。去掉 `--dry-run`，提供 checkpoint/BPE、所需
 原生编码器并改用新的 `.gguf` 输出即可转换；K 矩阵在布局确定后只编码一次。
 
+## CPU 原生量化矩阵乘
+
+显式 `backend=cpu`、模型含量化权重时，可选择 `compute.mode=native-quantized`。
+[原生 CPU 示例](configs/quantization/image-tensor-mixed-cpu-native.json)与原 F32 计算
+逐张量示例使用相同权重分配，可复用匹配的 GGUF。配置与 GGUF schema 版本不变，
+默认计算仍为 `f32`。
+
+| CPU 模式 | 量化矩阵操作数和运算 |
+| --- | --- |
+| `f32` | 常驻 Q 权重先解码为临时 F32 矩阵；图上激活和矩阵输出为 F32 |
+| `native-quantized` | packed Q 权重直接交给 CPU kernel；图上激活及输出仍为 F32；标准 dot/tiled kernel 动态将 RHS 激活打包为 Q8_0（Q8_0 权重）或 Q8_K（Q6_K/Q5_K/Q4_K 权重） |
+
+原生 kernel 使用整数局部点积，再做浮点缩放和归约，返回 F32。这会增加相应矩阵乘
+内部的激活舍入，不代表全图 INT8 激活量化，也不保证全模型只有一种累加类型。
+RHS 类型来自固定 CPU traits 的源码解析，不是 kernel 暂存抓取；可选构建／ISA 分派
+可能不同。量化矩阵乘固定在 CPU 执行，即使注册了 BLAS；其他算子保留现有调度。
+算术 profile 为 `ggml-quantized-cpu-native-v1`。小型 CPU fixture 已验证该路径，
+新模式的完整 SAM 质量与性能尚未测量。
+
+公共 API 和图像 CLI 用法：
+
+```cpp
+sam::BackendOptions options{sam::Backend::Cpu, 4};
+options.cpu_compute = sam::CpuComputeMode::NativeQuantized;
+auto model = sam::Model::load("sam3-quantized.gguf", options);
+```
+
+```sh
+build/quant-cpu/examples/sam_image --backend cpu --cpu-compute native-quantized \
+  --model models/sam3-quantized.gguf --image image.jpg --text truck \
+  --output outputs/truck-native-cpu
+```
+
+必须显式 CPU、实际至少有一个 Q8_0/Q6_K/Q5_K/Q4_K 权重矩阵，并保留 F32 缓存。
+Auto/Metal/CUDA、全浮点模型、独立 INT8 激活请求及不支持的操作数类型／布局均报错。
+无需加载模型的正确性与性能检查见[有界 CPU 矩阵乘试验](quantization-benchmark_zh.md#有界-cpu-矩阵乘试验)。
+
 ## 可用组合
 
 | 选择 | CPU | Metal | CUDA |
 | --- | --- | --- | --- |
 | 图像权重 | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K；模块／精确张量混合策略 | 相同存储格式；混合策略硬件未验证 | 相同存储格式；混合策略硬件未验证 |
 | 独立激活模式 | 仅 `backend-selected` | 仅 `backend-selected` | 仅 `backend-selected` |
-| 计算策略 | `f32` | `f32` | `f32` / `f16` |
+| 计算策略 | `f32` / 显式 `native-quantized` | `f32` | `f32` / `f16` |
 | 图像特征缓存 | `f32` | `f32` | 私有图像 probe 可用 `f32` / `f16` / `mixed-q8_0` |
 | 当前导出／性能 runner | 有对应路径 | 不支持，仅可检查配置 | 有对应路径 |
 
-此表描述代码路径，不新增硬件验收结论。CPU 加载 F16 权重时提升为 F32，量化矩阵
-运算使用临时 F32 权重。CUDA F16 选择符合条件的低精度操作数／attention 策略；
+此表描述代码路径，不新增硬件验收结论。CPU 加载 F16 权重时提升为 F32；默认量化
+矩阵运算使用临时 F32 权重，原生模式按上文保留 packed 矩阵操作数。
+CUDA F16 选择符合条件的低精度操作数／attention 策略；
 量化 kernel 仍按后端分派，不能据此宣称完整模型为 W4A16 或全程 FP16 累加。
 `backend-selected` 也不表示所有激活具有同一种 dtype。kernel 的临时表示与累加类型
 需要单独的执行证据。
@@ -160,13 +198,14 @@ GGUF 改变计算／缓存策略；改变权重精度或模块范围需要从原
 | 正则／通配符规则、覆盖保护张量或混合 F16 | 不支持；schema 3 支持按精确合资格张量名选择 F32/Q8/Q6/Q5/Q4 |
 | 指定 INT8/FP8/F16 激活模式 | 尚未实现；研究工具不等于原生运行模式 |
 | CPU/Metal F16 计算或低精度图像缓存 | 此配置不支持 |
+| 无实际 Q 矩阵或其他 backend 使用原生 CPU 模式 | 报错，不会保留原生标签而静默回退 |
 | 公共 C++ API 使用低精度缓存 | 未开放，仅限私有原生图像 probe |
 | 用当前 runner 在 Metal 导出／测性能 | 不支持，可不执行推理地检查配置 |
 | 在此文件配置视频跟踪／记忆策略 | 不在图像配置范围，视频流程单独保留 |
 | 配置的权重分配与现有 GGUF 不同 | 推理前报错，重新转换或选择匹配配置 |
 | `auto` 后端、未知维度或选项 | 报错，必须使用明确后端和已知字段 |
 
-公共 C++ `BackendOptions` 仍配置后端、线程、设备和 CUDA 计算策略，没有 JSON 加载器、
+公共 C++ `BackendOptions` 配置后端、线程、设备、CPU 矩阵乘和 CUDA 计算策略，没有 JSON 加载器、
 独立激活选项或低精度缓存入口。`validate --context public-api` 只检查这些配置是否可
 映射到现有 API，不会加载模型或新增 API。
 

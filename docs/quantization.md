@@ -20,7 +20,7 @@ inference; the existing separate CLI options remain available.
 | --- | --- | --- |
 | Weight storage | F32/F16 and Q8_0/Q6_K/Q5_K/Q4_K image linears; mixed F32/Q formats | Module formats use config schema 2/GGUF schema 5; exact tensor overrides use config schema 3/GGUF schema 6; protection/Q8 exceptions remain; mixed F16 is unavailable |
 | Activations | Mostly F32 graph buffers; backend kernels may stage/quantize operands internally | W8A8/FP8 tools are studies/probes, not complete deployable model profiles |
-| Arithmetic | CUDA F32/F16 policies; quantized kernel dispatch depends on type/shape/backend | A policy name does not guarantee one operand/accumulator dtype for the whole graph; F16 hints target supported dense operations |
+| Arithmetic | CPU F32 or opt-in native quantized matmul; CUDA F32/F16 policies; kernel dispatch depends on type/shape/backend | CPU native matmul can pack F32 RHS into Q8 internally; no policy guarantees one operand/accumulator dtype for the whole graph |
 | Feature cache | F32 plus experimental F16/mixed-Q8_0 image caches | Probe options on CUDA; mixed Q8 keeps the low-resolution detection feature F32; public loading retains existing cache precision |
 
 Weight, activation and cache formats describe stored/represented values.
@@ -212,10 +212,24 @@ Quantized `auto` selection currently chooses CPU.
 
 ## Backend behavior
 
-GGUF precision describes stored weights, not end-to-end arithmetic. On CPU,
-packed quantized weights stay resident, while the shared graph creates
-transient F32 casts for `MUL_MAT`; this extra workspace can affect peak memory.
-`ModelInfo` reports this as `ggml-quantized-weights-f32-v1`. Metal uses native
+GGUF precision describes stored weights, not end-to-end arithmetic. Default CPU
+compute keeps packed weights resident and creates transient F32 casts for
+`MUL_MAT`; this workspace can affect peak memory. `ModelInfo` reports
+`ggml-quantized-weights-f32-v1`.
+
+Explicit `--backend cpu --cpu-compute native-quantized`, or
+`BackendOptions::cpu_compute = CpuComputeMode::NativeQuantized`, keeps quantized
+matrix operands packed and reports `ggml-quantized-cpu-native-v1`. Standard CPU
+dot/tiled kernels pack F32 RHS into Q8_0 for Q8_0 weights or Q8_K for K weights;
+integer partial dots, floating-point scales/reduction and F32 outputs are distinct
+precision boundaries. Other graph activations/operations keep existing policies;
+this is not full-model INT8 activation quantization. The mode requires actual Q
+weights and pins their matmuls to CPU, even with BLAS. Small fixtures are validated;
+full-model quality/performance under this mode remain unmeasured. See
+[configuration](quantization-config.md#native-cpu-quantized-matmul) and the
+[bounded operator study](quantization-benchmark.md#bounded-cpu-matmul-study).
+
+Metal uses native
 quantized kernels with half staging and reports `ggml-quantized-native-v1`, so
 its arithmetic path and memory use differ from CPU. CUDA also keeps packed
 weights resident, uses native MMVQ/MMQ with RHS Q8_1 staging on the qualified

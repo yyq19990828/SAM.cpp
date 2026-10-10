@@ -7,6 +7,7 @@ import subprocess
 import time
 
 from tools.convert.sam3_artifacts import read_json, write_json
+from tools.benchmark.precision_reporting import native_compute_policy_matches
 
 
 def cuda_processes():
@@ -81,7 +82,7 @@ def run_process(binary, model, recipe, case, kind, output, diagnostic=False, *, 
             observer_errors.append(str(error))
     value = read_json(output / "result.json")
     if (value.get("complete") is not True or value.get("kind") != kind or value.get("backend") != recipe["backend"]
-            or value.get("feature_cache") != recipe["feature_cache"] or value.get("cuda_compute") != recipe["compute_mode"]
+            or value.get("feature_cache") != recipe["feature_cache"] or not native_compute_policy_matches(value, recipe)
             or value.get("precision") != recipe["weight_precision"]
             or (value.get("storage_profile") or "dense") != recipe["storage_profile"]
             or value.get("prompt") != case["prompt"] or value.get("alternate") != case["alternate"]

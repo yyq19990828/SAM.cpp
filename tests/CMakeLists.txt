@@ -14,6 +14,10 @@ add_executable(test_execution_cost runtime/ggml/test_execution_cost.cpp)
 target_link_libraries(test_execution_cost PRIVATE sam_private)
 add_test(NAME sam_execution_cost COMMAND test_execution_cost)
 
+add_executable(test_cpu_quantized_matmul runtime/ggml/test_cpu_quantized_matmul.cpp)
+target_link_libraries(test_cpu_quantized_matmul PRIVATE sam_private)
+add_test(NAME sam_cpu_quantized_matmul COMMAND test_cpu_quantized_matmul)
+
 # One public API used from two translation units must link against the real
 # library and fail identically in both.
 add_executable(test_two_tu api/test_two_tu_main.cpp api/two_tu_other.cpp)

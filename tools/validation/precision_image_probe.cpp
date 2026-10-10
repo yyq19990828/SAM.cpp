@@ -39,16 +39,19 @@ std::vector<Case> read_cases(const std::filesystem::path& path) {
 int main(int argc, char** argv) {
     try {
         if (argc != 7)
-            throw std::invalid_argument("usage: sam_precision_image_probe MODEL CASES.tsv cpu|metal|cuda f32|f16|mixed-q8_0 f32|f16 NEW_DIR");
+            throw std::invalid_argument("usage: sam_precision_image_probe MODEL CASES.tsv cpu|metal|cuda CACHE f32|f16|native-quantized NEW_DIR");
         const std::string backend = argv[3], cache = argv[4], compute = argv[5];
         if ((backend != "cpu" && backend != "metal" && backend != "cuda") ||
-            (cache != "f32" && cache != "f16" && cache != "mixed-q8_0") || (compute != "f32" && compute != "f16"))
+            (cache != "f32" && cache != "f16" && cache != "mixed-q8_0") ||
+            (compute != "f32" && compute != "f16" && compute != "native-quantized") ||
+            (compute == "native-quantized" && backend != "cpu"))
             throw std::invalid_argument("unsupported precision probe mode");
         sam::BackendOptions options{backend == "cuda" ? sam::Backend::Cuda : backend == "metal" ? sam::Backend::Metal : sam::Backend::Cpu, 4};
         options.cuda_compute = compute == "f16" ? sam::CudaComputeMode::F16 : sam::CudaComputeMode::F32;
+        options.cpu_compute = compute == "native-quantized" ? sam::CpuComputeMode::NativeQuantized : sam::CpuComputeMode::F32;
         using sam::internal::FeatureCacheMode;
         const auto mode = cache == "f32" ? FeatureCacheMode::F32 : cache == "f16" ? FeatureCacheMode::F16 : FeatureCacheMode::Q8_0;
-        if (backend != "cuda" && (mode != FeatureCacheMode::F32 || compute != "f32"))
+        if (backend != "cuda" && (mode != FeatureCacheMode::F32 || compute == "f16"))
             throw std::invalid_argument("compressed cache and F16 arithmetic require CUDA");
         const auto cases = read_cases(argv[2]);
         sam_example::OutputDirectory destination(argv[6], true);
@@ -127,15 +130,17 @@ int main(int argc, char** argv) {
             sam_example::write_runtime_stats(report, stats);
             sam_example::write_model_profile(report, state->model_info);
             report << ",\"feature_cache\":" << sam_example::json_string(cache)
-                   << ",\"feature_cache_bytes\":" << session.feature_cache_bytes()
-                   << ",\"cuda_compute\":" << sam_example::json_string(compute) << "}\n";
+                   << ",\"feature_cache_bytes\":" << session.feature_cache_bytes();
+            sam_example::write_compute_policy(report, options);
+            report << "}\n";
             report.close();
             std::cout << ++completed << '/' << cases.size() << ' ' << item.id << std::endl;
         }
         auto receipt = sam_example::output_file(root / "run.json");
         receipt << "{\"schema_version\":2,\"complete\":true,\"kind\":\"sam3-ranked-native-export\",\"cases\":" << cases.size()
-                << ",\"backend\":" << sam_example::json_string(backend) << ",\"feature_cache\":" << sam_example::json_string(cache)
-                << ",\"cuda_compute\":" << sam_example::json_string(compute) << ",\"threads\":4}\n";
+                << ",\"backend\":" << sam_example::json_string(backend) << ",\"feature_cache\":" << sam_example::json_string(cache);
+        sam_example::write_compute_policy(receipt, options);
+        receipt << ",\"threads\":4}\n";
         receipt.close();
         destination.complete();
         return 0;

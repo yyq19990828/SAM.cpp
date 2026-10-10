@@ -21,6 +21,14 @@ if(SAM_BUILD_TOOLS)
     target_link_libraries(sam_execution_cost_probe PRIVATE sam_private sam_image_io)
     set_target_properties(sam_execution_cost_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/examples)
 
+    add_executable(sam_cpu_quantized_matmul_probe benchmark/cpu_quantized_matmul_probe.cpp)
+    target_link_libraries(sam_cpu_quantized_matmul_probe PRIVATE sam_private sam_image_io)
+    target_compile_definitions(sam_cpu_quantized_matmul_probe PRIVATE
+        SAM_PROBE_GGML_BLAS=\"${GGML_BLAS}\"
+        SAM_PROBE_GGML_LLAMAFILE=\"${GGML_LLAMAFILE}\"
+        SAM_PROBE_GGML_NATIVE=\"${GGML_NATIVE}\")
+    set_target_properties(sam_cpu_quantized_matmul_probe PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/examples)
+
     add_executable(sam_quantize_rows quantize/quantize_rows.cpp)
     target_compile_features(sam_quantize_rows PRIVATE cxx_std_17)
     target_compile_definitions(sam_quantize_rows PRIVATE

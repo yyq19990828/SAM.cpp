@@ -79,12 +79,17 @@ The following policies belong to the current SAM 3 adapter and backends.
 | F32 | Original F32 | F32 |
 | F16 | Mixed F16/F32 | Stored F16 promoted to F32 |
 | Hybrid | F32 visual/tracker weights, mixed detector/text | Remaining F16 promoted to F32 |
-| Vision / full quantized | Packed Q8/K selected linears, other weights F32 | Packed weights retained; temporary F32 matrix weights |
+| Vision / full quantized | Packed Q8/K selected linears, other weights F32 | Packed weights retained; default temporary F32 matrix weights or opt-in native quantized matmul |
 
 Promotion preserves rounded values, not the original F32 values. Quantized
 Metal and CUDA execution use native kernels with separate arithmetic profiles;
 CUDA's validated MMVQ/MMQ paths use RHS Q8_1 staging. CPU keeps compressed weights
-resident and performs matrix operations with temporary F32 weights. `ModelInfo::precision`,
+resident; default compute uses temporary F32 weights. Opt-in
+`--cpu-compute native-quantized` uses CPU packed-weight kernels with internal Q8
+RHS and F32 graph input/output. It has small operator validation; full-model
+quality/performance in this mode remain unmeasured. See the
+[configuration](docs/quantization-config.md#native-cpu-quantized-matmul).
+`ModelInfo::precision`,
 `storage_profile`, and `arithmetic_profile` describe the loaded configuration.
 See the [quantization guide](docs/quantization.md) for exact profile names.
 

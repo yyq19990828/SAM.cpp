@@ -26,6 +26,7 @@ struct Node {
     std::string name, operation, category, backend, output_type;
     std::vector<Operand> inputs;
     std::string accumulation_hint, rhs_hint;
+    std::string cpu_rhs_dot_type; // Pinned type traits, not a capture of kernel scratch.
     double wall_ms = 0;
 };
 
@@ -143,6 +144,8 @@ public:
                    << ",\"operation\":" << json_string(node.operation) << ",\"category\":" << json_string(node.category)
                    << ",\"backend\":" << json_string(node.backend) << ",\"output_type\":" << json_string(node.output_type)
                    << ",\"output_bytes\":" << node.output_bytes << ",\"calls\":" << node.calls << ",\"wall_ms\":" << node.wall_ms
+                   << ",\"cpu_rhs_dot_type\":" << json_string(node.cpu_rhs_dot_type.empty() ? "NOT_APPLICABLE" : node.cpu_rhs_dot_type)
+                   << ",\"cpu_rhs_dot_type_evidence\":" << json_string(node.cpu_rhs_dot_type.empty() ? "NOT_APPLICABLE" : "source-resolved pinned CPU type traits; not kernel scratch capture")
                    << ",\"accumulation_hint\":" << json_string(node.accumulation_hint)
                    << ",\"rhs_representation_hint\":" << json_string(node.rhs_hint) << ",\"inputs\":[";
             for (std::size_t j = 0; j < node.inputs.size(); ++j) {
@@ -190,6 +193,9 @@ private:
         if (row.backend != "CPU" && row.backend != "BLAS" && row.backend != "UNASSIGNED")
             throw std::runtime_error("cost observer currently supports CPU/BLAS nodes only");
         row.output_type = ggml_type_name(tensor->type);
+        if (row.backend == "CPU" && tensor->op == GGML_OP_MUL_MAT && tensor->src[0] &&
+            ggml_is_quantized(tensor->src[0]->type))
+            row.cpu_rhs_dot_type = ggml_type_name(sam::internal::cpu_quantized_rhs_type(tensor->src[0]->type));
         row.output_bytes = ggml_nbytes(tensor);
         sam_profile::Tensor hints;
         sam_profile::capture_precision_hints(tensor, hints);

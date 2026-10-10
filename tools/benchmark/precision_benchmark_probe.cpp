@@ -39,8 +39,11 @@ int main(int argc, char** argv) {
             throw std::invalid_argument("usage: sam_precision_benchmark_probe MODEL IMAGE PROMPT ALTERNATE cpu|cuda CACHE COMPUTE latency|memory NEW_DIR [WARMUPS ITERATIONS]");
         const std::string prompt = argv[3], alternate = argv[4], backend = argv[5], cache = argv[6], compute = argv[7], kind = argv[8];
         if (prompt.empty() || alternate.empty() || prompt == alternate || (backend != "cpu" && backend != "cuda") ||
-            (cache != "f32" && cache != "f16" && cache != "mixed-q8_0") || (compute != "f32" && compute != "f16") ||
-            (kind != "latency" && kind != "memory") || (backend == "cpu" && (cache != "f32" || compute != "f32")))
+            (cache != "f32" && cache != "f16" && cache != "mixed-q8_0") ||
+            (compute != "f32" && compute != "f16" && compute != "native-quantized") ||
+            (kind != "latency" && kind != "memory") ||
+            (backend == "cpu" && (cache != "f32" || compute == "f16")) ||
+            (backend != "cpu" && compute == "native-quantized"))
             throw std::invalid_argument("invalid precision benchmark recipe/workload");
         const int warmups = argc == 12 ? parse_count(argv[10]) : 5;
         const int iterations = argc == 12 ? parse_count(argv[11]) : 20;
@@ -52,6 +55,7 @@ int main(int argc, char** argv) {
         const auto image = sam_example::read_image(argv[2]);
         sam::BackendOptions options{backend == "cuda" ? sam::Backend::Cuda : sam::Backend::Cpu, 4};
         options.cuda_compute = compute == "f16" ? sam::CudaComputeMode::F16 : sam::CudaComputeMode::F32;
+        options.cpu_compute = compute == "native-quantized" ? sam::CpuComputeMode::NativeQuantized : sam::CpuComputeMode::F32;
         using sam::internal::FeatureCacheMode;
         const auto mode = cache == "f32" ? FeatureCacheMode::F32 : cache == "f16" ? FeatureCacheMode::F16 : FeatureCacheMode::Q8_0;
         const auto load_start = sam_example::Clock::now();
@@ -88,7 +92,7 @@ int main(int argc, char** argv) {
         auto output = sam_example::output_file(directory / "result.json");
         output << "{\"schema_version\":2,\"complete\":true,\"kind\":" << sam_example::json_string(kind)
                << ",\"backend\":" << sam_example::json_string(backend) << ",\"feature_cache\":" << sam_example::json_string(cache)
-               << ",\"cuda_compute\":" << sam_example::json_string(compute) << ",\"prompt\":" << sam_example::json_string(prompt)
+               << ",\"prompt\":" << sam_example::json_string(prompt)
                << ",\"alternate\":" << sam_example::json_string(alternate) << ",\"threads\":4,\"warmups\":" << warmups
                << ",\"iterations\":" << iterations << ",\"model_load_ms\":" << load_ms << ",\"load_peak_rss_bytes\":" << load_rss
                << ",\"rss_peak_bytes\":" << sam_example::process_peak_rss_bytes() << ",\"timing_ms\":{\"full_image\":";
@@ -100,6 +104,7 @@ int main(int argc, char** argv) {
         output << ",\"first_runtime\":";
         sam_example::write_runtime_stats(output, initial_stats);
         sam_example::write_model_profile(output, state->model_info);
+        sam_example::write_compute_policy(output, options);
         output << ",\"feature_cache_bytes\":" << session.feature_cache_bytes() << "}\n";
         output.close();
         mark_phase(directory, "complete");

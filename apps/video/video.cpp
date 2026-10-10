@@ -83,6 +83,7 @@ int main(int argc, char** argv) {
         if (options.help) {
             std::cout << "Usage: sam_video --model FILE --frames PNG_DIRECTORY --text PROMPT --output NEW_DIR\n"
                          "  [--backend auto|cpu|metal|cuda] [--cuda-device N] [--cuda-compute f32|f16]\n"
+                         "  [--cpu-compute f32|native-quantized] (native-quantized requires quantized weights)\n"
                          "  [--threads N] [--max-objects 8]\n"
                          "  [--dump-tensors | --dump-all-tensors]\n"
                          "Frames must be contiguous numeric PNG files (000000.png onward).\n";
@@ -120,7 +121,9 @@ int main(int argc, char** argv) {
                      << ",\"backend\":" << sam_example::json_string(sam_example::backend_name(model.backend()))
                      << ",\"device_name\":" << sam_example::json_string(model.info().device_name)
                      << ",\"cuda_device\":" << model.info().cuda_device
-                     << ",\"threads\":" << model.info().threads << ",\"model_load_ms\":" << load_ms << ",\"token_ids\":[";
+                     << ",\"threads\":" << model.info().threads << ",\"model_load_ms\":" << load_ms;
+            sam_example::write_compute_policy(manifest, options.backend);
+            manifest << ",\"token_ids\":[";
             for (std::size_t i = 0; i < session.token_ids().size(); ++i) { if (i) manifest << ','; manifest << session.token_ids()[i]; }
             manifest << "],\"stats\":"; write_video_stats(manifest, session.stats()); manifest << "}\n";
         };

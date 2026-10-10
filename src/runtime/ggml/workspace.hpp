@@ -147,14 +147,13 @@ public:
     void compute(ggml_context* context, ggml_cgraph* graph) {
         if (!scheduler_ || active_context_ != context || active_graph_ != graph)
             throw std::runtime_error("SAM graph must be allocated before compute");
-        if (runtime_.requires_primary_compute()) {
-            for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
-                auto* node = ggml_graph_node(graph, i);
-                if (is_compute_node(node) &&
-                    ggml_backend_sched_get_tensor_backend(scheduler_.get(), node) != runtime_.weights_backend())
-                    throw std::runtime_error(std::string("SAM ") + ggml_backend_name(runtime_.weights_backend()) +
+        for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
+            auto* node = ggml_graph_node(graph, i);
+            const auto required_backend = runtime_.required_compute_backend(node);
+            if (is_compute_node(node) && required_backend &&
+                ggml_backend_sched_get_tensor_backend(scheduler_.get(), node) != required_backend)
+                    throw std::runtime_error(std::string("SAM ") + ggml_backend_name(required_backend) +
                         " graph attempted compute fallback for " + ggml_op_name(node->op));
-            }
         }
         const auto observer = runtime_.graph_observer();
         if (observer) observer->computing(context, graph, scheduler_.get());
@@ -198,14 +197,15 @@ public:
 
 private:
     void assign_primary_compute(ggml_backend_sched_t scheduler, ggml_cgraph* graph) const {
-        if (!runtime_.requires_primary_compute()) return;
         for (int i = 0; i < ggml_graph_n_nodes(graph); ++i) {
             auto* node = ggml_graph_node(graph, i);
             if (!is_compute_node(node)) continue;
-            if (!ggml_backend_supports_op(runtime_.weights_backend(), node))
+            const auto required_backend = runtime_.required_compute_backend(node);
+            if (!required_backend) continue;
+            if (!ggml_backend_supports_op(required_backend, node))
                 throw std::runtime_error(std::string("primary backend does not support SAM operation ") +
                     ggml_op_name(node->op));
-            ggml_backend_sched_set_tensor_backend(scheduler, node, runtime_.weights_backend());
+            ggml_backend_sched_set_tensor_backend(scheduler, node, required_backend);
         }
     }
     struct Sources {

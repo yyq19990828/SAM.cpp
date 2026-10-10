@@ -124,7 +124,7 @@ def export_original(args, samples, input_rows, identities, recipe):
                              "fp32_adaptation": adaptation}, "reference_kind": "official-checkpoint"}
 
 def export_native(args, samples, input_rows, identities, recipe):
-    from tools.benchmark.precision_reporting import expected_runtime_profile, native_weight_policy_matches
+    from tools.benchmark.precision_reporting import expected_runtime_profile, native_weight_policy_matches, native_compute_policy_matches
     table = args.output / "cases.tsv"
     entries = []
     for sample in samples:
@@ -143,7 +143,7 @@ def export_native(args, samples, input_rows, identities, recipe):
     receipt = read_json(raw / "run.json")
     if (receipt.get("complete") is not True or receipt.get("cases") != len(entries)
             or receipt.get("backend") != args.backend or receipt.get("feature_cache") != args.cache
-            or receipt.get("cuda_compute") != args.compute):
+            or not native_compute_policy_matches(receipt, recipe)):
         raise ValueError("native export did not complete the declared recipe")
     identities[str((raw / "run.json").resolve())] = sha256_file(raw / "run.json")
     rows, device_names, arithmetic = [], set(), set()
@@ -158,7 +158,7 @@ def export_native(args, samples, input_rows, identities, recipe):
                     or not native_weight_policy_matches(value, recipe)
                     or value.get("arithmetic_profile") != expected_runtime_profile(recipe)
                     or (args.backend == "cuda" and value.get("cuda_device") != recipe.get("cuda_device", 0))
-                    or value.get("feature_cache") != args.cache or value.get("cuda_compute") != args.compute):
+                    or value.get("feature_cache") != args.cache or not native_compute_policy_matches(value, recipe)):
                 raise ValueError("native payload model/compute/cache identity differs")
             stats = value["runtime"]
             if args.backend == "cuda" and (stats.get("cuda_nodes", 0) <= 0 or any(stats.get(key, 0) for key in ("cpu_nodes", "metal_nodes", "blas_nodes"))):

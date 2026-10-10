@@ -11,12 +11,14 @@ namespace sam {
 
 enum class Backend { Auto, Cpu, Metal, Cuda };
 enum class CudaComputeMode { F32, F16 };
+enum class CpuComputeMode { F32, NativeQuantized };
 
 struct BackendOptions {
     Backend backend = Backend::Auto;
     int threads = 4;
     int cuda_device = 0; // Index among devices visible to the CUDA registry.
     CudaComputeMode cuda_compute = CudaComputeMode::F32; // Opt-in reduced operands; GGUF weight storage is unchanged.
+    CpuComputeMode cpu_compute = CpuComputeMode::F32; // NativeQuantized keeps Q weights and allows kernel-internal Q8 RHS packing.
 };
 
 struct ModelInfo {

@@ -23,6 +23,7 @@ WEIGHTS = ("f32", "f16", *QUANTIZATION_PROFILES, "mixed")
 CACHES = {"f32": ["f32", "f32", "f32"], "f16": ["f16", "f16", "f16"],
           "mixed-q8_0": ["q8_0", "q8_0", "f32"]}
 CONTEXTS = ("conversion", "inspect", "benchmark", "public-api", "original-reference")
+COMPUTES = ("f32", "f16", "native-quantized")
 
 
 def configuration_hash(value):
@@ -43,11 +44,14 @@ def choice(value, choices, label):
 
 def validate_configuration(backend, compute, cache, activation="backend-selected"):
     choice(backend, ("cpu", "metal", "cuda"), "backend")
-    choice(compute, ("f32", "f16"), "compute policy")
+    choice(compute, COMPUTES, "compute policy")
     choice(cache, CACHES, "image-feature-cache policy")
     if activation != "backend-selected":
         raise ValueError("native activation precision is backend-selected; independent INT8/FP8/F16 activation settings are not implemented")
-    if backend != "cuda" and (compute != "f32" or cache != "f32"):
+    if compute == "native-quantized":
+        if backend != "cpu" or cache != "f32":
+            raise ValueError("native-quantized compute requires explicit CPU and F32 cache")
+    elif backend != "cuda" and (compute != "f32" or cache != "f32"):
         raise ValueError("native reduced compute/cache settings currently require explicit CUDA")
 
 
@@ -102,8 +106,16 @@ def normalize_config(value):
     for axis in ("activation", "compute", "cache"):
         object_keys(value[axis], {"mode"}, set(), axis)
     validate_configuration(value["backend"], value["compute"]["mode"], value["cache"]["mode"], value["activation"]["mode"])
+    weights = resolve_weights(value["weights"], value["schema_version"])
+    if value["compute"]["mode"] == "native-quantized":
+        quantized = weights["precision"] not in ("f32", "f16")
+        if weights["precision"] == "mixed":
+            policy = {key: weights[key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in weights}
+            quantized = bool(mixed_quantization_profile(policy)["modules"])
+        if not quantized:
+            raise ValueError("native-quantized compute requires quantized weights")
     return {"schema_version": value["schema_version"], "kind": CONFIG_KIND, "task": "image", "backend": value["backend"],
-            "weights": resolve_weights(value["weights"], value["schema_version"]), "activation": {"mode": value["activation"]["mode"]},
+            "weights": weights, "activation": {"mode": value["activation"]["mode"]},
             "compute": {"mode": value["compute"]["mode"]}, "cache": {"mode": value["cache"]["mode"]}}
 
 
@@ -274,7 +286,8 @@ def capabilities():
                         "mixed_module_or_tensor_f16": "NOT_IMPLEMENTED"},
             "activation": {"modes": ["backend-selected"], "independent_int8_fp8_f16": "NOT_IMPLEMENTED",
                            "studies": "PyTorch/offline studies do not enable native runtime modes"},
-            "compute": {"cpu": ["f32"], "metal": ["f32"], "cuda": ["f32", "f16"],
+            "compute": {"cpu": ["f32", "native-quantized"], "metal": ["f32"], "cuda": ["f32", "f16"],
+                        "cpu_native_quantized": "opt-in packed Q matmul with internal Q8 RHS; requires actual quantized weights; F32 graph activations/output",
                         "meaning": "backend policy/hints; no universal operand or accumulation dtype guarantee"},
             "cache": {"kind": "host image-feature cache, not LLM KV", "cpu": ["f32"], "metal": ["f32"],
                       "cuda": list(CACHES), "levels": CACHES, "reduced_mode_scope": "private native image probes"},

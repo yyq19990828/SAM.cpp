@@ -73,6 +73,16 @@ K matrices are encoded once during real conversion. CPU diagnostic costs use
 `sam_execution_cost_probe` and the independent `execution-cost` command; kernel
 packing/arithmetic stay `NOT_COLLECTED`.
 
+Opt-in CPU `compute.mode=native-quantized` keeps packed Q8/Q6/Q5/Q4 matmul
+weights and records `ggml-quantized-cpu-native-v1`; the default F32 decode path
+remains available. See the [native configuration](../docs/configs/quantization/image-tensor-mixed-cpu-native.json).
+F32 graph activations/output differ from temporary Q8_0/Q8_K kernel RHS; static
+traits evidence does not claim runtime scratch capture or independent INT8
+activation control. `sam_cpu_quantized_matmul_probe` runs bounded synthetic
+correctness/performance studies without a checkpoint, GPU or node observer.
+Its separate single-thread packing experiment is not kernel-internal timing.
+See the [study protocol](../docs/quantization-benchmark.md#bounded-cpu-matmul-study).
+
 `quantize/quantization_config.py capabilities` lists supported four-axis choices;
 `validate --config CONFIG.json` resolves them without model dependencies or GPU
 initialization. Conversion, quality exports and precision inspection accept

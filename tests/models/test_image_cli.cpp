@@ -36,6 +36,8 @@ int main() {
                  {"--backend", "cuda", "--cuda-device", "1junk"}, {"--backend", "cuda", "--cuda-device", "2147483648"},
                  {"--cuda-compute", "f16"}, {"--backend", "cpu", "--cuda-compute", "f32"},
                  {"--backend", "cuda", "--cuda-compute", "tf32"},
+                 {"--cpu-compute", "native-quantized"}, {"--backend", "cuda", "--cpu-compute", "native-quantized"},
+                 {"--backend", "cpu", "--cpu-compute", "int8"},
                  {"--model", "other.gguf"}, {"--wat", "x"}, {"--threads"}}) {
             arguments = valid;
             arguments.insert(arguments.end(), suffix.begin(), suffix.end());
@@ -49,6 +51,15 @@ int main() {
                 "CUDA compute mode was not preserved");
         require(parse(valid).backend.cuda_compute == sam::CudaComputeMode::F32,
                 "CUDA default arithmetic must remain F32");
+        arguments = valid;
+        arguments.insert(arguments.end(), {"--cpu-compute", "native-quantized", "--backend", "cpu"});
+        const auto native_cpu = parse(arguments);
+        require(native_cpu.backend.cpu_compute == sam::CpuComputeMode::NativeQuantized &&
+                parse(valid).backend.cpu_compute == sam::CpuComputeMode::F32, "CPU compute mode/default was not preserved");
+        std::ostringstream compute_json;
+        sam_example::write_compute_policy(compute_json, native_cpu.backend);
+        require(compute_json.str().find("\"compute_mode\":\"native-quantized\",\"cpu_compute\":\"native-quantized\",\"cuda_compute\":\"f32\"") != std::string::npos,
+                "CPU compute was mislabeled as CUDA compute in JSON");
         for (const auto& index : {"0", "2"}) {
             arguments = valid;
             arguments.insert(arguments.end(), {"--cuda-device", index, "--backend", "cuda"});

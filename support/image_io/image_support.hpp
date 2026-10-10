@@ -71,7 +71,7 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
         }
         if (name != "--model" && name != "--image" && name != "--text" &&
             name != "--output" && name != "--backend" && name != "--threads" &&
-            name != "--cuda-device" && name != "--cuda-compute" &&
+            name != "--cuda-device" && name != "--cuda-compute" && name != "--cpu-compute" &&
             name != "--score-threshold" && (name != "--repeat" || !allow_repeat)) {
             throw std::invalid_argument("Unknown argument: " + name);
         }
@@ -96,6 +96,11 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
             else if (value == "f16") options.backend.cuda_compute = sam::CudaComputeMode::F16;
             else throw std::invalid_argument("--cuda-compute must be f32 or f16");
         }
+        else if (name == "--cpu-compute") {
+            if (value == "f32") options.backend.cpu_compute = sam::CpuComputeMode::F32;
+            else if (value == "native-quantized") options.backend.cpu_compute = sam::CpuComputeMode::NativeQuantized;
+            else throw std::invalid_argument("--cpu-compute must be f32 or native-quantized");
+        }
         else if (name == "--repeat") options.repeat = positive_integer(value, name);
         else if (name == "--backend") {
             if (value == "auto") options.backend.backend = sam::Backend::Auto;
@@ -118,6 +123,8 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
         throw std::invalid_argument("--cuda-device requires --backend cuda");
     if (seen.count("--cuda-compute") && options.backend.backend != sam::Backend::Cuda)
         throw std::invalid_argument("--cuda-compute requires --backend cuda");
+    if (seen.count("--cpu-compute") && options.backend.backend != sam::Backend::Cpu)
+        throw std::invalid_argument("--cpu-compute requires --backend cpu");
     for (const char* name : {"--model", "--image", "--text", "--output"}) {
         if (!seen.count(name)) {
             throw std::invalid_argument(std::string("Required argument: ") + name);
@@ -134,6 +141,13 @@ inline const char* backend_name(sam::Backend backend) {
         case sam::Backend::Cuda: return "cuda";
     }
     throw std::runtime_error("Unknown resolved backend");
+}
+
+inline void write_compute_policy(std::ostream& stream, const sam::BackendOptions& options) {
+    const std::string cpu = options.cpu_compute == sam::CpuComputeMode::NativeQuantized ? "native-quantized" : "f32";
+    const std::string cuda = options.cuda_compute == sam::CudaComputeMode::F16 ? "f16" : "f32";
+    stream << ",\"compute_mode\":\"" << (options.backend == sam::Backend::Cuda ? cuda : cpu)
+           << "\",\"cpu_compute\":\"" << cpu << "\",\"cuda_compute\":\"" << cuda << '"';
 }
 
 inline std::string json_string(std::string_view value) {
