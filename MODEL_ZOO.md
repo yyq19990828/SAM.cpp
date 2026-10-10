@@ -36,7 +36,11 @@ are reported separately for reference.
 The SAM 3 implementation remains experimental. Its validation uses a small
 reference corpus, so check the quality of your application's own inputs.
 F16 video, legacy `image-linear-*` and custom `image-modules-linear-*` profiles
-remain diagnostic; validate application data before integration. Quantized video,
+remain diagnostic by default; validate application data before integration.
+One exact [text/fusion/decoder Q8_0 CUDA image recipe](docs/quantization.md)
+has a scoped GPU-memory acceptance on RTX 4090. Separate experimental mixed-Q8_0
+cache-tool recipes with F32 or those Q8_0 weights pass full-image/changed-prompt
+latency gates; public loading retains its existing cache precision. Quantized video,
 reverse tracking, and interactive video prompts are not available.
 
 CPU is the portable execution path. Platform validation covers macOS CPU/Metal

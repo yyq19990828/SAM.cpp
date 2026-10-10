@@ -22,7 +22,8 @@ SAM.cpp 面向多种 SAM 模型适配器，以及由检测和分割模型组合�
 [可视化样例](docs/visual-examples_zh.md)在相同图片、提示词和 0.2 检出阈值下比较各图像权重版本的 CPU、Metal 输出。量化版本以最终输出质量验收，张量误差单独供参考。
 
 当前 SAM 3 实现仍属实验阶段，验证语料规模较小，接入应用时应检查自己的输入质量。
-F16 视频、旧 `image-linear-*` 和自定义 `image-modules-linear-*` profile 保留诊断标签，应用集成应验证自己的数据。
+F16 视频、旧 `image-linear-*` 和自定义 `image-modules-linear-*` profile 默认保留诊断标签，应用集成应验证自己的数据。一份明确的[文本/融合/解码 Q8_0 CUDA 图像配方](docs/quantization_zh.md)已在 RTX 4090 上取得限定工作负载的 GPU 显存优化验收。
+F32 和该 Q8_0 权重各自的实验性混合 Q8_0 缓存工具配方也已通过整图／换提示的延迟门槛；公共模型加载仍使用现有缓存精度。
 目前没有量化视频、反向跟踪或交互式视频提示。
 
 CPU 是跨平台执行路径。平台验证覆盖 macOS CPU/Metal，以及 Linux x86_64 RTX 4090

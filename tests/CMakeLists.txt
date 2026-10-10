@@ -130,10 +130,20 @@ if(SAM_GGML_CUDA_TARGET)
     add_executable(test_cuda_numerics runtime/ggml/test_cuda_numerics.cpp)
     target_link_libraries(test_cuda_numerics PRIVATE sam_private)
     add_test(NAME sam_cuda_numerics COMMAND test_cuda_numerics)
+    if(patched_ggml_source)
+        find_package(CUDAToolkit REQUIRED)
+        add_executable(test_cuda_q8_mmq_scale runtime/ggml/test_cuda_q8_mmq_scale.cpp)
+        target_include_directories(test_cuda_q8_mmq_scale PRIVATE ${patched_ggml_source}/include)
+        target_link_libraries(test_cuda_q8_mmq_scale PRIVATE ${SAM_GGML_CUDA_TARGET} CUDA::cudart)
+        add_test(NAME sam_cuda_q8_mmq_scale COMMAND test_cuda_q8_mmq_scale)
+    endif()
     if(NOT SAM_REQUIRE_CUDA_TESTS)
         set_tests_properties(sam_cuda_copy PROPERTIES SKIP_RETURN_CODE 77)
         set_tests_properties(sam_cuda_concat PROPERTIES SKIP_RETURN_CODE 77)
         set_tests_properties(sam_cuda_numerics PROPERTIES SKIP_RETURN_CODE 77)
+        if(patched_ggml_source)
+            set_tests_properties(sam_cuda_q8_mmq_scale PROPERTIES SKIP_RETURN_CODE 77)
+        endif()
     endif()
     foreach(check IN ITEMS backend precision window rope graph_workspace graph_profile host_tensor quantization)
         add_test(NAME sam_${check}_cuda COMMAND test_${check} cuda)
@@ -165,10 +175,11 @@ target_link_libraries(test_video PRIVATE sam_private)
 add_test(NAME sam_video_behavior COMMAND test_video)
 
 if(patched_ggml_source)
+    get_filename_component(sam_ggml_test_build_dir "${CMAKE_CURRENT_BINARY_DIR}" REALPATH)
     add_test(NAME sam_ggml_preparation
         COMMAND ${CMAKE_COMMAND}
             -DSAM_GGML_SOURCE_DIR=${ggml_SOURCE_DIR}
-            -DSAM_TEST_BUILD_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -DSAM_TEST_BUILD_DIR=${sam_ggml_test_build_dir}
             -P ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_prepare_ggml.cmake)
 endif()
 

@@ -12,6 +12,15 @@ No releases have been published.
 - `SAM_BUILD_TOOLS` option (standalone default `ON`, embedded `OFF`) builds the standalone conversion, validation and profiling tools independently of `SAM_BUILD_EXAMPLES`, which now owns only the `sam_image` and `sam_video` applications.
 - Compiled-library source identity: `source_snapshot()` and `archive_sources()` now recursively cover `src/` implementations and build files, with behavior tests proving that changing a new implementation changes its identity, that an archive verifies after the live sources are removed, and that archive tampering fails.
 - Experimental v2 precision acceptance tools with separate quality budgets, one-to-one object matching, ranked COCO mask AP, paired confidence bounds, independent data splits and frozen performance comparisons. Native F16 codec bit patterns and the seven fixed image cases have separate checks. Results distinguish failure, insufficient evidence and untested configurations; existing model support and v1 receipts retain their original scope.
+- Independent CUDA Q8_0 feature-cache codec verification and frozen-library reconciliation, checking native block scales, signed values, layout and decoded bits against their F32 inputs. Arithmetic evidence remains separate from model quality and measured benefits.
+- Hash-bound stage and original-weight comparators for the CUDA F32 reference configuration, preserving declared layout transformations and keeping intermediate differences separate from final-output acceptance.
+- Opt-in CUDA Q8_1 right-operand staging and Q8_0 MMVQ/MMQ raw-dot probes, with independent packed-byte and same-operand checks bound to the measured GGML library. Kernel boundary, model quality and complete recipe conclusions remain separately scoped.
+- The separately frozen short-dot CUDA Q8 image recipe passes complete seven-call graph arithmetic, fresh 1,024-image final quality and uncontaminated paired performance. Its scoped deployment result earns a GPU-memory label for full-image and changed-prompt inference on RTX 4090; the 10% latency gate and repeated-result memory label do not pass. Earlier candidate receipts keep their original statuses.
+- Separate experimental mixed-Q8_0 image-cache recipes with F32 or custom text/fusion/decoder Q8_0 weights pass complete graph arithmetic, absolute/incremental final quality and paired latency gates on RTX 4090. Acceptance covers full-image and changed-prompt latency only; memory gates do not pass, and public loading keeps its existing cache precision.
+- An independent COCO follow-up selector that keeps the original development and unopened reserve images, excludes every exposed v2 evaluation image by ID and content, and freezes fresh evaluation images before inference.
+- A COCO train2017 precision holdout preparer that selects unused images from annotations before inference, verifies downloaded content, and preserves the existing development and reserve splits for a new paired evaluation.
+- Opt-in W8A8 CUDA probe dumps of packed operands and raw INT32 dots, with a signed INT64 verifier that checks every output position and rejects malformed layouts or payloads. This closes the probe's sampled-dot arithmetic gap without adding an integrated W8A8 model profile.
+- Opt-in FP8 CUDA probe algorithm selection and packed-operand dumps, with independent E4M3 sampled-dot verification. FP8 remains diagnostic and does not enable a native model profile.
 - Experimental image-feature cache tools and typed host storage, with native GGML F16/Q8_0 codec checks and a mixed Q8_0 recipe that preserves the F32 detection feature. Public model loading continues to use the existing cache precision.
 - Original-model COCO screening for calibrated vision linears, with separate weight/activation ablations, frozen per-object gates, prompted mask AP, positive-mask mIoU and negative-prompt counts. These tools do not qualify a runtime W8A8 profile.
 - Opt-in CUDA linear quantization probes with independently checked INT8 arithmetic, calibrated channel scaling, explicit temporary-memory accounting, and separate GGML comparisons. FP8 probes remain diagnostic and require their numerical gates to pass.
@@ -21,7 +30,7 @@ No releases have been published.
 - CUDA backend selection with a visible-device index, device identity, CUDA node statistics and strict GPU compute placement. SAM 3 F32/F16 image, eight vision/full quantized image presets and F32/hybrid video have original-model qualification on Linux x86_64 RTX 4090.
 - Pinned GGML CUDA corrections for F32 dense/attention precision and native window operations, with required-GPU CTest checks.
 - CUDA native quantized image arithmetic with a distinct runtime profile, RHS Q8_1 staging and separate output-quality and tensor-diagnostic records.
-- Header-only C++17 SAM model integration with owned results, reusable sessions, and the `sam::sam` CMake target. The current adapter provides SAM 3 text image segmentation and forward video tracking on CPU, Metal and CUDA.
+- Compiled C++17 SAM model integration with owned results, reusable sessions, and the `sam::sam` CMake target. The current adapter provides SAM 3 text image segmentation and forward video tracking on CPU, Metal and CUDA.
 - GGUF v3 conversion and loading for image F32/F16, full video F32/F16/hybrid, and vision-only image Q8_0/Q6_K/Q5_K/Q4_K profiles. Quantized video is not available.
 - `sam_image` and `sam_video` command-line tools with masks, boxes, scores, persistent video IDs, runtime statistics, and optional diagnostic tensor exports.
 - Image, video, session, header/linkage, and conversion checks, plus original-model reference and performance tools.
@@ -32,6 +41,7 @@ No releases have been published.
 
 ### Changed
 
+- Keep the English and Chinese quantization guides focused on conversion, precision limits and scoped results; retain experimental history and diagnostic evidence in the linked plans.
 - Group the repository by ownership: the CLI applications moved to `apps/{image,video}/`, decoding support to `support/image_io/`, vendored STB headers to `third_party/stb/`, tests to `tests/{api,models,runtime/ggml,integration,tools}/`, and the Python tools to `tools/{convert,quantize,validation,benchmark,visualization,maintenance}/`. Historical flat tool module paths remain as forwarding entry points, and the `${build}/examples/` CLI and probe output paths are unchanged. SDK-only builds no longer compile decoding, STB, Python or test code.
 - Extend compiled-library source identity and archives to nested tools, `apps/`, `support/`, the compiled `third_party/stb/` headers and all related CMake files, with migration coverage tests for nested tool changes and offline archive verification.
 - Move the private GGML runtime and its CPU, Metal and CUDA drivers from `include/sam/internal/runtime/` into `src/runtime/ggml/` with path-derived include guards, completing the private source relocation. The runtime keeps its device discovery, storage/arithmetic policies, workspace and statistics and does not include model headers; tests and probes follow through `sam_private`.
@@ -56,6 +66,9 @@ No releases have been published.
 
 ### Fixed
 
+- Preserve source-override compatibility with the previously verified combined GGML archive, upgrading its CUDA corrections in a build-local copy without modifying the supplied source.
+- Use bounded double-precision accumulation for explicit-F32 short CUDA dots, repairing a cancellation failure in the custom Q8 recipe's decoder presence head without changing the arithmetic gate.
+- CUDA Q8_0 MMQ staging now uses correctly rounded F32 inverse-scale division, avoiding nonfinite stored scales for the tested finite extreme inputs.
 - Make documentation checks independent of private build/model artifacts: retain their paths as archive records, reject links to Git-ignored targets, and check all repository Markdown documents.
 - Restore direct execution of grouped Python commands from any working directory, including reference-export child processes, while preserving flat compatibility entry points and module invocation.
 - Resolve the fully static SDK's OpenMP runtime dependencies for consumers that enable only C++, without requiring a C compiler in the consuming project.

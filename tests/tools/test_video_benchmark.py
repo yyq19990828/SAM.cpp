@@ -21,6 +21,7 @@ class VideoBenchmarkChecks(unittest.TestCase):
             "support/image_io/image_io.cpp", "tools/CMakeLists.txt", "tests/CMakeLists.txt",
             "cmake/install.cmake", "cmake/ggml.cmake", "cmake/prepare_ggml.cmake",
             "cmake/patches/ggml-precise-metal.patch", "cmake/patches/ggml-precise-cuda.patch",
+            "cmake/patches/ggml-short-dot-cuda.patch",
             "tools/convert/sam3_tensor_schema.json", "tools/convert/sam3_artifacts.py",
             "tools/convert/sam3_gguf.py", "tools/benchmark/benchmark_video.py",
             "tools/validation/validate_video.py", "tools/validation/validate_image.py",

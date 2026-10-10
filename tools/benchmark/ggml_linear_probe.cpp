@@ -3,15 +3,35 @@
 #include <cstring>
 #include <iostream>
 
+namespace {
+
+void write_payload(const std::filesystem::path& path, const void* data, std::size_t bytes) {
+    std::ofstream stream(path, std::ios::binary);
+    stream.write(static_cast<const char*>(data), static_cast<std::streamsize>(bytes));
+    if (!stream) throw std::runtime_error("failed writing GGML raw probe payload");
+}
+
+} // namespace
+
 int main(int argc, char** argv) {
     try {
-        if (argc < 4 || argc > 6) throw std::invalid_argument("usage: sam_ggml_linear_probe INPUT ggml-q8|ggml-f16 NEW_DIR [ITERATIONS] [--summary-only]");
+        if (argc < 4 || argc > 7) throw std::invalid_argument("usage: sam_ggml_linear_probe INPUT ggml-q8|ggml-f16 NEW_DIR [ITERATIONS] [--summary-only] [--dump-q8-operands]");
         const auto input = sam_probe::read_input(argv[1]);
         const std::string mode = argv[2];
         if (mode != "ggml-q8" && mode != "ggml-f16") throw std::invalid_argument("unsupported GGML probe mode");
-        const int iterations = argc >= 5 ? sam_probe::iterations(argv[4]) : 50;
-        const bool summary_only = argc == 6;
-        if (summary_only && std::string(argv[5]) != "--summary-only") throw std::invalid_argument("unsupported probe argument");
+        int iterations = 50;
+        bool have_iterations = false, summary_only = false, dump_q8_operands = false;
+        for (int argument = 4; argument < argc; ++argument) {
+            const std::string option = argv[argument];
+            if (option == "--summary-only" && !summary_only) summary_only = true;
+            else if (option == "--dump-q8-operands" && !dump_q8_operands) dump_q8_operands = true;
+            else if (!have_iterations && option.rfind("--", 0) != 0) {
+                iterations = sam_probe::iterations(argv[argument]);
+                have_iterations = true;
+            } else throw std::invalid_argument("unsupported or duplicate probe argument");
+        }
+        if (dump_q8_operands && mode != "ggml-q8")
+            throw std::invalid_argument("raw Q8 operands require ggml-q8 mode");
         const std::filesystem::path output = argv[3];
         if (!std::filesystem::create_directory(output)) throw std::runtime_error("probe output must be new");
         const auto type = mode == "ggml-q8" ? GGML_TYPE_Q8_0 : GGML_TYPE_F16;
@@ -60,10 +80,28 @@ int main(int argc, char** argv) {
         if (stats.cpu_nodes || stats.metal_nodes || !stats.cuda_nodes) throw std::runtime_error("probe did not use CUDA exclusively");
         const auto result = sam::internal::download(y, stats);
         const auto error = sam_probe::error(result, input.reference, input.reference.size());
+        sam::RuntimeStats raw_stats;
+        if (dump_q8_operands) {
+            sam::internal::GraphExecution raw_graph(runtime, 64, raw_stats);
+            auto* raw_dot = ggml_mul_mat(raw_graph.context(), weight, x);
+            raw_graph.output(raw_dot);
+            raw_graph.allocate();
+            raw_graph.compute();
+            if (raw_stats.cpu_nodes || raw_stats.metal_nodes || !raw_stats.cuda_nodes)
+                throw std::runtime_error("raw Q8 dot did not execute on CUDA exclusively");
+            const auto raw_values = sam::internal::download(raw_dot, raw_stats);
+            const auto expanded = input.expanded_input();
+            write_payload(output / "weight.q8_0", packed.data(), packed.size());
+            write_payload(output / "rhs.f32", expanded.data(), expanded.size() * sizeof(float));
+            write_payload(output / "raw-dot.f32", raw_values.data(), raw_values.size() * sizeof(float));
+        }
         if (!summary_only) sam_probe::write_output(output, result);
         std::ofstream report(output / "probe.json");
         sam_probe::write_common(report, input, mode, timing, error);
         report << ",\"complete\":true,\"output_saved\":" << (summary_only ? "false" : "true")
+            << ",\"raw_q8_operands_saved\":" << (dump_q8_operands ? "true" : "false")
+            << ",\"raw_q8_layout\":\"weight[M,K] Q8_0, rhs[N,K] F32, dot[N,M] F32\""
+            << ",\"raw_cuda_nodes\":" << raw_stats.cuda_nodes
             << ",\"warmup_calls\":" << warmup_calls << ",\"output_type\":\"f32\",\"cuda_nodes\":" << stats.cuda_nodes
             << ",\"cpu_nodes\":" << stats.cpu_nodes << ",\"weight_buffer_bytes\":" << ggml_backend_buffer_get_size(weights.get())
             << ",\"resident_input_bytes\":" << ggml_backend_buffer_get_size(input_buffer.get())

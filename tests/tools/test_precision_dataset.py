@@ -6,6 +6,8 @@ import tempfile
 import unittest
 
 from tools.validation.prepare_coco_acceptance import load_precision_dataset, make_dataset, validate_precision_dataset
+from tools.validation.prepare_coco_followup import make_followup_dataset
+from tools.validation.prepare_coco_fresh_holdout import select as select_fresh_holdout
 from tools.convert.sam3_artifacts import SAM3_REVISION, sha256_file, write_json
 
 
@@ -88,6 +90,75 @@ class PrecisionDatasetChecks(unittest.TestCase):
                                  3, 3, additional_used_ids=[4])
             fresh = {row["coco_image_id"] for row in value["samples"] if row["split"] in ("evaluation", "reserve")}
             self.assertTrue(fresh.isdisjoint({0, 1, 2, 3, 4, 12}))
+
+    def test_followup_retains_reserve_and_excludes_exposed_evaluation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            annotations, used = self.fixture(root)
+            old = make_dataset(annotations, root, [used], set(), evaluation=3, reserve=3, seed=42)
+            old_path = root / "old-precision.json"
+            write_json(old_path, old)
+            first = make_followup_dataset(annotations, root, old_path, set(), evaluation=2, seed=99)
+            second = make_followup_dataset(annotations, root, old_path, set(), evaluation=2, seed=99)
+            self.assertEqual(first, second)
+            old_evaluation = {row["coco_image_id"] for row in old["samples"] if row["split"] == "evaluation"}
+            new_evaluation = {row["coco_image_id"] for row in first["samples"] if row["split"] == "evaluation"}
+            self.assertEqual(len(new_evaluation), 2)
+            self.assertTrue(new_evaluation.isdisjoint(old_evaluation))
+            self.assertTrue(new_evaluation.isdisjoint({row["coco_image_id"] for row in old["samples"]}))
+            self.assertTrue(old_evaluation <= set(first["previously_used_image_ids"]))
+            for split in ("calibration", "development", "reserve"):
+                self.assertEqual([row for row in old["samples"] if row["split"] == split],
+                                 [row for row in first["samples"] if row["split"] == split])
+            with self.assertRaisesRegex(ValueError, "not enough unused"):
+                make_followup_dataset(annotations, root, old_path, set(), evaluation=4, seed=99)
+            (root / old["samples"][-1]["image"]).write_bytes(b"changed reserve")
+            with self.assertRaisesRegex(ValueError, "changed image"):
+                make_followup_dataset(annotations, root, old_path, set(), evaluation=2, seed=99)
+
+    def test_fresh_train_holdout_excludes_prior_ids_and_is_deterministic(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            val_annotations, used = self.fixture(root)
+            previous = make_dataset(val_annotations, root, [used], set(), evaluation=3, reserve=3, seed=42)
+            previous_path = root / "previous-precision.json"
+            write_json(previous_path, previous)
+            categories = [{"id": n, "name": f"class {n}"} for n in range(1, 5)]
+            train = {"images": [{"id": image, "file_name": f"{image:012d}.jpg"} for image in range(100, 106)],
+                     "categories": categories,
+                     "annotations": [{"id": image, "image_id": image, "category_id": image % 4 + 1,
+                                      "area": 100, "iscrowd": 0} for image in range(100, 106)]}
+            train_path = root / "train.json"
+            write_json(train_path, train)
+            first = select_fresh_holdout(previous_path, val_annotations, train_path, 3, 7)
+            self.assertEqual(first, select_fresh_holdout(previous_path, val_annotations, train_path, 3, 7))
+            self.assertEqual(len({row["id"] for row in first["images"]}), 3)
+            self.assertTrue({row["id"] for row in first["images"]}.isdisjoint(
+                {row["coco_image_id"] for row in previous["samples"]}))
+            consumed = copy.deepcopy(previous)
+            for image, row in zip(range(100, 103),
+                                  (row for row in consumed["samples"] if row["split"] == "evaluation")):
+                category = image % 4 + 1
+                absent = category % 4 + 1
+                row.update({"id": f"coco-{image:012d}", "coco_image_id": image,
+                            "source_group": f"coco-image-{image}", "source_sha256": f"{image:064x}",
+                            "image": f"train2017/{image:012d}.jpg",
+                            "positive_category_ids": [category], "negative_category_ids": [absent],
+                            "prompts": [f"class {category}", f"class {absent}"]})
+            consumed["provenance"] = {"val_annotations_sha256": sha256_file(val_annotations),
+                                      "train_annotations_sha256": sha256_file(train_path),
+                                      "previous_manifest_sha256": {str(previous_path): sha256_file(previous_path)}}
+            consumed_path = root / "consumed.json"
+            write_json(consumed_path, consumed)
+            second = select_fresh_holdout(previous_path, val_annotations, train_path, 3, 7, consumed_path)
+            self.assertEqual({row["id"] for row in second["images"]}, {103, 104, 105})
+            self.assertEqual(second["excluded_dataset_sha256"], sha256_file(consumed_path))
+            self.assertEqual(second, select_fresh_holdout(previous_path, val_annotations, train_path,
+                                                          3, 7, consumed_path))
+            train["images"][0]["id"] = previous["samples"][0]["coco_image_id"]
+            write_json(train_path, train)
+            with self.assertRaisesRegex(ValueError, "annotation reference|identities disagree"):
+                select_fresh_holdout(previous_path, val_annotations, train_path, 3, 7)
 
 
 if __name__ == "__main__":

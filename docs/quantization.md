@@ -34,11 +34,12 @@ F32-output matrix kernel, reducing temporary memory. Other native GPU kernels
 may stage matrix operands in lower precision. Video tracking state is outside
 these image profiles.
 
-Repository numerical acceptance focuses on those two preset families; see
-[model support](../MODEL_ZOO.md) for their status. Custom combinations selected
-with `--quantize-modules` use `image-modules-linear-{precision}-v1` and need
-validation on application data. They remain diagnostic even when all four
-components are selected. Do not combine this option with `--storage-profile`.
+The two preset families have separate validation results; see
+[model support](../MODEL_ZOO.md). Custom combinations selected with
+`--quantize-modules` use `image-modules-linear-{precision}-v1` and require their
+own recipe validation, including checks on application data. Preset results do
+not qualify arbitrary custom selections, even when all four components are
+selected. Do not combine this option with `--storage-profile`.
 
 ## Profiles and storage trade-offs
 
@@ -85,7 +86,9 @@ original checkpoint; quantization changes intermediate values. Validation
 criteria are precision-specific rather than one shared tolerance for every
 format.
 
-Final output quality determines quantized acceptance. Relative L2 and maximum
+Output-quality acceptance evaluates the final masks, scores and boxes.
+Complete deployment acceptance also requires correct arithmetic and measured
+benefits for the stated workload. Relative L2 and maximum
 absolute errors of intermediate tensors are reported separately for diagnosis
 and model selection. Exceeding a tensor-fidelity tolerance does not directly
 fail a quantized model. Tokenization, input transforms, shapes, finite values
@@ -105,27 +108,71 @@ show actual outputs and mask differences at a threshold of 0.2 for every
 configuration. They offer a direct comparison alongside full-corpus and
 application-dataset validation.
 
-The experimental [v2 acceptance plan](plans/20261007-200954-precision-acceptance-gates-v2.md)
-adds separate F32/F16/Q8/Q6/Q5/Q4 quality budgets, ranked COCO mask AP, image-level
-confidence bounds and one-to-one object matching. Cache compression must pass both
-the complete recipe's quality budget and its incremental budget. These results
-have their own version and do not replace the fixed-corpus qualifications above.
-`tools/validation/export_precision_outputs.py` and `tools/validation/evaluate_precision.py` provide the
-ranked evaluation path; `tools/maintenance/freeze_precision_campaign.py` freezes candidates
-before independent evaluation. Latency and memory benefits are measured separately
-by `tools/benchmark/benchmark_precision.py`. `tools/validation/verify_precision_f16.py` checks native
-F16 codec bit patterns; `tools/validation/validate_precision_regression.py` applies zero-tail
-spatial gates to the seven fixed cases alongside the existing validator.
-These v2 Python native runners currently require Linux for executable-library
-and process-memory inspection; their Metal host integration is not implemented.
-BF16/W8A8/FP8 entries in the policy are research
-targets, not additional supported inference modes.
+The [v2 acceptance policy](plans/20261007-200954-precision-acceptance-gates-v2.md)
+adds precision-specific quality budgets, ranked COCO mask AP, image-level
+confidence bounds and one-to-one object matching. A complete recipe must pass
+arithmetic, task quality and workload-specific performance separately. These
+results have their own version and preserve the fixed-corpus results above.
 
-The broader `image-linear-*` family also quantizes text-encoder linear weights
-and remains diagnostic. These schema-3 profiles are image-only; quantized video
-is not supported by them.
-The legacy `image-linear-*` family is distinct from the schema-4 full preset;
-it does not cover fusion or decoder linears.
+Absolute quality compares each recipe with the original F32 checkpoint.
+Compressed caches also need an incremental comparison with the same weights,
+compute mode and backend using F32 cache; the complete recipe must still fit
+its absolute budget. Final evaluation requires at least 1,024 unused images,
+2,000 paired-image bootstrap repetitions, negative-prompt checks and zero
+protected-object misses. The seven fixed regression cases have no dataset-tail
+allowance. A component arithmetic check or a cache's smaller payload cannot
+substitute for full-recipe validation or measured peak memory.
+
+One separately frozen [short-F32-dot CUDA recipe](plans/20261009-172831-cuda-f32-short-dot-candidate.md)
+keeps vision weights F32 and quantizes the 220 text/fusion/decoder linears to
+Q8_0, with F32 compute and F32 feature cache. Its recorded RTX 4090 result
+passes the seven-call active-graph arithmetic audit and independent final
+quality on 1,024 images. Paired comparison with the same-checkpoint F32 parent
+measures a **19.27% lower GPU process peak** for full-image and changed-prompt
+inference. Their p50 latency improves by 3.32% and 7.43%, respectively, below
+the 10% latency-benefit threshold. Repeated-result inference has no benefit
+label. These results apply to that exact model, CUDA build and workload;
+other allocations, cache recipes, GPUs, backends and video require separate
+evidence.
+
+The [mixed-cache campaign](plans/20261009-223907-shortdot-mixed-cache-final-acceptance.md)
+separately qualifies two experimental cache-tool recipes on that RTX 4090 CUDA
+build. Each uses F32 compute, compresses FPN 0/1 to Q8_0 and retains the F32
+detection feature. Both pass complete active-graph arithmetic, fixed regressions,
+and absolute and cache-incremental quality on **1,024 unused images / 4,729
+prompts**. The applicable aggregate and 55 category checks pass; 25 categories
+have insufficient coverage for a per-category claim.
+
+Each fresh 96-process comparison uses the **same weights with F32 cache** as its
+own baseline across eight predeclared cases:
+
+| Mixed-cache weights | Full-image p50 latency reduction | Changed-prompt p50 latency reduction |
+| --- | ---: | ---: |
+| F32 | 11.08% | 19.66% |
+| The custom text/fusion/decoder Q8_0 recipe above | 12.38% | 21.23% |
+
+Both earn latency labels for these two workloads only. GPU process peaks rise
+by 0.13% and 0.16%, respectively; RSS peaks fall by 14.15% and 14.35%, below the
+15% host-memory gate. Neither earns a memory or combined latency/GPU-memory
+label, and repeated-result inference has no benefit label. The Q8 parent's
+separate 19.27% GPU-memory benefit is not inherited by these comparisons.
+These remain experimental cache-tool results; public model loading retains
+its existing cache precision.
+
+The Linux v2 workflow uses `tools/maintenance/freeze_precision_campaign.py`
+to bind recipes and inputs before evaluation, `tools/validation/export_precision_outputs.py`
+and `tools/validation/evaluate_precision.py` for ranked quality, and
+`tools/benchmark/benchmark_precision.py` for paired latency and memory.
+Codec and same-operand operator checks provide separate arithmetic evidence;
+see [model verification](validation.md) and the policy for the requirements.
+These native runners depend on Linux library/process inspection and do not
+implement Metal host integration.
+
+BF16, W8A8 and FP8 entries in the policy are research targets rather than
+additional supported image-inference modes. The legacy schema-3
+`image-linear-*` family also quantizes text-encoder linears and remains
+diagnostic; it differs from the schema-4 full preset and does not cover fusion
+or decoder linears. These image profiles do not support quantized video.
 
 ## Convert a checkpoint
 

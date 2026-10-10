@@ -57,8 +57,48 @@ if(NOT prepatched_hash STREQUAL prepared_hash)
     message(FATAL_ERROR "Already-patched source changed during preparation")
 endif()
 
-# Previously prepared Metal-only archives acquire the CUDA patch exactly once.
-file(COPY "${prepared}/" DESTINATION "${fixture}/metal-only")
+# The prior combined archive acquires only the new short-dot patch.
+file(COPY "${prepared}/" DESTINATION "${fixture}/legacy-combined")
+execute_process(COMMAND ${CMAKE_COMMAND} -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
+    "GIT_CEILING_DIRECTORIES=${fixture}" ${GIT_EXECUTABLE} apply --reverse
+    "${CMAKE_CURRENT_LIST_DIR}/../../cmake/patches/ggml-short-dot-cuda.patch"
+    WORKING_DIRECTORY "${fixture}/legacy-combined" RESULT_VARIABLE reverse_short_dot_result
+    ERROR_VARIABLE reverse_short_dot_error)
+if(NOT reverse_short_dot_result EQUAL 0)
+    message(FATAL_ERROR "Could not prepare prior combined archive fixture: ${reverse_short_dot_error}")
+endif()
+sam_prepare_ggml("${fixture}/legacy-combined" "${fixture}/short-dot-upgraded" short_dot_upgraded)
+sam_ggml_tree_hash("${short_dot_upgraded}" short_dot_upgraded_hash)
+if(NOT short_dot_upgraded_hash STREQUAL prepared_hash)
+    message(FATAL_ERROR "Prior combined archive did not acquire the short-dot patch")
+endif()
+
+# The combined archive accepted before either numerical correction must also
+# upgrade. Pin its historical identity independently of the current preparer.
+file(COPY "${fixture}/legacy-combined/" DESTINATION "${fixture}/historical-combined")
+execute_process(COMMAND ${CMAKE_COMMAND} -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
+    "GIT_CEILING_DIRECTORIES=${fixture}" ${GIT_EXECUTABLE} apply --reverse
+    --include=src/ggml-cuda/quantize.cu
+    "${CMAKE_CURRENT_LIST_DIR}/../../cmake/patches/ggml-precise-cuda.patch"
+    WORKING_DIRECTORY "${fixture}/historical-combined" RESULT_VARIABLE reverse_scale_result
+    ERROR_VARIABLE reverse_scale_error)
+if(NOT reverse_scale_result EQUAL 0)
+    message(FATAL_ERROR "Could not prepare historical combined archive: ${reverse_scale_error}")
+endif()
+sam_ggml_tree_hash("${fixture}/historical-combined" historical_hash)
+if(NOT historical_hash STREQUAL "37f787b8a432f2399e9ee50270f8d025378c605ae23f5efaae6a6ae9148fd5cb")
+    message(FATAL_ERROR "Historical combined archive fixture differs from the previously accepted tree")
+endif()
+sam_prepare_ggml("${fixture}/historical-combined" "${fixture}/historical-upgraded" historical_upgraded)
+sam_prepare_ggml("${fixture}/historical-combined" "${fixture}/historical-upgraded" historical_upgraded)
+sam_ggml_tree_hash("${historical_upgraded}" historical_upgraded_hash)
+sam_ggml_tree_hash("${fixture}/historical-combined" historical_after_hash)
+if(NOT historical_upgraded_hash STREQUAL prepared_hash OR NOT historical_after_hash STREQUAL historical_hash)
+    message(FATAL_ERROR "Historical archive upgrade changed its input or did not produce the verified combined tree")
+endif()
+
+# Previously prepared Metal-only archives acquire both CUDA patches exactly once.
+file(COPY "${fixture}/legacy-combined/" DESTINATION "${fixture}/metal-only")
 execute_process(COMMAND ${CMAKE_COMMAND} -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
     "GIT_CEILING_DIRECTORIES=${fixture}" ${GIT_EXECUTABLE} apply --reverse
     "${CMAKE_CURRENT_LIST_DIR}/../../cmake/patches/ggml-precise-cuda.patch"

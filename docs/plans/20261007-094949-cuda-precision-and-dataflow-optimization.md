@@ -152,6 +152,10 @@ memory、profiling 使用同前缀的独立 `-v2` 目录。图像验收 20 组�
 20 个图像组合×7 cases，共 140 cases；4 个视频组合×5 cases、216 帧，共
 864 帧。所有结果均符合各自既定资格化门限，没有修改 validator 或放宽门限。
 各 case 的 compute 节点全部位于 CUDA，没有 CPU、BLAS 或 Metal compute 回退。
+后续工作区清理（2026-10-09）：确认 `sequence.json` 的 24 步全部返回 0、
+`complete` 与 `passed` 均为 true 后，删除该旧验收目录中 3,912 个逐 case
+`.bin` tensor；清单、指标、日志与原回执保持不变。旧原始 tensor 已无法本机
+重新哈希，重新验证需再运行原验收。
 默认 F32 权重图像的最低 mask IoU 为 1.0，混合权重默认计算为 0.999925；
 F32 权重快速图像为 0.999558。F32/hybrid 快速跟踪在新增 head-256 融合后，
 最低 mask IoU 均为 0.996000，最终输出及 ID／生命周期／状态检查通过。

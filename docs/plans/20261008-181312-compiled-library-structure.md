@@ -661,3 +661,8 @@ C 证据并记录来源（`build/structure-cuda-probes-c` probes-ON 构建、`bu
 **交付与交接**：D 为最终节点。交付提交、安装产物（`build/structure-d-install-*/prefix*`）、
 证据索引与性能记录见上；静态/动态源码与安装消费、父工程 GGML、移动前缀、SDK-only、
 tools 独立构建、CUDA probes OFF/ON 矩阵均有本次有效证据。本迁移不推送远端、不发布。
+
+后续工作区清理（2026-10-09）：A 基线及 A/B/D 结构验证目录中旧图像、视频
+逐 case `.bin` tensor 已删除。索引、对比结果、指标、日志与探针输入保留；
+已删除的原始 tensor 不能再按原索引在本机重新哈希。此清理未触及当前量化候选
+的构建、模型或验收归档。

@@ -1,6 +1,6 @@
 # GGML precision and window patches
 
-Both patches target official [GGML v0.26.0](https://github.com/ggml-org/ggml/commit/d7cb574130e6f01ad25b3289685489200febcd74)
+All three patches target official [GGML v0.26.0](https://github.com/ggml-org/ggml/commit/d7cb574130e6f01ad25b3289685489200febcd74)
 commit `d7cb574130e6f01ad25b3289685489200febcd74` (MIT; upstream license retained).
 SAM prepares and patches a separate build-local copy; the supplied source checkout stays read-only.
 
@@ -56,7 +56,21 @@ custom matrix kernels and prevents `GGML_CUDA_CUBLAS_COMPUTE_TYPE` from overridi
 the explicit precision request. An additional explicit F16 source-1 hint selects
 F16 dense operands with F32 accumulation and output. SAM exposes this as opt-in
 `CudaComputeMode::F16`; it does not follow the weight storage type automatically.
-Quantized operands retain the upstream packed-weight dispatch rules.
+The separately pinned short-dot patch dispatches explicit-F32, F32-by-F32,
+unbatched single-output dense dots with K=1..1024 to a one-block kernel with
+F64 products and reduction, then rounds once to F32. It addresses cancellation
+that can exceed the F32 relative gate even with cuBLAS pedantic. All other
+matrix shapes and types retain the previous dispatch; HIP/MUSA do not use this
+specialization. Its standalone numerical probe is not an end-to-end quality
+or performance qualification.
+Quantized operands retain the upstream packed-weight dispatch rules. CUDA
+Q8_0 MMQ staging uses round-to-nearest F32 division for its Q8_1 inverse
+scale: fast-math approximate division can return zero for finite F32
+activations near `1e38`, causing a nonfinite stored scale. The change is
+limited to that inverse-scale expression; the MMVQ expression is unchanged.
+HIP and MUSA build from some of the same CUDA source files and have not been
+compiled or hardware-validated with this revision. It needs a separately
+qualified model recipe because ordinary F32 scales may differ by a few ulps.
 
 Explicit F32 attention with F32 Q/K/V and equal head dimensions 32 or 64 uses
 pedantic F32 cuBLAS products and an F32 masked softmax. Up to eight heads share
@@ -112,12 +126,18 @@ Unmodified archives, verified Metal-only archives and verified combined archives
 are accepted; caller-owned GGML targets are used directly and must meet the same
 operator and precision contracts. Generated-source drift is repaired, and
 source/output overlap or output symlinks are rejected before replacement.
+The historical combined archive accepted before the Q8 scale and short-dot
+corrections is upgraded in the build-local copy; its supplied source stays
+unchanged and the result must match the current combined tree hash.
 
 - Metal patch SHA-256: `86e7140e59a8eaa8c8d83eabe3102f199a83527cbb7be9c81c8aba05001f4efb`.
-- CUDA patch SHA-256: `b1ce5629bba572c0cf5d488ca4b11362927e1be3ac6271a1ff573faf729f88ab`.
+- CUDA patch SHA-256: `fe72eb82724131a945eefca035e644dea76e9de25030baa61bd6bd9ca2221522`.
+- Short-dot CUDA patch SHA-256: `45401f8e17327557364a95d90d78fb0c2e103e4077c01e38e4ddc4fc17c80707`.
 - Original source-tree SHA-256: `43c54450bdc1ad5d3a5dd16d69507fa2b740d2f3283cb80f9034e9d669c79fa1`.
 - Metal-only source-tree SHA-256: `026988224220506e00cfab5477f1a11c5e926e4a090eb03575d4120d29e536f4`.
-- Combined source-tree SHA-256: `37f787b8a432f2399e9ee50270f8d025378c605ae23f5efaae6a6ae9148fd5cb`.
+- Historical Metal/CUDA source-tree SHA-256: `37f787b8a432f2399e9ee50270f8d025378c605ae23f5efaae6a6ae9148fd5cb`.
+- Prior Metal/CUDA source-tree SHA-256: `53160f73b48567c11dd42b66b89af7776cef6b7fb42374ec00e1cec6deadbca7`.
+- Combined source-tree SHA-256: `4394cdc89f35b65c1642f45be122d6301e397480ff0d1f9a519237703dfe1d1f`.
 
 The touched-file SHA-256 values below are generated from the pinned original
 and patched trees. A dash denotes a file added by the patch.
@@ -137,9 +157,10 @@ and patched trees. A dash denotes a file added by the patch.
 | `src/ggml-cuda/concat.cu` | `3cba4d2a26e6a70970ae9b77017f449e41d48e9b1297ba64966e18c6146e53db` | `9eca3e1c5f5ae55c01f6b718e81d002e6432064c8668fc1e82c4b1403bc45b7e` |
 | `src/ggml-cuda/cpy.cu` | `d0bee0ec1fb79f6fdbe1d39719c2a595e0bd6f51bbaea6536284848f80637341` | `306911de61305c4dd27d4a9f998bb480ff7d4d15acdded807b8abec5f33f166a` |
 | `src/ggml-cuda/fattn.cu` | `8cd53030107e6956288c2cc1f3e2dc245ef2332b0c39bc23cacadbda3a997aa9` | `e3bc0ddbfb6c56e806be478ce869df42e32386aca043f3bc20141473b4e8da24` |
-| `src/ggml-cuda/ggml-cuda.cu` | `1315f06baff63da74e085b7ec01974474dac1f8ec1074af13eb70faba4751961` | `8a2911a6650fc9d039404ac6fd3aa5a0da9caf1ebefb7191e72975de75709193` |
-| `src/ggml-cuda/sam-precise.cu` | — | `a602054915b0b9cc648de9aacafe1e8be220690e231e03d7f9c7488c778210c5` |
-| `src/ggml-cuda/sam-precise.cuh` | — | `e35a1fc7e554e072cb9dc761d1ecdf6d0c878c97da3e1a8dfe67edb717d83080` |
+| `src/ggml-cuda/ggml-cuda.cu` | `1315f06baff63da74e085b7ec01974474dac1f8ec1074af13eb70faba4751961` | `d590be61f3089c03571d61f0d297989329324284a6fc7d023800b1800c686bd0` |
+| `src/ggml-cuda/quantize.cu` | `71cd7baab62ee1f457d23ae648c381d18b9b1327ec34832f31463b14b81895b3` | `cbec7e20acde0ce44684a25a2c1fbcd038dc737186bc18497edd611371b105b9` |
+| `src/ggml-cuda/sam-precise.cu` | — | `e392279533a88500ed0aaca87f3377986deaa5f785c3c9cb23cb134bf6cc6837` |
+| `src/ggml-cuda/sam-precise.cuh` | — | `22bec48bf03f9edc53f43f65ecd6189d9f0f18e4f3e7f0aa11161b83620756e4` |
 
 ## Validation status
 

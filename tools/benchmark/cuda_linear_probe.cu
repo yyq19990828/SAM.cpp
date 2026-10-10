@@ -150,6 +150,8 @@ struct Gemm {
     cublasLtMatmulAlgo_t algorithm{};
     bool fp8 = false;
     int algorithm_id = -1;
+    int algorithm_index = -1;
+    int heuristic_count = 0;
     uint64_t numerical_flags = 0;
     std::size_t required_workspace = 0;
 
@@ -171,7 +173,8 @@ struct Gemm {
             output, c, output, c, selected ? selected : &algorithm, workspace.data, workspace.bytes, stream);
     }
     void prepare(const sam_probe::Input& input, bool use_fp8, bool half, const Buffer& scales,
-                 const Buffer& weights, const Buffer& values, void* output, Buffer& workspace, Stream& stream) {
+                 const Buffer& weights, const Buffer& values, void* output, Buffer& workspace, Stream& stream,
+                 int requested_algorithm_index = -1) {
         fp8 = use_fp8;
         blas_check(cublasLtMatmulDescCreate(&operation, fp8 ? CUBLAS_COMPUTE_32F : CUBLAS_COMPUTE_32I,
                                           fp8 ? CUDA_R_32F : CUDA_R_32I));
@@ -201,11 +204,14 @@ struct Gemm {
         cublasLtMatmulHeuristicResult_t choices[8]{};
         int count = 0;
         blas_check(cublasLtMatmulAlgoGetHeuristic(handle, operation, a, b, c, c, preference, 8, choices, &count));
+        heuristic_count = count;
         if (!count) throw std::runtime_error("no cuBLASLt algorithm supports this data/layout/shape combination");
+        if (requested_algorithm_index >= count) throw std::invalid_argument("FP8 heuristic index is unavailable");
         workspace.reset(limit);
         Event start, end;
         double best = std::numeric_limits<double>::infinity();
         for (int i = 0; i < count; ++i) {
+            if (requested_algorithm_index >= 0 && i != requested_algorithm_index) continue;
             if (choices[i].state != CUBLAS_STATUS_SUCCESS) continue;
             uint64_t flags = 0;
             std::size_t flag_bytes = 0;
@@ -222,11 +228,12 @@ struct Gemm {
             if (elapsed < best) {
                 best = elapsed;
                 algorithm = choices[i].algo;
+                algorithm_index = i;
                 required_workspace = choices[i].workspaceSize;
                 numerical_flags = flags;
             }
         }
-        if (!std::isfinite(best)) throw std::runtime_error("all cuBLASLt algorithms rejected execution");
+        if (!std::isfinite(best)) throw std::runtime_error("selected cuBLASLt algorithm rejected execution");
         workspace.reset(required_workspace);
         std::size_t written = 0;
         blas_check(cublasLtMatmulAlgoConfigGetAttribute(&algorithm, CUBLASLT_ALGO_CONFIG_ID, &algorithm_id, sizeof(algorithm_id), &written));
@@ -245,11 +252,17 @@ float host_finish(float value, float bias, bool gelu, bool half) {
     return half ? __half2float(__float2half_rn(value)) : value;
 }
 
+void write_payload(const std::filesystem::path& path, const void* data, std::size_t bytes) {
+    std::ofstream stream(path, std::ios::binary);
+    stream.write(static_cast<const char*>(data), static_cast<std::streamsize>(bytes));
+    if (!stream) throw std::runtime_error("failed writing raw INT8 probe payload");
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     try {
-        if (argc < 4 || argc > 6) throw std::invalid_argument("usage: sam_cuda_linear_probe INPUT int8-token-f32|int8-token-f16|int8-static-f32|int8-static-f16|fp8-f32|fp8-f16 NEW_DIR [ITERATIONS] [--summary-only]");
+        if (argc < 4 || argc > 9) throw std::invalid_argument("usage: sam_cuda_linear_probe INPUT int8-token-f32|int8-token-f16|int8-static-f32|int8-static-f16|fp8-f32|fp8-f16 NEW_DIR [ITERATIONS] [--summary-only] [--dump-int32] [--dump-fp8] [--fp8-algo-index=0..7]");
         const auto input = sam_probe::read_input(argv[1]);
         const std::string mode = argv[2];
         const bool fp8 = mode == "fp8-f32" || mode == "fp8-f16";
@@ -257,9 +270,28 @@ int main(int argc, char** argv) {
         const bool fixed = mode == "int8-static-f32" || mode == "int8-static-f16";
         const bool half = mode.size() >= 3 && mode.substr(mode.size() - 3) == "f16";
         if (!fp8 && !dynamic && !fixed) throw std::invalid_argument("unsupported CUDA probe mode");
-        const int iterations = argc >= 5 ? sam_probe::iterations(argv[4]) : 50;
-        const bool summary_only = argc == 6;
-        if (summary_only && std::string(argv[5]) != "--summary-only") throw std::invalid_argument("unsupported probe argument");
+        int iterations = 50;
+        bool have_iterations = false, summary_only = false, dump_int32 = false, dump_fp8 = false;
+        int fp8_algorithm_index = -1;
+        for (int argument = 4; argument < argc; ++argument) {
+            const std::string option = argv[argument];
+            if (option == "--summary-only" && !summary_only) summary_only = true;
+            else if (option == "--dump-int32" && !dump_int32) dump_int32 = true;
+            else if (option == "--dump-fp8" && !dump_fp8) dump_fp8 = true;
+            else if (option.rfind("--fp8-algo-index=", 0) == 0 && fp8_algorithm_index < 0) {
+                const std::string value = option.substr(std::strlen("--fp8-algo-index="));
+                if (value.size() != 1 || value[0] < '0' || value[0] > '7')
+                    throw std::invalid_argument("FP8 heuristic index must be in [0,7]");
+                fp8_algorithm_index = value[0] - '0';
+            }
+            else if (!have_iterations && option.rfind("--", 0) != 0) {
+                iterations = sam_probe::iterations(argv[argument]);
+                have_iterations = true;
+            } else throw std::invalid_argument("unsupported or duplicate probe argument");
+        }
+        if (dump_int32 && fp8) throw std::invalid_argument("raw INT32 dump requires an INT8 mode");
+        if (!fp8 && (dump_fp8 || fp8_algorithm_index >= 0))
+            throw std::invalid_argument("FP8 diagnostics require an FP8 mode");
         const std::filesystem::path output_directory = argv[3];
         if (!std::filesystem::create_directory(output_directory)) throw std::runtime_error("probe output must be new");
         cuda_check(cudaSetDevice(0));
@@ -314,7 +346,7 @@ int main(int argc, char** argv) {
         quantize();
         stream.synchronize();
         Gemm gemm;
-        gemm.prepare(input, fp8, half, scalar_scales, weights, packed, raw, workspace, stream);
+        gemm.prepare(input, fp8, half, scalar_scales, weights, packed, raw, workspace, stream, fp8_algorithm_index);
         auto run = [&] {
             quantize();
             blas_check(gemm.run(weights.data, packed.data, raw, workspace, stream.handle));
@@ -367,6 +399,13 @@ int main(int argc, char** argv) {
         const auto input_scales = fp8 ? std::vector<float>() : sx.download<float>();
         std::vector<unsigned char> raw_bytes(y_count * (fp8 && half ? 2 : 4));
         cuda_check(cudaMemcpy(raw_bytes.data(), raw, raw_bytes.size(), cudaMemcpyDeviceToHost));
+        if (dump_fp8) {
+            write_payload(output_directory / "weight.e4m3", qw.data(), qw.size());
+            write_payload(output_directory / "activation.e4m3", qa.data(), qa.size());
+            write_payload(output_directory / (half ? "raw-f16.bin" : "raw-f32.bin"), raw_bytes.data(), raw_bytes.size());
+            write_payload(output_directory / "weight-scale.f32", &weight_step, sizeof(weight_step));
+            write_payload(output_directory / "activation-scale.f32", &input_step, sizeof(input_step));
+        }
         const auto checks = std::min<std::size_t>(y_count, 512);
         for (std::size_t check = 0; check < checks; ++check) {
             const std::size_t index = check == 1 ? y_count - 1 : (check * 104729) % y_count;
@@ -409,7 +448,9 @@ int main(int argc, char** argv) {
                         << ",\"decoded_dot\":" << sum << ",\"sum_abs_products\":" << absolute
                         << ",\"weight_scale\":" << weight_step << ",\"input_scale\":" << input_step
                         << ",\"unscaled_fp32_actual\":" << unscaled
-                        << ",\"algorithm_id\":" << gemm.algorithm_id << ",\"numerical_flags\":" << gemm.numerical_flags << "}\n";
+                        << ",\"algorithm_id\":" << gemm.algorithm_id << ",\"algorithm_index\":" << gemm.algorithm_index
+                        << ",\"heuristic_count\":" << gemm.heuristic_count
+                        << ",\"numerical_flags\":" << gemm.numerical_flags << "}\n";
                     throw std::runtime_error("FP8 raw product differs from decoded scalar reference; see kernel-check-failure.json");
                 }
             }
@@ -417,12 +458,23 @@ int main(int argc, char** argv) {
             if (std::abs(values[index] - finished) > (half ? 0.0015 : 2e-5) * (1 + std::abs(finished)))
                 throw std::runtime_error("epilogue differs from independent bias/erf reference");
         }
+        if (dump_int32) {
+            write_payload(output_directory / "weight.i8", qw.data(), qw.size());
+            write_payload(output_directory / "activation.i8", qa.data(), qa.size());
+            write_payload(output_directory / "raw-int32.bin", raw_bytes.data(), raw_bytes.size());
+            write_payload(output_directory / "weight-scale.f32", weight_scales.data(), weight_scales.size() * sizeof(float));
+            write_payload(output_directory / "activation-scale.f32", input_scales.data(), input_scales.size() * sizeof(float));
+        }
         if (!summary_only) sam_probe::write_output(output_directory, values);
         std::ofstream report(output_directory / "probe.json");
         sam_probe::write_common(report, input, mode, timing, numerical);
         report << ",\"complete\":true,\"output_saved\":" << (summary_only ? "false" : "true")
+            << ",\"raw_int32_saved\":" << (dump_int32 ? "true" : "false")
+            << ",\"raw_int32_layout\":\"weight[M,K], activation[N,K], dot[N,M], row-major\""
             << ",\"warmup_calls\":" << warmup_calls << ",\"scalar_checks\":" << checks << ",\"int32_dots_exact\":" << (fp8 ? "null" : "true")
             << ",\"output_type\":\"" << (half ? "f16" : "f32") << "\",\"fp8_fast_accum\":false,\"algorithm_id\":" << gemm.algorithm_id
+            << ",\"algorithm_index\":" << gemm.algorithm_index << ",\"heuristic_count\":" << gemm.heuristic_count
+            << ",\"raw_fp8_saved\":" << (dump_fp8 ? "true" : "false")
             << ",\"numerical_flags\":" << gemm.numerical_flags
             << ",\"workspace_bytes\":" << workspace.bytes << ",\"explicit_inference_buffer_bytes\":"
             << x.bytes + weights.bytes + packed.bytes + scale.bytes + bias.bytes + sw.bytes + sx.bytes + scalar_scales.bytes + result.bytes + sums.bytes + workspace.bytes

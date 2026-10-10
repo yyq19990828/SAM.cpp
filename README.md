@@ -35,6 +35,12 @@ repository numerical acceptance covers the fixed vision and full presets.
 Custom combinations, F16 video and legacy `image-linear-*` profiles remain
 diagnostic configurations. See the model catalog for the current status of
 other SAM variants and composed pipelines.
+One exact custom text/fusion/decoder Q8_0 image recipe has a
+[scoped CUDA GPU-memory acceptance](docs/quantization.md); this does not
+qualify other custom combinations or backends.
+Experimental mixed-Q8_0 cache-tool recipes for F32 and those custom Q8_0
+weights also have scoped full-image/changed-prompt latency acceptance on
+RTX 4090. Public model loading retains its existing cache precision.
 
 ## Build
 

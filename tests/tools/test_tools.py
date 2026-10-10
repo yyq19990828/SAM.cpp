@@ -32,6 +32,14 @@ from tests.tools.test_precision_dataset import PrecisionDatasetChecks
 from tests.tools.test_precision_artifacts import PrecisionArtifactChecks
 from tests.tools.test_precision_performance import PrecisionPerformanceChecks
 from tests.tools.test_precision_regression import PrecisionRegressionChecks
+from tests.tools.test_verify_precision_q8_cache import Q8CacheArithmeticChecks
+from tests.tools.test_verify_int8_dots import ExactInt8DotChecks
+from tests.tools.test_verify_fp8_dots import FP8DotChecks
+from tests.tools.test_verify_q8_rhs_staging import Q8RhsStagingChecks
+from tests.tools.test_verify_q8_mmvq_dots import Q8MmvqDotChecks
+from tests.tools.test_verify_q8_mmq_rhs_staging import Q8MmqRhsStagingChecks
+from tests.tools.test_verify_q8_mmq_dots import Q8MmqDotChecks
+from tests.tools.test_reconcile_precision_cache_arithmetic import FrozenCacheAlignmentChecks
 from tests.tools.test_tool_entrypoints import ToolEntrypointChecks
 from tests.tools.test_video_benchmark import VideoBenchmarkChecks
 from tests.tools.test_documentation import DocumentationChecks

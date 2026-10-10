@@ -26,8 +26,10 @@ COMMANDS = {
         "export_precision_outputs", "export_quantized_reference", "export_reference",
         "export_video_reference", "prepare_coco_acceptance", "prepare_precision_inputs",
         "prepare_reference_source", "validate_image", "validate_linear_probes",
-        "validate_precision_regression", "validate_video", "verify_linear_probe",
-        "verify_precision_f16",
+        "validate_precision_regression", "validate_video", "verify_fp8_dots", "verify_int8_dots",
+        "verify_linear_probe", "verify_precision_f16", "verify_precision_q8_cache",
+        "verify_q8_mmvq_dots", "verify_q8_rhs_staging", "verify_q8_mmq_rhs_staging",
+        "verify_q8_mmq_dots", "reconcile_precision_cache_arithmetic",
     ),
     "visualization": ("render_image_comparison",),
 }

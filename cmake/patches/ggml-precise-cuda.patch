@@ -619,3 +619,15 @@
 +void ggml_cuda_sam_f32_attention(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 +
 +#endif // GGML_CUDA_SAM_PRECISE_CUH
+--- a/src/ggml-cuda/quantize.cu
++++ b/src/ggml-cuda/quantize.cu
+@@ -513,7 +513,8 @@
+     }
+ 
+-    const float d_inv = 127.0f / amax;
++    // Fast division can flush the inverse of a large finite value to zero.
++    const float d_inv = __fdiv_rn(127.0f, amax);
+     char4 q;
+     q.x = roundf(xi.x*d_inv);
+     q.y = roundf(xi.y*d_inv);
+     q.z = roundf(xi.z*d_inv);

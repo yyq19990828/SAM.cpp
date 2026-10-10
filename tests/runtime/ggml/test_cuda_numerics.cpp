@@ -4,11 +4,81 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <vector>
 
 namespace {
+
+void check_short_f32_dot(ggml_backend_t backend, int inner, bool zero = false, bool view = false) {
+    auto context = sam::internal::make_context(8, 16);
+    auto* a_storage = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, inner + (view ? 8 : 0), 1);
+    auto* b_storage = ggml_new_tensor_2d(context.get(), GGML_TYPE_F32, inner + (view ? 8 : 0), 1);
+    auto* a = view ? ggml_view_2d(context.get(), a_storage, inner, 1, a_storage->nb[1], 4 * sizeof(float)) : a_storage;
+    auto* b = view ? ggml_view_2d(context.get(), b_storage, inner, 1, b_storage->nb[1], 4 * sizeof(float)) : b_storage;
+    auto* output = ggml_mul_mat(context.get(), a, b);
+    ggml_prec_set_acc(output, GGML_PREC_F32);
+    if (!ggml_backend_supports_op(backend, output)) throw std::runtime_error("CUDA rejected short F32 dot");
+    auto* graph = ggml_new_graph_custom(context.get(), 16, false);
+    ggml_build_forward_expand(graph, output);
+    sam::internal::BufferPtr buffer(ggml_backend_alloc_ctx_tensors(context.get(), backend));
+    if (!buffer) throw std::runtime_error("short F32 dot allocation failed");
+
+    std::vector<float> left(inner), right(inner);
+    std::uint32_t state = 20261009u;
+    const auto next_value = [&state] {
+        state = state * 1664525u + 1013904223u;
+        return float(int(state >> 8) - 0x800000) / 4194304.0f;
+    };
+    for (auto& value : left) value = next_value();
+    for (auto& value : right) value = next_value();
+    if (inner == 1) {
+        left[0] = -2.25f;
+        right[0] = 0.125f;
+    } else if (zero) {
+        std::fill(right.begin(), right.end(), 0.0f);
+    } else {
+        left.back() = 1.0f;
+        long double prefix = 0.0L, magnitude = 0.0L;
+        for (int i = 0; i < inner - 1; ++i) {
+            const long double product = (long double) left[i] * (long double) right[i];
+            prefix += product;
+            magnitude += std::abs(product);
+        }
+        right.back() = float(-prefix + 0.001L * magnitude);
+    }
+    if (view) {
+        std::vector<float> left_storage(inner + 8, -99.0f), right_storage(inner + 8, -99.0f);
+        std::copy(left.begin(), left.end(), left_storage.begin() + 4);
+        std::copy(right.begin(), right.end(), right_storage.begin() + 4);
+        ggml_backend_tensor_set(a_storage, left_storage.data(), 0, ggml_nbytes(a_storage));
+        ggml_backend_tensor_set(b_storage, right_storage.data(), 0, ggml_nbytes(b_storage));
+    } else {
+        ggml_backend_tensor_set(a, left.data(), 0, ggml_nbytes(a));
+        ggml_backend_tensor_set(b, right.data(), 0, ggml_nbytes(b));
+    }
+    if (ggml_backend_graph_compute(backend, graph) != GGML_STATUS_SUCCESS)
+        throw std::runtime_error("short F32 dot execution failed");
+    float actual = 0.0f;
+    ggml_backend_tensor_get(output, &actual, 0, sizeof(actual));
+    long double reference = 0.0L;
+    for (int i = 0; i < inner; ++i)
+        reference += (long double) left[i] * (long double) right[i];
+    const double error = std::abs(double(actual) - double(reference));
+    const bool gate_pass = reference * reference <= 1.0e-30L
+        ? error <= 1.0e-6 : error / std::abs(double(reference)) <= 2.0e-5;
+    if (!std::isfinite(actual) || !gate_pass)
+        throw std::runtime_error("short F32 dot failed frozen arithmetic gate");
+    if (inner <= 1024) {
+        const float rounded = float(reference);
+        const double ulp = std::abs(double(std::nextafter(rounded, std::numeric_limits<float>::infinity())) - rounded);
+        if (std::abs(double(actual) - rounded) > ulp)
+            throw std::runtime_error("short F32 dot lost more than one ulp against extended-precision reference");
+    }
+    std::cout << "CUDA short F32 dot K=" << inner << " zero=" << zero << " view=" << view
+              << " actual=" << actual << " error=" << error << '\n';
+}
 
 void check_compact_convolution(sam::internal::GgmlRuntime& runtime, int kernel_size, int stride, int padding,
                                ggml_type weight_type) {
@@ -242,6 +312,9 @@ int main() {
         if (!sam::test::cuda_available()) return 77;
         sam::internal::GgmlRuntime runtime({sam::Backend::Cuda, 1}, false);
         auto* backend = runtime.weights_backend();
+        for (const int inner : {1, 32, 256, 257, 1024, 1025}) check_short_f32_dot(backend, inner);
+        check_short_f32_dot(backend, 256, true);
+        check_short_f32_dot(backend, 256, false, true);
         for (const auto type : {GGML_TYPE_F32, GGML_TYPE_F16})
             for (const bool broadcast : {false, true}) check_matrix(backend, type, 3, broadcast);
         check_attention(backend, 32, 3, 1, 2, 1, 2, true, 0, 0);

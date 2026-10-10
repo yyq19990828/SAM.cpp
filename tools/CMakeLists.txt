@@ -47,6 +47,22 @@ if(SAM_BUILD_CUDA_PROBES)
         target_link_libraries(sam_cuda_cache_bridge PRIVATE CUDA::cudart)
         target_compile_options(sam_cuda_cache_bridge PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-use_fast_math>)
         set_target_properties(sam_cuda_cache_bridge PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+
+        add_executable(sam_cuda_q8_rhs_probe quantize/cuda_q8_rhs_probe.cu)
+        target_include_directories(sam_cuda_q8_rhs_probe PRIVATE
+            ${patched_ggml_source}/include ${patched_ggml_source}/src)
+        target_link_libraries(sam_cuda_q8_rhs_probe PRIVATE ${SAM_GGML_CUDA_TARGET} CUDA::cudart)
+        set_target_properties(sam_cuda_q8_rhs_probe PROPERTIES
+            CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/examples)
+
+        add_executable(sam_cuda_q8_mmq_rhs_probe quantize/cuda_q8_mmq_rhs_probe.cu)
+        target_include_directories(sam_cuda_q8_mmq_rhs_probe PRIVATE
+            ${patched_ggml_source}/include)
+        target_link_libraries(sam_cuda_q8_mmq_rhs_probe PRIVATE ${SAM_GGML_CUDA_TARGET} CUDA::cudart)
+        set_target_properties(sam_cuda_q8_mmq_rhs_probe PROPERTIES
+            CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON
+            RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/examples)
     endif()
     add_executable(sam_cuda_linear_probe benchmark/cuda_linear_probe.cu)
     target_link_libraries(sam_cuda_linear_probe PRIVATE CUDA::cublasLt CUDA::cublas CUDA::cudart)
