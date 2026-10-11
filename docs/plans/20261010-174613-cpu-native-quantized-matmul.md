@@ -121,3 +121,19 @@ GGML_CPU_TILED_MM=0 build/cpu-precision-tools/tests/test_cpu_quantized_matmul
 1. 优先在这些小型形状上比较 tiled/dot、线程数量及真实 SAM 形状清单，再考虑可审查的按形状策略；不引入未经验证的全局环境开关或自动精度降级。
 2. 运行量化器之外的 CPU／BLAS 组合和其他 ISA 验证时单独记录编译与分派身份。内核 scratch 抓取、内部阶段计时尚未接入；当前单独 pack 试验不能补足这项证据。
 3. 完整模型的应用图像软质量对照和端到端性能仍是后续独立测量，应单独限定输入与资源范围；本轮不扩展 GPU 验收。
+
+### 后续完整模型验收
+
+上述小矩阵结果与本轮原始证据不变。后续已在 i7-12700KF 上完成一个 schema-6 混合
+分配的两图片／六提示参考对照、完整图 packed placement 诊断和单案例独立 CPU
+性能；相同分配还完成 RTX 4090 的有界执行与性能测量。范围、差异、内存未显著下降
+及其他未验项目见[剩余验收结果](20261010-193958-quantization-remaining-acceptance.md)。
+
+### 后续实际 BLAS 共存验收
+
+CPU/BLAS 组合已在[逐项实现计划](20261010-212901-quantization-followups-implementation.md)完成：
+实际 OpenBLAS 正控制、34 组数值／放置／图复用回归、完整两图六提示及独立性能。
+发现并修复 GGML 同 host buffer 优先级提升覆盖显式 CPU 指派的问题，保留严格 placement 检查。
+共享补丁也通过后续 CUDA required-device CTest 35/35。OpenBLAS 组合的一例完整图 p50
+为默认解码 17.12 s、native 19.32 s（慢 12.84%），与此前 BLAS 关闭结果分开解释。
+其他 ISA、kernel scratch 和内部阶段计时仍是后续范围；旧 JSON／receipt 不改写。

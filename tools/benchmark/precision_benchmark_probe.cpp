@@ -35,7 +35,7 @@ int parse_count(const char* argument) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 10 && argc != 12)
+        if (argc != 10 && argc != 12 && argc != 13)
             throw std::invalid_argument("usage: sam_precision_benchmark_probe MODEL IMAGE PROMPT ALTERNATE cpu|cuda CACHE COMPUTE latency|memory NEW_DIR [WARMUPS ITERATIONS]");
         const std::string prompt = argv[3], alternate = argv[4], backend = argv[5], cache = argv[6], compute = argv[7], kind = argv[8];
         if (prompt.empty() || alternate.empty() || prompt == alternate || (backend != "cpu" && backend != "cuda") ||
@@ -45,8 +45,8 @@ int main(int argc, char** argv) {
             (backend == "cpu" && (cache != "f32" || compute == "f16")) ||
             (backend != "cpu" && compute == "native-quantized"))
             throw std::invalid_argument("invalid precision benchmark recipe/workload");
-        const int warmups = argc == 12 ? parse_count(argv[10]) : 5;
-        const int iterations = argc == 12 ? parse_count(argv[11]) : 20;
+        const int warmups = argc >= 12 ? parse_count(argv[10]) : 5;
+        const int iterations = argc >= 12 ? parse_count(argv[11]) : 20;
         if (warmups < 0 || warmups > 10000 || iterations < 1 || iterations > 10000)
             throw std::invalid_argument("benchmark requires warmups in [0,10000] and iterations in [1,10000]");
         sam_example::OutputDirectory destination(argv[9], true);
@@ -56,6 +56,11 @@ int main(int argc, char** argv) {
         sam::BackendOptions options{backend == "cuda" ? sam::Backend::Cuda : sam::Backend::Cpu, 4};
         options.cuda_compute = compute == "f16" ? sam::CudaComputeMode::F16 : sam::CudaComputeMode::F32;
         options.cpu_compute = compute == "native-quantized" ? sam::CpuComputeMode::NativeQuantized : sam::CpuComputeMode::F32;
+        if (argc == 13) {
+            const std::string activation = argv[12];
+            if (activation != "backend-selected" && activation != "ggml-q8-rhs") throw std::invalid_argument("unknown activation mode");
+            options.activation = activation == "ggml-q8-rhs" ? sam::ActivationMode::CudaVisionQ8Rhs : sam::ActivationMode::BackendSelected;
+        }
         using sam::internal::FeatureCacheMode;
         const auto mode = cache == "f32" ? FeatureCacheMode::F32 : cache == "f16" ? FeatureCacheMode::F16 : FeatureCacheMode::Q8_0;
         const auto load_start = sam_example::Clock::now();
@@ -81,12 +86,17 @@ int main(int argc, char** argv) {
             session.set_image(sam_example::image_view(image));
             result = session.segment_text(prompt, .5f);
         });
+        const auto full_stats = session.stats();
         measure("changed_prompt", changed, [&](int i) {
             result = session.segment_text(i % 2 == 0 ? alternate : prompt, .5f);
         });
         result = session.segment_text(prompt, .5f);
         measure("repeated_result", repeated, [&](int) { result = session.segment_text(prompt, .5f); });
         const auto& stats = session.stats();
+        const auto expected_launches = options.activation == sam::ActivationMode::CudaVisionQ8Rhs ? stats.vision_encodes * 128 : 0;
+        if (stats.activation_requests != expected_launches || stats.activation_mmq_launches != expected_launches ||
+            full_stats.activation_mmq_launches != stats.activation_mmq_launches)
+            throw std::runtime_error("activation execution or prompt/result cache reuse differs from the requested policy");
         if (backend == "cuda" && (!stats.cuda_nodes || stats.cpu_nodes || stats.metal_nodes || stats.blas_nodes))
             throw std::runtime_error("benchmark escaped strict CUDA placement");
         auto output = sam_example::output_file(directory / "result.json");

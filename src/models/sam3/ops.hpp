@@ -28,6 +28,7 @@ SOFTWARE.
 */
 
 #include "ggml.h"
+#include "runtime/ggml/linear_role.hpp"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -39,6 +40,7 @@ namespace sam::internal::sam3 {
 inline ggml_tensor* sam3_channel_projection(ggml_context* ctx, ggml_tensor* weights, ggml_tensor* values) {
     auto* columns = ggml_reshape_2d(ctx, values, values->ne[0], values->ne[1] * values->ne[2] * values->ne[3]);
     auto* result = ggml_mul_mat(ctx, weights, columns);
+    mark_vision_linear(result);
     return ggml_reshape_4d(ctx, result, weights->ne[1], values->ne[1], values->ne[2], values->ne[3]);
 }
 

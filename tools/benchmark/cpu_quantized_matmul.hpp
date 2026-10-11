@@ -13,6 +13,36 @@
 
 namespace sam_cpu_probe {
 
+inline void decode_cpu_rhs(ggml_type rhs_type, const std::vector<char>& packed_rhs, std::vector<float>& decoded_rhs) {
+    if (decoded_rhs.empty() || decoded_rhs.size() % ggml_blck_size(rhs_type) ||
+            packed_rhs.size() != decoded_rhs.size() / ggml_blck_size(rhs_type) * ggml_type_size(rhs_type))
+        throw std::runtime_error("CPU RHS reference payload size differs");
+    if (rhs_type == GGML_TYPE_Q8_0) {
+        const auto decode = ggml_get_type_traits(rhs_type)->to_float;
+        if (!decode) throw std::runtime_error("CPU Q8_0 RHS decoder unavailable");
+        decode(packed_rhs.data(), decoded_rhs.data(), static_cast<std::int64_t>(decoded_rhs.size()));
+        return;
+    }
+    // Q8_K is kernel scratch only: GGML's public type traits deliberately
+    // have no to_float callback. Decode its pinned wire layout independently:
+    // F32 d, 256 signed codes, 16 int16 block sums (not needed for values).
+    constexpr std::size_t block_elements = 256;
+    constexpr std::size_t block_bytes = sizeof(float) + block_elements + 16 * sizeof(std::int16_t);
+    if (ggml_blck_size(rhs_type) != block_elements || ggml_type_size(rhs_type) != block_bytes)
+        throw std::runtime_error("CPU Q8_K scratch layout differs from the pinned reference contract");
+    for (std::size_t block = 0; block < decoded_rhs.size() / block_elements; ++block) {
+        const auto* bytes = packed_rhs.data() + block * block_bytes;
+        float scale;
+        std::memcpy(&scale, bytes, sizeof(scale));
+        for (std::size_t i = 0; i < block_elements; ++i) {
+            std::int8_t code;
+            std::memcpy(&code, bytes + sizeof(scale) + i, sizeof(code));
+            decoded_rhs[block * block_elements + i] = scale * code;
+        }
+    }
+}
+
+
 struct Fixture {
     ggml_type type;
     std::int64_t width, rows, columns;
@@ -56,30 +86,7 @@ struct Fixture {
     }
 
     void decode_rhs() {
-        const auto rhs_type = sam::internal::cpu_quantized_rhs_type(type);
-        if (rhs_type == GGML_TYPE_Q8_0) {
-            const auto decode = ggml_get_type_traits(rhs_type)->to_float;
-            if (!decode) throw std::runtime_error("CPU Q8_0 RHS decoder unavailable");
-            decode(packed_rhs.data(), decoded_rhs.data(), width * columns);
-            return;
-        }
-        // Q8_K is kernel scratch only: GGML's public type traits deliberately
-        // have no to_float callback. Decode its pinned wire layout independently:
-        // F32 d, 256 signed codes, 16 int16 block sums (not needed for values).
-        constexpr std::size_t block_elements = 256;
-        constexpr std::size_t block_bytes = sizeof(float) + block_elements + 16 * sizeof(std::int16_t);
-        if (ggml_blck_size(rhs_type) != block_elements || ggml_type_size(rhs_type) != block_bytes)
-            throw std::runtime_error("CPU Q8_K scratch layout differs from the pinned reference contract");
-        for (std::size_t block = 0; block < decoded_rhs.size() / block_elements; ++block) {
-            const auto* bytes = packed_rhs.data() + block * block_bytes;
-            float scale;
-            std::memcpy(&scale, bytes, sizeof(scale));
-            for (std::size_t i = 0; i < block_elements; ++i) {
-                std::int8_t code;
-                std::memcpy(&code, bytes + sizeof(scale) + i, sizeof(code));
-                decoded_rhs[block * block_elements + i] = scale * code;
-            }
-        }
+        decode_cpu_rhs(sam::internal::cpu_quantized_rhs_type(type), packed_rhs, decoded_rhs);
     }
 
     void pack_rhs(std::vector<char>& destination) const {

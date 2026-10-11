@@ -80,7 +80,15 @@ private:
     }
 public:
     void compute() {
+        std::vector<std::pair<ggml_tensor*, std::uint64_t>> activation_launches;
+        for (int i = 0; i < ggml_graph_n_nodes(graph_); ++i) {
+            auto* node = ggml_graph_node(graph_, i);
+            if (runtime_.activation_policy().selected(node))
+                activation_launches.emplace_back(node, runtime_.activation_policy().launches(node));
+        }
         workspace_->compute(context_.get(), graph_);
+        for (const auto& item : activation_launches)
+            runtime_.activation_policy().record(item.first, item.second, stats_);
         for (int i = 0; i < ggml_graph_n_nodes(graph_); ++i) {
             auto* tensor = ggml_graph_node(graph_, i);
             if (!is_compute_node(tensor)) continue;

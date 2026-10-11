@@ -8,6 +8,7 @@ FULL_MODULE_PROFILE_PREFIX = "image-full-linear-"
 CUSTOM_MODULE_PROFILE_PREFIX = "image-modules-linear-"
 MIXED_STORAGE_PROFILE = "image-mixed-linear-v1"
 TENSOR_MIXED_STORAGE_PROFILE = "image-tensor-mixed-linear-v1"
+F16_MIXED_STORAGE_PROFILE = "image-mixed-f16-linear-v1"
 MODULE_TENSOR_PREFIXES = {
     "vision": ("vit.", "neck."),
     "text": ("text.",),
@@ -93,13 +94,13 @@ def _schema4_quantization_profile(precision, modules, full=False):
     return profile
 
 
-def mixed_quantization_policy(base_precision, module_precisions):
+def mixed_quantization_policy(base_precision, module_precisions, *, allow_f16=False):
     """Resolve bounded module overrides; hash a versioned, language-neutral encoding."""
     if not isinstance(base_precision, str) or base_precision not in QUANTIZATION_PROFILES:
         raise ValueError("mixed base_precision must be q8_0/q6_k/q5_k/q4_k")
     if not isinstance(module_precisions, dict) or set(module_precisions) - set(QUANTIZATION_MODULES):
         raise ValueError("module_precisions must map only vision/text/fusion/decoder")
-    allowed = ("f32", *QUANTIZATION_PROFILES)
+    allowed = ("f32", "f16", *QUANTIZATION_PROFILES) if allow_f16 else ("f32", *QUANTIZATION_PROFILES)
     if any(not isinstance(value, str) or value not in allowed for value in module_precisions.values()):
         raise ValueError("mixed module formats support f32/q8_0/q6_k/q5_k/q4_k; module F16 is not implemented")
     modules = {module: module_precisions.get(module, base_precision) for module in QUANTIZATION_MODULES}
@@ -110,6 +111,10 @@ def mixed_quantization_policy(base_precision, module_precisions):
 
 
 def mixed_quantization_profile(policy, storage_profile=None):
+    if isinstance(policy, dict) and (storage_profile == F16_MIXED_STORAGE_PROFILE
+            or any(isinstance(policy.get(key), dict) and "f16" in policy[key].values()
+                   for key in ("module_precisions", "tensor_precisions"))):
+        return f16_mixed_quantization_profile(policy, storage_profile)
     if isinstance(policy, dict) and "tensor_precisions" in policy:
         return tensor_mixed_quantization_profile(policy, storage_profile)
     if not isinstance(policy, dict) or set(policy) - {"base_precision", "module_precisions", "policy_sha256"}:
@@ -123,6 +128,35 @@ def mixed_quantization_profile(policy, storage_profile=None):
     return {**{key: value for key, value in base.items() if key != "vision_storage_profile"},
             **resolved, "storage_profile": MIXED_STORAGE_PROFILE, "schema_version": 5,
             "modules": [module for module, value in resolved["module_precisions"].items() if value != "f32"],
+            "module_precisions_csv": ",".join(f"{module}={value}" for module, value in resolved["module_precisions"].items()),
+            "profile_status": "candidate"}
+
+
+def f16_mixed_quantization_profile(policy, storage_profile=None):
+    from tools.quantize.tensor_policy import validate_tensor_precisions, quantization_module_for_tensor
+    if set(policy) - {"base_precision", "module_precisions", "tensor_precisions", "policy_sha256"}:
+        raise ValueError("unknown field in mixed F16 weight policy")
+    if storage_profile not in (None, F16_MIXED_STORAGE_PROFILE):
+        raise ValueError("mixed F16 requires image-mixed-f16-linear-v1")
+    resolved = mixed_quantization_policy(policy.get("base_precision"), policy.get("module_precisions"), allow_f16=True)
+    overrides = validate_tensor_precisions(policy["tensor_precisions"], allow_f16=True) if "tensor_precisions" in policy else {}
+    if "f16" not in (*resolved["module_precisions"].values(), *overrides.values()):
+        raise ValueError("mixed F16 policy must explicitly request f16")
+    encoded = f"sam3:{F16_MIXED_STORAGE_PROFILE}\nbase={resolved['base_precision']}\n"
+    encoded += "".join(f"{module}={value}\n" for module, value in resolved["module_precisions"].items())
+    encoded += "".join(f"tensor:{name}={value}\n" for name, value in overrides.items())
+    digest = hashlib.sha256(encoded.encode("ascii")).hexdigest()
+    if "policy_sha256" in policy and policy["policy_sha256"] != digest:
+        raise ValueError("mixed F16 policy SHA-256 disagrees with the resolved allocation")
+    selected = {module for module, value in resolved["module_precisions"].items() if value in QUANTIZATION_PROFILES}
+    selected.update(quantization_module_for_tensor(name) for name, value in overrides.items() if value in QUANTIZATION_PROFILES)
+    base = QUANTIZATION_PROFILES[resolved["base_precision"]]
+    return {**{key: value for key, value in base.items() if key != "vision_storage_profile"},
+            "base_precision": resolved["base_precision"], "module_precisions": resolved["module_precisions"],
+            **({"tensor_precisions": overrides, "tensor_precisions_csv": ",".join(f"{name}={value}" for name, value in overrides.items())}
+               if overrides else {}),
+            "policy_sha256": digest, "storage_profile": F16_MIXED_STORAGE_PROFILE, "schema_version": 7,
+            "modules": [module for module in QUANTIZATION_MODULES if module in selected],
             "module_precisions_csv": ",".join(f"{module}={value}" for module, value in resolved["module_precisions"].items()),
             "profile_status": "candidate"}
 
@@ -154,7 +188,7 @@ def tensor_mixed_quantization_profile(policy, storage_profile=None):
             "profile_status": "candidate"}
 
 
-def parse_mixed_module_precisions(csv):
+def parse_mixed_module_precisions(csv, *, allow_f16=False):
     if not isinstance(csv, str) or len(csv) > MAX_QUANTIZATION_MODULE_CSV_LENGTH:
         raise ValueError("mixed module precision CSV exceeds its bound")
     fields = csv.split(",")
@@ -163,7 +197,8 @@ def parse_mixed_module_precisions(csv):
     result = {}
     for module, field in zip(QUANTIZATION_MODULES, fields):
         key, separator, value = field.partition("=")
-        if key != module or not separator or value not in ("f32", *QUANTIZATION_PROFILES):
+        allowed = ("f32", "f16", *QUANTIZATION_PROFILES) if allow_f16 else ("f32", *QUANTIZATION_PROFILES)
+        if key != module or not separator or value not in allowed:
             raise ValueError("mixed module precisions must be a canonical module=format CSV")
         result[key] = value
     return result

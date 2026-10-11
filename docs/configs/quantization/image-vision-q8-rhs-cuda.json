@@ -1,0 +1,10 @@
+{
+  "schema_version": 5,
+  "kind": "sam-quantization-config",
+  "task": "image",
+  "backend": "cuda",
+  "weights": {"precision": "q8_0", "storage_profile": "image-vision-linear-q8_0-v1"},
+  "activation": {"mode": "ggml-q8-rhs"},
+  "compute": {"mode": "f32"},
+  "cache": {"mode": "f32"}
+}

@@ -8,7 +8,7 @@ int main(int argc, char** argv) {
         if (options.help) {
             std::cout << "Usage: sam_image --model FILE --image FILE --text PROMPT --output NEW_DIR\n"
                          "  [--backend auto|cpu|metal|cuda] [--cuda-device N] [--cuda-compute f32|f16]\n"
-                         "  [--cpu-compute f32|native-quantized]\n"
+                         "  [--cpu-compute f32|native-quantized] [--activation backend-selected|ggml-q8-rhs]\n"
                          "  [--threads N] [--score-threshold 0.5] [--repeat N]\n"
                          "Repeat measures warmed full-image and repeated-result-cache calls separately.\n";
             return 0;

@@ -166,12 +166,12 @@ def run(args):
     recipes, models = {}, {}
     # Validate both configurations before probing the host or launching anything.
     for variant in ("baseline", "candidate"):
-        validate_configuration(args.backend, getattr(args, variant + "_compute"), getattr(args, variant + "_cache"), args.activation)
+        validate_configuration(args.backend, getattr(args, variant + "_compute"), getattr(args, variant + "_cache"), getattr(args, variant + "_activation", args.activation))
     for variant in ("baseline", "candidate"):
         models[variant] = getattr(args, variant + "_model")
         recipes[variant] = native_recipe(argparse.Namespace(model=models[variant], binary=args.binary, backend=args.backend,
                                                            compute=getattr(args, variant + "_compute"), cache=getattr(args, variant + "_cache"),
-                                                           activation=args.activation,
+                                                           activation=getattr(args, variant + "_activation", args.activation),
                                                            quantization_configuration=getattr(args, "quantization_configurations", {}).get(variant)),
                                          collect_environment=False)
     environment = runtime_environment(args.backend)

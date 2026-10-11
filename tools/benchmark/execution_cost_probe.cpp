@@ -7,19 +7,19 @@ int main(int argc, char** argv) {
         const auto options = sam_example::parse_options(argc, argv, false);
         if (options.help) {
             std::cout << "Usage: sam_execution_cost_probe --model FILE --image FILE --text PROMPT --output NEW_DIR\n"
-                         "  --backend cpu [--threads N] [--cpu-compute f32|native-quantized]\n"
-                         "One observed CPU image inference; serialized node timings are diagnostics, not a speed benchmark.\n";
+                         "  --backend cpu|cuda [--threads N] [--cpu-compute f32|native-quantized] [--cuda-compute f32|f16]\n"
+                         "One observed image inference; serialized synchronized node timings are diagnostics, not a speed benchmark.\n";
             return 0;
         }
-        if (options.backend.backend != sam::Backend::Cpu || options.backend.cuda_compute != sam::CudaComputeMode::F32)
-            throw std::invalid_argument("execution cost probe requires explicit --backend cpu");
+        if (options.backend.backend != sam::Backend::Cpu && options.backend.backend != sam::Backend::Cuda)
+            throw std::invalid_argument("execution cost probe requires explicit --backend cpu or cuda");
         sam_example::OutputDirectory destination(options.output, true);
         const auto image = sam_example::read_image(options.image);
         const auto load_start = sam_example::Clock::now();
         const auto state = sam::internal::sam3::load_state(options.model.string(), options.backend);
         const auto load_ms = sam_example::elapsed_ms(load_start);
         if (state->model_info.task != "text_image") throw std::invalid_argument("cost probe requires image weights");
-        const auto observer = std::make_shared<sam_cost::Observer>();
+        const auto observer = std::make_shared<sam_cost::Observer>(options.backend.backend);
         state->runtime->set_graph_observer(observer);
         sam::internal::sam3::ImageSession session(state);
         observer->stage = "image_encoding";
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
         output << ",\"detections\":" << result.detections.size() << "}\n";
         output.close();
         destination.complete();
-        std::cout << "CPU diagnostic costs: " << options.output / "execution-cost.json" << '\n';
+        std::cout << sam_example::backend_name(options.backend.backend) << " diagnostic costs: " << options.output / "execution-cost.json" << '\n';
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "sam_execution_cost_probe: " << error.what() << '\n';

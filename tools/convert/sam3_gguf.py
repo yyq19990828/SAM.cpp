@@ -1,4 +1,4 @@
-"""SAM 3 image schemas 1/3/4/5/6 and video schema 2 on the pinned GGUF tools."""
+"""SAM 3 image schemas 1/3/4/5/6/7 and video schema 2 on the pinned GGUF tools."""
 
 import hashlib
 import math
@@ -17,7 +17,7 @@ from tools.quantize.weight_policy import (
     QUANTIZATION_MODULES, MAX_QUANTIZATION_MODULE_CSV_LENGTH,
     FULL_MODULE_PROFILE_PREFIX, CUSTOM_MODULE_PROFILE_PREFIX, MODULE_TENSOR_PREFIXES,
     QUANTIZATION_PROFILES, SUPPORTED_STORAGE_PROFILES,
-    MIXED_STORAGE_PROFILE, TENSOR_MIXED_STORAGE_PROFILE, canonical_quantization_modules, quantization_profile,
+    MIXED_STORAGE_PROFILE, TENSOR_MIXED_STORAGE_PROFILE, F16_MIXED_STORAGE_PROFILE, canonical_quantization_modules, quantization_profile,
     parse_mixed_module_precisions,
 )
 
@@ -35,11 +35,17 @@ _PATCH_DIRECTORY = Path(__file__).resolve().parents[2] / "cmake/patches"
 _METAL_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-precise-metal.patch").read_bytes()).hexdigest()
 _CUDA_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-precise-cuda.patch").read_bytes()).hexdigest()
 _SHORT_DOT_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-short-dot-cuda.patch").read_bytes()).hexdigest()
+_BACKEND_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-explicit-backend.patch").read_bytes()).hexdigest()
+_CAPTURE_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-kernel-capture.patch").read_bytes()).hexdigest()
+_ACTIVATION_PATCH_HASH = hashlib.sha256((_PATCH_DIRECTORY / "ggml-native-activation.patch").read_bytes()).hexdigest()
 GGML_QUANTIZER_BUILD_COMMITS = (
     GGML_REVISION,
     f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}",
     f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}-{_CUDA_PATCH_HASH[:12]}",
     f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}-{_CUDA_PATCH_HASH[:12]}-{_SHORT_DOT_PATCH_HASH[:12]}",
+    f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}-{_CUDA_PATCH_HASH[:12]}-{_SHORT_DOT_PATCH_HASH[:12]}-{_BACKEND_PATCH_HASH[:12]}",
+    f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}-{_CUDA_PATCH_HASH[:12]}-{_SHORT_DOT_PATCH_HASH[:12]}-{_BACKEND_PATCH_HASH[:12]}-{_CAPTURE_PATCH_HASH[:12]}",
+    f"{GGML_REVISION[:8]}-sam-{_METAL_PATCH_HASH[:12]}-{_CUDA_PATCH_HASH[:12]}-{_SHORT_DOT_PATCH_HASH[:12]}-{_BACKEND_PATCH_HASH[:12]}-{_CAPTURE_PATCH_HASH[:12]}-{_ACTIVATION_PATCH_HASH[:12]}",
 )
 # Historical encoders remain valid provenance for existing packed weights.
 # New conversions use the current encoder; encoder changes need not be bitwise
@@ -156,11 +162,14 @@ def storage_dtype(name, shape, precision):
 def quantized_tensor_type(name, shape, precision, storage_profile=None, quantization_modules=None, *, mixed_policy=None):
     """Return the exact GGML type for a whitelisted image matrix, or None for F32."""
     profile = quantization_profile(precision, storage_profile, quantization_modules, mixed_policy=mixed_policy)
-    if profile["schema_version"] in (5, 6):
+    if profile["schema_version"] in (5, 6, 7):
         module = quantization_module_for_tensor(name)
         requested = profile.get("tensor_precisions", {}).get(name, profile["module_precisions"].get(module, "f32"))
         if requested == "f32":
             return None
+        if requested == "f16":
+            eligible = quantized_tensor_type(name, shape, "q8_0", quantization_modules=[module])
+            return gguf.GGMLQuantizationType.F16 if eligible is not None else None
         return quantized_tensor_type(name, shape, requested, quantization_modules=[module])
     if profile["schema_version"] == 4:
         module = quantization_module_for_tensor(name)
@@ -230,12 +239,16 @@ def quantized_tensor_type(name, shape, precision, storage_profile=None, quantiza
 def quantization_reason_for_tensor(name, shape, precision, storage_profile, quantization_modules, *, mixed_policy=None):
     """Describe schema-4/5 tensor allocation without changing legacy sidecars."""
     profile = quantization_profile(precision, storage_profile, quantization_modules, mixed_policy=mixed_policy)
-    if profile["schema_version"] in (5, 6):
+    if profile["schema_version"] in (5, 6, 7):
         module = quantization_module_for_tensor(name)
         override = name in profile.get("tensor_precisions", {})
         requested = profile.get("tensor_precisions", {}).get(name, profile["module_precisions"].get(module, "f32"))
         if requested == "f32":
             return "tensor-f32" if override else "module-f32" if module is not None else "outside-module-policy"
+        if requested == "f16":
+            if quantized_tensor_type(name, shape, precision, storage_profile, mixed_policy=mixed_policy) is not None:
+                return "tensor-f16" if override else "module-f16"
+            return quantization_reason_for_tensor(name, shape, "q8_0", None, [module])
         return quantization_reason_for_tensor(name, shape, requested, None, [module])
     if profile["schema_version"] != 4:
         raise ValueError("per-tensor module reasons are only defined for schema 4")
@@ -331,10 +344,10 @@ def validate_quantized_payload(name, packed, qtype):
         raise ValueError(f"{name}: empty {qtype.name} tensor")
 
 
-def converted_array(name, array, precision):
+def converted_array(name, array, precision, *, dtype=None):
     if not np.isfinite(array).all():
         raise ValueError(f"{name}: non-finite checkpoint tensor")
-    dtype = storage_dtype(name, array.shape, precision)
+    dtype = storage_dtype(name, array.shape, precision) if dtype is None else dtype
     with np.errstate(over="ignore", invalid="ignore"):
         converted = np.asarray(array, dtype=dtype, order="C")
     if not np.isfinite(converted).all():
@@ -410,11 +423,11 @@ def write_profile_metadata(writer, precision, checkpoint_sha256, task="image", s
         writer.add_uint32("general.quantization_version", QUANTIZATION_VERSION)
         if profile["schema_version"] == 4:
             writer.add_string("sam.quantization.modules", profile["modules_csv"])
-        if profile["schema_version"] in (5, 6):
+        if profile["schema_version"] in (5, 6, 7):
             writer.add_string("sam.quantization.base_precision", profile["base_precision"])
             writer.add_string("sam.quantization.module_precisions", profile["module_precisions_csv"])
             writer.add_string("sam.quantization.policy_sha256", profile["policy_sha256"])
-            if profile["schema_version"] == 6:
+            if "tensor_precisions_csv" in profile:
                 writer.add_string("sam.quantization.tensor_precisions", profile["tensor_precisions_csv"])
     writer.add_key_value("sam3.vision.global_attention_blocks", GLOBAL_BLOCKS,
                          gguf.GGUFValueType.ARRAY, sub_type=gguf.GGUFValueType.UINT32)
@@ -542,26 +555,26 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
         require("general.alignment", [gguf.GGUFValueType.UINT32], 32)
     file_type = require("general.file_type", [gguf.GGUFValueType.UINT32])
     mixed_keys = ("sam.quantization.base_precision", "sam.quantization.module_precisions", "sam.quantization.policy_sha256")
-    if schema_version not in (5, 6) and (mixed_policy is not None or any(reader.get_field(key) is not None for key in mixed_keys)):
-        raise ValueError("mixed weight policy metadata requires SAM schema 5/6")
+    if schema_version not in (5, 6, 7) and (mixed_policy is not None or any(reader.get_field(key) is not None for key in mixed_keys)):
+        raise ValueError("mixed weight policy metadata requires SAM schema 5/6/7")
     tensor_key = "sam.quantization.tensor_precisions"
-    if schema_version != 6 and reader.get_field(tensor_key) is not None:
-        raise ValueError("tensor overrides require SAM schema 6")
-    if schema_version in (3, 4, 5, 6):
+    if schema_version not in (6, 7) and reader.get_field(tensor_key) is not None:
+        raise ValueError("tensor overrides require SAM schema 6/7")
+    if schema_version in (3, 4, 5, 6, 7):
         if task != "image":
             raise ValueError(f"SAM schema {schema_version} currently supports image models only")
         profile_name = require("sam.storage_profile", [gguf.GGUFValueType.STRING])
         actual_precision = None
-        if schema_version in (5, 6):
+        if schema_version in (5, 6, 7):
             actual_precision = "mixed"
-            wanted_profile = MIXED_STORAGE_PROFILE if schema_version == 5 else TENSOR_MIXED_STORAGE_PROFILE
+            wanted_profile = {5: MIXED_STORAGE_PROFILE, 6: TENSOR_MIXED_STORAGE_PROFILE, 7: F16_MIXED_STORAGE_PROFILE}[schema_version]
             if profile_name != wanted_profile or quantization_modules is not None or reader.get_field("sam.quantization.modules") is not None:
-                raise ValueError("schema 5/6 requires its versioned mixed profile and module format mapping")
+                raise ValueError("schema 5/6/7 requires its versioned mixed profile and module format mapping")
             policy = {"base_precision": require(mixed_keys[0], [gguf.GGUFValueType.STRING]),
-                      "module_precisions": parse_mixed_module_precisions(require(mixed_keys[1], [gguf.GGUFValueType.STRING])),
+                      "module_precisions": parse_mixed_module_precisions(require(mixed_keys[1], [gguf.GGUFValueType.STRING]), allow_f16=schema_version == 7),
                       "policy_sha256": require(mixed_keys[2], [gguf.GGUFValueType.STRING])}
-            if schema_version == 6:
-                policy["tensor_precisions"] = parse_tensor_precisions(require(tensor_key, [gguf.GGUFValueType.STRING]))
+            if schema_version == 6 or (schema_version == 7 and reader.get_field(tensor_key) is not None):
+                policy["tensor_precisions"] = parse_tensor_precisions(require(tensor_key, [gguf.GGUFValueType.STRING]), allow_f16=schema_version == 7)
             profile = quantization_profile("mixed", profile_name, mixed_policy=policy)
             if mixed_policy is not None and profile != quantization_profile("mixed", profile_name, mixed_policy=mixed_policy):
                 raise ValueError("GGUF mixed policy differs from the requested allocation")
@@ -594,7 +607,7 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
                     raise ValueError("GGUF quantization modules disagree with the requested modules")
         if actual_precision is None:
             raise ValueError("unsupported SAM image quantization profile")
-        if schema_version not in (5, 6):
+        if schema_version not in (5, 6, 7):
             profile = quantization_profile(actual_precision, profile_name, profile_modules)
         if file_type != profile["file_type"]:
             raise ValueError("GGUF file type disagrees with the SAM quantization profile")
@@ -614,7 +627,7 @@ def validate_metadata(reader, precision=None, checkpoint_sha256=None, task="imag
         raise ValueError("unsupported SAM schema version")
     if precision is not None and precision != actual_precision:
         raise ValueError("GGUF storage precision disagrees with its provenance")
-    if storage_profile is not None and schema_version not in (3, 4, 5, 6):
+    if storage_profile is not None and schema_version not in (3, 4, 5, 6, 7):
         raise ValueError("storage profile is only valid for a quantized image")
     if quantization_modules is not None and schema_version != 4:
         raise ValueError("quantization modules are only valid for a schema-4 image")
@@ -632,7 +645,8 @@ def inspect_tensors(reader, precision, expected, original_shapes=None, storage_p
     if {tensor.name for tensor in reader.tensors} != set(expected):
         raise ValueError("GGUF tensor inventory differs from the SAM 3 schema")
     if mixed_policy is not None and "tensor_precisions" in mixed_policy:
-        validate_tensor_precisions(mixed_policy["tensor_precisions"], expected)
+        validate_tensor_precisions(mixed_policy["tensor_precisions"], expected,
+                                   allow_f16=quantization_profile(precision, storage_profile, mixed_policy=mixed_policy)["schema_version"] == 7)
     inventory = []
     for tensor in reader.tensors:
         name = tensor.name
@@ -649,7 +663,7 @@ def inspect_tensors(reader, precision, expected, original_shapes=None, storage_p
                                                 quantization_modules, mixed_policy=mixed_policy)
             if wanted_type is None:
                 wanted_type = gguf.GGMLQuantizationType.F32
-            dtype_name = "float32" if wanted_type == gguf.GGMLQuantizationType.F32 else wanted_type.name.lower()
+            dtype_name = {gguf.GGMLQuantizationType.F32: "float32", gguf.GGMLQuantizationType.F16: "float16"}.get(wanted_type, wanted_type.name.lower())
         else:
             dtype = storage_dtype(name, original_shape, precision)
             if dtype != storage_dtype(name, list(reversed(dimensions)), precision):

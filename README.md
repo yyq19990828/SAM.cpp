@@ -37,11 +37,13 @@ diagnostic configurations. See the model catalog for the current status of
 other SAM variants and composed pipelines.
 Per-module F32/Q8_0/Q6_K/Q5_K/Q4_K allocation is available through the
 [mixed weight configuration](docs/quantization-config.md#module-mixed-weights).
-CPU conversion and small arithmetic fixtures are checked; mixed-model quality,
-performance and CUDA/Metal execution remain unmeasured.
+CPU conversion and small arithmetic fixtures are checked. A bounded schema-6
+full-model CPU/CUDA reference/performance study is recorded in the
+[acceptance results](docs/plans/20261010-193958-quantization-remaining-acceptance.md);
+it covers one allocation, not arbitrary mixed policies. Metal remains unmeasured.
 Exact eligible tensor overrides and read-only conversion previews are available
 through the [tensor configuration](docs/quantization-config.md#exact-tensor-overrides-and-conversion-preview).
-[CPU cost diagnostics](docs/quantization-benchmark.md#cpu-execution-cost-diagnostics)
+[CPU/CUDA cost diagnostics](docs/quantization-benchmark.md#cpu-and-cuda-execution-cost-diagnostics)
 record observed casts/matmuls/transfers separately from normal speed benchmarks.
 One exact custom text/fusion/decoder Q8_0 image recipe has a
 [scoped CUDA GPU-memory acceptance](docs/quantization.md); this does not
@@ -77,10 +79,16 @@ On macOS, install the Xcode Command Line Tools and use the Metal build:
 
 ```sh
 cmake -S . -B build/metal -DCMAKE_BUILD_TYPE=Release \
-  -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON
+  -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON \
+  -DSAM_REQUIRE_METAL_TESTS=ON
 cmake --build build/metal --parallel
 ctest --test-dir build/metal --output-on-failure
 ```
+
+`SAM_REQUIRE_METAL_TESTS=ON` requires a Metal GGML target and makes a missing
+device fail `sam_quantization_metal` and `sam_mixed_quantization_metal` instead
+of skipping. These operator tests cover Q and mixed F16/Q storage, numerics and
+strict placement; complete-model Metal qualification remains pending.
 
 For CUDA, install the NVIDIA driver and CUDA Toolkit, then build
 with an architecture matching your GPU (`89` below is an RTX 4090 example):
@@ -94,7 +102,11 @@ ctest --test-dir build/cuda --output-on-failure
 ```
 
 `SAM_REQUIRE_CUDA_TESTS=ON` makes a missing GPU fail the CUDA tests. Otherwise,
-CUDA checks skip when no device is visible. CUDA requires the project's GGML
+CUDA checks skip when no device is visible. The optional Q8 RHS test also skips
+on unsupported devices or forced-cuBLAS builds; add
+`-DSAM_REQUIRE_NATIVE_ACTIVATION_TESTS=ON` to require that path during activation
+acceptance. CPU tiled capture skips when GGML lacks its AVX implementation;
+dot capture remains required. CUDA requires the project's GGML
 precision/window patch and defaults to `GGML_CUDA_GRAPHS=OFF`. Quantized CUDA
 uses the distinct `ggml-quantized-cuda-native-v1` arithmetic profile.
 
@@ -125,6 +137,9 @@ flags; measured latency and memory are in [the benchmarks](BENCHMARK.md).
 
 Metal shaders are embedded and compiled at runtime. CPU builds can use a
 registered GGML BLAS backend; add `-DGGML_BLAS=OFF` for native CPU execution.
+With BLAS enabled, opt-in `--cpu-compute native-quantized` keeps packed Q matmuls
+on CPU while eligible floating-point operations use BLAS. The required GGML
+patches preserve these explicit placements.
 Apple Accelerate manages its own SGEMM threads. For comparable CPU timing,
 set `VECLIB_MAXIMUM_THREADS` before starting the process.
 
@@ -240,15 +255,32 @@ Inspect `model.backend()` and `model.info()` for the resolved backend, task,
 storage profile, and arithmetic profile.
 
 Weight precision describes storage. CPU loading promotes F16 values to F32;
-Metal and CUDA retain mixed F16/F32 weights. Default quantized CPU execution retains
+Metal and CUDA retain mixed F16/F32 weights. [Configuration schema 4](docs/quantization-config.md#mixed-f16-weights)
+also mixes eligible F16 linears with Q formats in GGUF schema 7; CPU promotes
+each F16 tensor while retaining packed Q. Default quantized CPU execution retains
 packed weights and uses temporary F32 matrix weights. Opt-in
 `--backend cpu --cpu-compute native-quantized` keeps packed matrix operands;
 standard CPU kernels dynamically pack F32 activations into Q8 RHS and return F32.
-This mode has small CPU fixture validation; full-model quality/performance remain
-unmeasured. See the [CPU compute configuration](docs/quantization-config.md#native-cpu-quantized-matmul).
+Small CPU fixtures and a bounded full-model study validate this mode. On one
+i7-12700KF application case with BLAS disabled, full-image P50 was 31.0 s for decode versus 20.4 s
+for native compute; peak RSS fell only 0.75%. With OpenBLAS enabled, a separate
+bounded case measured 17.12 s versus 19.32 s, so native compute was 12.84% slower;
+see the [BLAS follow-up](docs/plans/20261010-212901-quantization-followups-implementation.md).
+See the
+[CPU compute configuration](docs/quantization-config.md#native-cpu-quantized-matmul)
+and [measurement scope](docs/plans/20261010-193958-quantization-remaining-acceptance.md).
 Metal and CUDA use native quantized
 kernels. See [precision details](MODEL_ZOO.md#precision-contract) before choosing
 a model for memory-sensitive applications.
+
+CUDA also exposes opt-in `--activation ggml-q8-rhs` or
+`BackendOptions::activation = ActivationMode::CudaVisionQ8Rhs` for actual Q8_0
+vision linears with F32 compute/cache. It forces dynamic Q8 MMQ D4 and verifies
+128 actual dispatches per vision encode. Other operations retain their policies;
+this is not whole-model INT8. Range checks add stream synchronization cost.
+See [supported combinations](docs/quantization-config.md#explicit-cuda-q8-rhs-activation).
+One bounded RTX 4090 case measured 388.54 ms default versus 409.06 ms forced
+full-image p50 (5.28% slower), with equal GPU peak memory; it remains opt-in.
 
 The current SAM 3 text adapter accepts printable ASCII and ASCII whitespace,
 with a 32-token limit. Unicode and HTML/entity-encoded text require

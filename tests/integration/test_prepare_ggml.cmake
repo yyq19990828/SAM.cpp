@@ -57,8 +57,69 @@ if(NOT prepatched_hash STREQUAL prepared_hash)
     message(FATAL_ERROR "Already-patched source changed during preparation")
 endif()
 
-# The prior combined archive acquires only the new short-dot patch.
-file(COPY "${prepared}/" DESTINATION "${fixture}/legacy-combined")
+# The five-patch diagnostic archive acquires explicit CUDA activation controls.
+file(COPY "${prepared}/" DESTINATION "${fixture}/prior-capture")
+execute_process(COMMAND ${CMAKE_COMMAND} -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
+    "GIT_CEILING_DIRECTORIES=${fixture}" ${GIT_EXECUTABLE} apply --reverse
+    "${CMAKE_CURRENT_LIST_DIR}/../../cmake/patches/ggml-native-activation.patch"
+    WORKING_DIRECTORY "${fixture}/prior-capture" RESULT_VARIABLE reverse_activation_result)
+if(NOT reverse_activation_result EQUAL 0)
+    message(FATAL_ERROR "Could not prepare five-patch archive fixture")
+endif()
+sam_ggml_tree_hash("${fixture}/prior-capture" prior_capture_hash)
+if(NOT prior_capture_hash STREQUAL "15102cfbd8e2d29114c3f7645a271ce0df408fabc052ed01b0a129f01322bec9")
+    message(FATAL_ERROR "Five-patch fixture differs from its pinned identity")
+endif()
+sam_prepare_ggml("${fixture}/prior-capture" "${fixture}/activation-upgraded" activation_upgraded)
+sam_ggml_tree_hash("${activation_upgraded}" activation_upgraded_hash)
+sam_ggml_tree_hash("${fixture}/prior-capture" prior_capture_after)
+if(NOT activation_upgraded_hash STREQUAL prepared_hash OR NOT prior_capture_after STREQUAL prior_capture_hash)
+    message(FATAL_ERROR "Five-patch upgrade omitted native controls or changed its input")
+endif()
+
+# The four-patch archive acquires opt-in CPU kernel diagnostics, without input mutation.
+file(COPY "${fixture}/prior-capture/" DESTINATION "${fixture}/prior-backend")
+execute_process(COMMAND ${CMAKE_COMMAND} -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
+    "GIT_CEILING_DIRECTORIES=${fixture}" ${GIT_EXECUTABLE} apply --reverse
+    "${CMAKE_CURRENT_LIST_DIR}/../../cmake/patches/ggml-kernel-capture.patch"
+    WORKING_DIRECTORY "${fixture}/prior-backend" RESULT_VARIABLE reverse_capture_result)
+if(NOT reverse_capture_result EQUAL 0)
+    message(FATAL_ERROR "Could not prepare four-patch archive fixture")
+endif()
+sam_ggml_tree_hash("${fixture}/prior-backend" prior_backend_hash)
+if(NOT prior_backend_hash STREQUAL "981aa6ce7634bf00db766a0793efd76ae62f8b64a7af90e67ca759d8f8547b0c")
+    message(FATAL_ERROR "Four-patch fixture differs from its pinned identity")
+endif()
+sam_prepare_ggml("${fixture}/prior-backend" "${fixture}/capture-upgraded" capture_upgraded)
+sam_ggml_tree_hash("${capture_upgraded}" capture_upgraded_hash)
+sam_ggml_tree_hash("${fixture}/prior-backend" prior_backend_after)
+if(NOT capture_upgraded_hash STREQUAL prepared_hash OR NOT prior_backend_after STREQUAL prior_backend_hash)
+    message(FATAL_ERROR "Four-patch upgrade omitted diagnostics or changed its input")
+endif()
+
+# The prior three-patch archive acquires explicit-placement preservation.
+file(COPY "${fixture}/prior-backend/" DESTINATION "${fixture}/prior-combined")
+execute_process(COMMAND ${CMAKE_COMMAND} -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
+    "GIT_CEILING_DIRECTORIES=${fixture}" ${GIT_EXECUTABLE} apply --reverse
+    "${CMAKE_CURRENT_LIST_DIR}/../../cmake/patches/ggml-explicit-backend.patch"
+    WORKING_DIRECTORY "${fixture}/prior-combined" RESULT_VARIABLE reverse_backend_result
+    ERROR_VARIABLE reverse_backend_error)
+if(NOT reverse_backend_result EQUAL 0)
+    message(FATAL_ERROR "Could not prepare prior scheduler archive fixture: ${reverse_backend_error}")
+endif()
+sam_ggml_tree_hash("${fixture}/prior-combined" prior_hash)
+if(NOT prior_hash STREQUAL "4394cdc89f35b65c1642f45be122d6301e397480ff0d1f9a519237703dfe1d1f")
+    message(FATAL_ERROR "Prior combined archive fixture differs from the verified three-patch tree")
+endif()
+sam_prepare_ggml("${fixture}/prior-combined" "${fixture}/backend-upgraded" backend_upgraded)
+sam_ggml_tree_hash("${backend_upgraded}" backend_upgraded_hash)
+sam_ggml_tree_hash("${fixture}/prior-combined" prior_after_hash)
+if(NOT backend_upgraded_hash STREQUAL prepared_hash OR NOT prior_after_hash STREQUAL prior_hash)
+    message(FATAL_ERROR "Prior archive upgrade changed its input or omitted the backend patch")
+endif()
+
+# The older combined archive acquires short-dot and placement corrections.
+file(COPY "${fixture}/prior-combined/" DESTINATION "${fixture}/legacy-combined")
 execute_process(COMMAND ${CMAKE_COMMAND} -E env --unset=GIT_DIR --unset=GIT_WORK_TREE
     "GIT_CEILING_DIRECTORIES=${fixture}" ${GIT_EXECUTABLE} apply --reverse
     "${CMAKE_CURRENT_LIST_DIR}/../../cmake/patches/ggml-short-dot-cuda.patch"

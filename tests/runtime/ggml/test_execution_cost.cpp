@@ -1,4 +1,5 @@
 #include "runtime/ggml.hpp"
+#include "backend_test_support.hpp"
 #include "models/sam3/detector.hpp"
 #include "../../../tools/benchmark/execution_cost.hpp"
 #include <cmath>
@@ -13,10 +14,12 @@ void require(bool condition, const char* message) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     try {
         using namespace sam::internal;
-        GgmlRuntime runtime({sam::Backend::Cpu, 2}, false, true);
+        const bool cuda = sam::test::cuda_requested(argc, argv);
+        if (cuda && !sam::test::cuda_available()) return 77;
+        GgmlRuntime runtime({cuda ? sam::Backend::Cuda : sam::Backend::Cpu, 2}, false, true);
         auto context = make_context(4);
         auto* weight = ggml_new_tensor_2d(context.get(), GGML_TYPE_Q8_0, 256, 2);
         ggml_set_name(weight, "cost_fixture_weight");
@@ -28,7 +31,7 @@ int main() {
         traits->from_float_ref(original.data(), packed.data(), 512);
         traits->to_float(packed.data(), decoded.data(), 512);
         ggml_backend_tensor_set(weight, packed.data(), 0, packed.size());
-        auto observer = std::make_shared<sam_cost::Observer>();
+        auto observer = std::make_shared<sam_cost::Observer>(cuda ? sam::Backend::Cuda : sam::Backend::Cpu);
         observer->stage = "bounded_cpu_cost_test";
         runtime.set_graph_observer(observer);
         sam::RuntimeStats stats;
@@ -39,47 +42,57 @@ int main() {
         auto* zero = input_tensor(execution.context(), "rpb_pres_zeros", 2, 3);
         auto* result = ggml_add(execution.context(), product, zero);
         execution.output(result);
+        std::vector<float> last_output;
         for (int repeat = 0; repeat < 2; ++repeat) {
             execution.allocate();
-            upload(input, std::vector<float>(768, static_cast<float>(repeat + 1)), stats, &runtime);
+            // MMVQ stages RHS as Q8_1. 127/128 gives an exact half scale
+            // (1/128) and original block sum; repeat 2 remains exact too.
+            const float rhs = static_cast<float>(repeat + 1) * (cuda ? 127.f / 128.f : 1.f);
+            upload(input, std::vector<float>(768, rhs), stats, &runtime);
             sam3::initialize_detector_zero_inputs(execution.context(), stats, &runtime);
             execution.compute();
             const auto output = download(result, stats, &runtime);
             for (std::size_t row = 0; row < output.size(); ++row) {
                 double expected = 0;
-                for (std::size_t k = 0; k < 256; ++k) expected += decoded[(row % 2) * 256 + k] * (repeat + 1);
-                require(std::isfinite(output[row]) && std::abs(output[row] - expected) < .001,
-                        "cost observation changed CPU numerical output");
+                for (std::size_t k = 0; k < 256; ++k) expected += double(decoded[(row % 2) * 256 + k]) * rhs;
+                if (!std::isfinite(output[row]) || std::abs(output[row] - expected) >= .001)
+                    throw std::runtime_error("cost numerical fixture actual=" + std::to_string(output[row]) +
+                        " scalar_expected=" + std::to_string(expected));
             }
+            last_output = output;
         }
         require(observer->graphs.size() == 2 && observer->graphs[0].compute_calls == 1 &&
                 observer->graphs[1].reused && observer->graphs[1].compute_calls == 1,
                 "cost observer lost a reused graph execution");
         std::size_t casts = 0, matmuls = 0;
         for (const auto& node : observer->nodes) {
-            require(node.calls == 1 && node.wall_ms >= 0 && node.backend == "CPU", "invalid observed CPU node cost");
+            require(node.calls == 1 && node.wall_ms >= 0 &&
+                    (cuda ? node.backend.rfind("CUDA", 0) == 0 : node.backend == "CPU"), "invalid observed node cost");
             if (node.category == "quantized_to_f32") {
                 ++casts;
                 require(node.inputs.front().type == "q8_0" && node.output_type == "f32", "cast report lost actual types");
             }
             if (node.category == "matmul") {
                 ++matmuls;
-                require(node.inputs.front().type == "f32" && node.accumulation_hint == "f32", "matmul precision was guessed");
+                require(node.inputs.front().type == (cuda ? "q8_0" : "f32") && node.accumulation_hint == "f32", "matmul precision was guessed");
             }
         }
-        require(casts == 2 && matmuls == 2 && observer->transfers.size() == 6,
+        require(casts == (cuda ? 0u : 2u) && matmuls == 2 && observer->transfers.size() == 6,
                 "cost report omitted casts, matmuls or transfers");
         require(observer->graphs.front().arena_bytes > 0 && stats.host_upload_bytes == 2 * (768 + 6) * sizeof(float) &&
                 stats.host_download_bytes == 2 * 6 * sizeof(float), "cost observation changed transfer accounting");
         runtime.set_graph_observer({});
         execution.compute(); // No bind: an evaluation callback must not outlive the observed compute.
         for (const auto& node : observer->nodes) require(node.calls == 1, "normal compute retained a diagnostic callback");
+        require(download(result, stats, &runtime) == last_output, "cost observer changed the numerical result");
         std::ostringstream report;
         observer->write(report);
         require(report.str().find("\"performance_comparable\":false") != std::string::npos &&
                 report.str().find("\"kernel_internal_rhs_packing\":\"NOT_COLLECTED\"") != std::string::npos,
                 "cost report implied a benchmark or unobserved kernel arithmetic");
-        std::cout << "CPU execution costs, graph reuse and callback lifetime passed\n";
+        require(report.str().find(cuda ? "sam-cuda-execution-cost-v2" : "sam-cpu-execution-cost-v1") != std::string::npos,
+                "cost report lost its versioned backend identity");
+        std::cout << "Execution costs, graph reuse and callback lifetime passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

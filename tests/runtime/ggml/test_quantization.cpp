@@ -586,6 +586,21 @@ void check_backend_q8_k_fallback(ggml_backend_t backend, std::int64_t columns = 
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string(argv[1]) == "metal") {
+            if (!sam::test::metal_available()) {
+                std::cout << "Metal device unavailable\n";
+                return 77;
+            }
+            auto metal = sam::internal::make_metal_backend();
+            require(static_cast<bool>(metal.handle), "Metal device failed to initialize");
+            check_quantized_backend_routing(true);
+            check_quantized_metal_scheduler(true);
+            for (const auto columns : {3, 33}) {
+                check_backend_quantized_math(metal.handle.get(), columns);
+                check_backend_q8_k_fallback(metal.handle.get(), columns);
+            }
+            return 0;
+        }
         if (sam::test::cuda_requested(argc, argv)) {
             if (!sam::test::cuda_available()) return 77;
             check_quantized_cuda_scheduler();

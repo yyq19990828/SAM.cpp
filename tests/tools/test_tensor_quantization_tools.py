@@ -38,6 +38,30 @@ def tensor_configuration():
 
 
 class TensorQuantizationChecks(unittest.TestCase):
+    def test_cuda_cost_version_and_placement_fail_closed(self):
+        # Report-contract fixture only; actual GPU arithmetic/reuse is a
+        # required-device CTest and full-model probe, not simulated here.
+        value = {"schema_version": 2, "kind": "sam-cuda-execution-cost-v2", "complete": True,
+                 "diagnostic_only": True, "performance_comparable": False, "backend": "cuda",
+                 "kernel_internal_rhs_packing": "NOT_COLLECTED", "kernel_internal_arithmetic": "NOT_COLLECTED",
+                 "graph_compute_wall_ms": 2., "graph_bind_wall_ms": 1., "graph_arena_peak_bytes": 1024,
+                 "graphs": [{"id": 0, "compute_calls": 1, "compute_wall_ms": 2., "bind_wall_ms": 1., "arena_bytes": 1024}],
+                 "nodes": [{"graph": 0, "backend": "CUDA0", "calls": 1, "category": "matmul", "wall_ms": 1.}],
+                 "categories": {"matmul": {"calls": 1, "wall_ms": 1.}}, "transfers": [], "transfer_totals": {}}
+        validate_cost(value)
+        for field, replacement in (("schema_version", 1), ("kind", "sam-cpu-execution-cost-v1"),
+                                   ("backend", "cpu"), ("performance_comparable", True),
+                                   ("kernel_internal_arithmetic", "int8")):
+            changed = deepcopy(value)
+            changed[field] = replacement
+            with self.assertRaises(ValueError):
+                validate_cost(changed)
+        for backend in ("CPU", "BLAS", "UNASSIGNED", "Metal"):
+            changed = deepcopy(value)
+            changed["nodes"][0]["backend"] = backend
+            with self.assertRaises(ValueError):
+                validate_cost(changed)
+
     def test_exact_overrides_precede_modules_and_bind_versioned_identity(self):
         value = normalize_config(tensor_configuration())
         weights = value["weights"]
@@ -197,9 +221,12 @@ class TensorQuantizationChecks(unittest.TestCase):
             cost = read_json(cost_path)
             validate_cost(cost)
             self.assertFalse(cost["performance_comparable"])
-            self.assertEqual(cost["categories"]["matmul"]["calls"], 10)
-            self.assertEqual(cost["categories"]["quantized_to_f32"]["calls"], 5)
-            self.assertEqual({row["backend"] for row in cost["nodes"]}, {"CPU"})
+            # The same allocated graph is computed twice with changed RHS.
+            self.assertEqual(cost["categories"]["matmul"]["calls"], 20)
+            self.assertEqual(cost["categories"]["quantized_to_f32"]["calls"], 10)
+            # With BLAS registered, view/reshape metadata may inherit BLAS;
+            # this small N=3 fixture still computes every operation on CPU.
+            self.assertEqual({row["backend"] for row in cost["nodes"] if row["category"] != "metadata"}, {"CPU"})
             self.assertEqual(cost["kernel_internal_rhs_packing"], "NOT_COLLECTED")
             self.assertGreater(cost["transfer_totals"]["upload"]["bytes"], 0)
             self.assertGreaterEqual(cost["graph_compute_wall_ms"], sum(row["wall_ms"] for row in cost["nodes"]))
@@ -244,6 +271,7 @@ class TensorQuantizationChecks(unittest.TestCase):
                 write_json(destination / "execution-cost.json", raw)
                 return subprocess.CompletedProcess(command, 0, "stub producer\n", "")
             with patch("tools.maintenance.artifact_snapshot.native_snapshot", return_value={str(output.resolve()): sha256_file(output)}), \
+                    patch("tools.maintenance.artifact_snapshot.runtime_environment", return_value={"system": "fixture", "cpu_count": 4}), \
                     patch("tools.benchmark.execution_cost.subprocess.run", side_effect=producer), redirect_stdout(io.StringIO()):
                 report = cost_run(args)
                 self.assertFalse(report["performance_comparable"])

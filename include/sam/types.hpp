@@ -12,6 +12,7 @@ namespace sam {
 enum class Backend { Auto, Cpu, Metal, Cuda };
 enum class CudaComputeMode { F32, F16 };
 enum class CpuComputeMode { F32, NativeQuantized };
+enum class ActivationMode { BackendSelected, CudaVisionQ8Rhs };
 
 struct BackendOptions {
     Backend backend = Backend::Auto;
@@ -19,6 +20,7 @@ struct BackendOptions {
     int cuda_device = 0; // Index among devices visible to the CUDA registry.
     CudaComputeMode cuda_compute = CudaComputeMode::F32; // Opt-in reduced operands; GGUF weight storage is unchanged.
     CpuComputeMode cpu_compute = CpuComputeMode::F32; // NativeQuantized keeps Q weights and allows kernel-internal Q8 RHS packing.
+    ActivationMode activation = ActivationMode::BackendSelected; // Opt-in Q8 RHS for Q8_0 vision linears on CUDA.
 };
 
 struct ModelInfo {
@@ -39,6 +41,7 @@ struct ModelInfo {
     std::vector<std::pair<std::string, std::string>> module_precisions; // Canonical module order, including F32 modules.
     std::string policy_sha256; // Schema-5/6 allocation identity, separate from file/source hashes.
     std::vector<std::pair<std::string, std::string>> tensor_precisions; // Exact overrides for schema-6 image weights.
+    std::string activation_policy = "backend-selected";
 };
 
 struct RuntimeStats {
@@ -50,6 +53,8 @@ struct RuntimeStats {
     double image_ms = 0.0, text_ms = 0.0, inference_ms = 0.0;
     std::uint64_t blas_nodes = 0; // Subset of cpu_nodes, not additional device work.
     std::uint64_t cuda_nodes = 0;
+    std::uint64_t activation_requests = 0, activation_mmq_launches = 0;
+    std::uint64_t activation_payload_peak_bytes = 0, activation_allocation_peak_bytes = 0;
 };
 
 struct TensorData {

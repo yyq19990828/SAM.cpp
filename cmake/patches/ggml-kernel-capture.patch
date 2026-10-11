@@ -1,0 +1,148 @@
+--- a/include/ggml-cpu.h
++++ b/include/ggml-cpu.h
+@@ -6,6 +6,19 @@
+ #ifdef  __cplusplus
+ extern "C" {
+ #endif
++
++
++    // SAM diagnostic extension. Install/remove only while all CPU graphs are idle.
++    // The callback borrows actual scratch at a synchronized kernel boundary;
++    // it must not throw, reenter GGML, or retain the pointer after returning.
++    typedef void (*ggml_cpu_sam_observer)(const struct ggml_tensor * dst,
++        const char * phase, const char * path, enum ggml_type rhs_type,
++        const void * scratch, size_t scratch_bytes, int64_t wall_us, void * user);
++    GGML_BACKEND_API void ggml_cpu_sam_set_observer(ggml_cpu_sam_observer callback, void * user);
++    GGML_BACKEND_API bool ggml_cpu_sam_observer_enabled(void);
++    GGML_BACKEND_API void ggml_cpu_sam_observe(const struct ggml_tensor * dst,
++        const char * phase, const char * path, enum ggml_type rhs_type,
++        const void * scratch, size_t scratch_bytes, int64_t wall_us);
+ 
+     // the compute plan that needs to be prepared for ggml_graph_compute()
+     // since https://github.com/ggml-org/ggml/issues/287
+--- a/src/ggml-cpu/ggml-cpu.c
++++ b/src/ggml-cpu/ggml-cpu.c
+@@ -1160,6 +1160,31 @@
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+ 
++
++// Opt-in process-local diagnostics. The idle-only installation contract keeps
++// callback/user coherent; atomics provide a cheap normal-path enabled check.
++static ggml_cpu_sam_observer sam_observer_callback = NULL;
++static void * sam_observer_user = NULL;
++static atomic_bool sam_observer_active = false;
++
++void ggml_cpu_sam_set_observer(ggml_cpu_sam_observer callback, void * user) {
++    atomic_store_explicit(&sam_observer_active, false, memory_order_release);
++    sam_observer_user = user;
++    sam_observer_callback = callback;
++    atomic_store_explicit(&sam_observer_active, callback != NULL, memory_order_release);
++}
++
++bool ggml_cpu_sam_observer_enabled(void) {
++    return atomic_load_explicit(&sam_observer_active, memory_order_acquire);
++}
++
++void ggml_cpu_sam_observe(const struct ggml_tensor * dst,
++        const char * phase, const char * path, enum ggml_type rhs_type,
++        const void * scratch, size_t scratch_bytes, int64_t wall_us) {
++    if (ggml_cpu_sam_observer_enabled())
++        sam_observer_callback(dst, phase, path, rhs_type, scratch, scratch_bytes, wall_us, sam_observer_user);
++}
++
+ // ggml_compute_forward_mul_mat
+ 
+ static void ggml_compute_forward_mul_mat_one_chunk(
+@@ -1325,6 +1350,10 @@
+ UseGgmlGemm1:;
+ #endif
+ 
++    const bool sam_capture = ggml_cpu_sam_observer_enabled() &&
++        ggml_is_quantized(src0->type) && src1->type == GGML_TYPE_F32;
++    const int64_t sam_pack_start = sam_capture && ith == 0 ? ggml_time_us() : 0;
++    if (sam_capture) ggml_barrier(params->threadpool);
+     if (src1->type != vec_dot_type) {
+         char * wdata = params->wdata;
+ 
+@@ -1382,6 +1411,15 @@
+     }
+ 
+     ggml_barrier(params->threadpool);
++
++    if (sam_capture) {
++        if (ith == 0) ggml_cpu_sam_observe(dst, "packing", "dot", vec_dot_type,
++            params->wdata, ggml_row_size(vec_dot_type, ggml_nelements(src1)), ggml_time_us() - sam_pack_start);
++        // Exclude the scratch-copy callback from the arithmetic interval.
++        ggml_barrier(params->threadpool);
++    }
++    const int64_t sam_arithmetic_start = sam_capture && ith == 0 ? ggml_time_us() : 0;
++    if (sam_capture) ggml_barrier(params->threadpool);
+ 
+ #if GGML_USE_LLAMAFILE
+     if (!params->use_ref && src1->type != vec_dot_type) {
+@@ -1469,6 +1507,12 @@
+ 
+         current_chunk = atomic_fetch_add_explicit(&params->threadpool->current_chunk, 1, memory_order_relaxed);
+     }
++    if (sam_capture) {
++        ggml_barrier(params->threadpool);
++        if (ith == 0) ggml_cpu_sam_observe(dst, "arithmetic", "dot", vec_dot_type,
++            NULL, 0, ggml_time_us() - sam_arithmetic_start);
++    }
++
+ }
+ 
+ // ggml_compute_forward_mul_mat_id
+--- a/src/ggml-cpu/tiled/tiled.cpp
++++ b/src/ggml-cpu/tiled/tiled.cpp
+@@ -1054,6 +1054,9 @@
+     GGML_ASSERT(nb1 <= nb2);
+     GGML_ASSERT(nb2 <= nb3);
+ 
++    const bool sam_capture = ggml_cpu_sam_observer_enabled() && src1->type == GGML_TYPE_F32;
++    const int64_t sam_pack_start = sam_capture && ith == 0 ? ggml_time_us() : 0;
++    if (sam_capture) ggml_barrier(params->threadpool);
+     if (src1->type != vec_dot_type) {
+         char * wdata = (char *) params->wdata;
+ 
+@@ -1086,6 +1089,14 @@
+ 
+     ggml_barrier(params->threadpool);
+ 
++    if (sam_capture) {
++        if (ith == 0) ggml_cpu_sam_observe(dst, "packing", "tiled", vec_dot_type,
++            params->wdata, ggml_row_size(vec_dot_type, ggml_nelements(src1)), ggml_time_us() - sam_pack_start);
++        ggml_barrier(params->threadpool);
++    }
++    const int64_t sam_arithmetic_start = sam_capture && ith == 0 ? ggml_time_us() : 0;
++    if (sam_capture) ggml_barrier(params->threadpool);
++
+     // This is the size of the first dimension of the result, so we can iterate that way. (see the ASSERT above, these are the same numbers)
+     const int64_t nr0 = ne0;
+ 
+@@ -1141,6 +1152,12 @@
+ 
+         current_chunk = ggml_threadpool_chunk_add(params->threadpool, 1);
+     }
++    if (sam_capture) {
++        ggml_barrier(params->threadpool);
++        if (ith == 0) ggml_cpu_sam_observe(dst, "arithmetic", "tiled", vec_dot_type,
++            nullptr, 0, ggml_time_us() - sam_arithmetic_start);
++    }
++
+ }
+ 
+ // src0 type dispatch, shared by the MUL_MAT and MUL_MAT_ID entries: one expert for
+--- a/src/ggml-cpu/ggml-cpu.cpp
++++ b/src/ggml-cpu/ggml-cpu.cpp
+@@ -656,6 +656,9 @@
+ }
+ 
+ static void * ggml_backend_cpu_get_proc_address(ggml_backend_reg_t reg, const char * name) {
++    if (strcmp(name, "ggml_cpu_sam_set_observer_v1") == 0) {
++        return (void *)ggml_cpu_sam_set_observer;
++    }
+     if (strcmp(name, "ggml_backend_set_n_threads") == 0) {
+         ggml_backend_set_n_threads_t fct = ggml_backend_cpu_set_n_threads;
+         return (void *)fct;

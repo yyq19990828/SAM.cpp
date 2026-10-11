@@ -10,11 +10,13 @@ from tools.convert.sam3_artifacts import SAM3_REVISION, read_json, sha256_file, 
 from tools.convert.sam3_gguf import (METADATA_LIMIT, canonical_shape, tensor_assignment, tensor_schema,
                                     write_metadata, write_profile_metadata)
 from tools.quantize.tensor_policy import validate_tensor_precisions
+from tools.quantize.weight_policy import quantization_profile
 
 
 def allocation_rows(expected, precision, storage_profile=None, modules=None, mixed_policy=None):
     if mixed_policy is not None and "tensor_precisions" in mixed_policy:
-        validate_tensor_precisions(mixed_policy["tensor_precisions"], expected)
+        validate_tensor_precisions(mixed_policy["tensor_precisions"], expected,
+                                   allow_f16=quantization_profile(precision, storage_profile, mixed_policy=mixed_policy)["schema_version"] == 7)
     return [tensor_assignment(name, dimensions, precision, storage_profile, modules, mixed_policy=mixed_policy)
             for name, dimensions in sorted(expected.items())]
 
@@ -71,6 +73,8 @@ def conversion_plan(expected, precision, task="image", storage_profile=None, mod
                             "manifest_bytes": "NOT_ESTIMATED", "source_checkpoints_included": False,
                             "note": "temporary model is published by hard link; it is not a second model copy"},
             "runtime_memory": {"peak_bytes": "NOT_MEASURED",
+                               "cpu_f16_promotion_additional_payload_bytes":
+                                   sum(row["elements"] * 2 for row in rows if row["resolved_dtype"] == "f16"),
                                "cpu_f32_cast_payload_if_all_quantized_weights_materialized_bytes":
                                    sum(row["elements"] * 4 for row in rows if row["resolved_dtype"].startswith("q")),
                                "note": "cast payload is a static inventory, not a simultaneous workspace/RSS peak"},

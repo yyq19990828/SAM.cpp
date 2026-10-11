@@ -45,6 +45,10 @@ struct Transfer {
 
 class Observer final : public sam::internal::GraphObserver {
 public:
+    explicit Observer(sam::Backend backend = sam::Backend::Cpu) : backend_(backend) {
+        if (backend != sam::Backend::Cpu && backend != sam::Backend::Cuda)
+            throw std::invalid_argument("execution cost supports explicit CPU or CUDA");
+    }
     std::string stage = "unspecified";
     std::vector<Node> nodes;
     std::vector<Graph> graphs;
@@ -106,8 +110,11 @@ public:
             total.bytes += transfer.bytes;
             total.wall_ms += transfer.wall_ms;
         }
-        output << "{\"schema_version\":1,\"kind\":\"sam-cpu-execution-cost-v1\",\"complete\":true,"
-                  "\"diagnostic_only\":true,\"performance_comparable\":false,\"backend\":\"cpu\","
+        const bool cuda = backend_ == sam::Backend::Cuda;
+        output << "{\"schema_version\":" << (cuda ? 2 : 1) << ",\"kind\":"
+               << json_string(cuda ? "sam-cuda-execution-cost-v2" : "sam-cpu-execution-cost-v1")
+               << ",\"complete\":true,\"diagnostic_only\":true,\"performance_comparable\":false,\"backend\":"
+               << json_string(cuda ? "cuda" : "cpu") << ',' <<
                   "\"observation_mode\":\"serialized scheduler evaluation callback; synchronization and dispatch overhead included\","
                   "\"timing_scope\":\"steady-clock synchronous wall time; node times are included in graph time; do not add both\","
                   "\"kernel_internal_rhs_packing\":\"NOT_COLLECTED\",\"kernel_internal_arithmetic\":\"NOT_COLLECTED\","
@@ -190,8 +197,10 @@ private:
         row.operation = ggml_op_name(tensor->op);
         row.category = category(tensor);
         row.backend = backend ? ggml_backend_name(backend) : "UNASSIGNED";
-        if (row.backend != "CPU" && row.backend != "BLAS" && row.backend != "UNASSIGNED")
-            throw std::runtime_error("cost observer currently supports CPU/BLAS nodes only");
+        const bool device = row.backend.rfind("CUDA", 0) == 0;
+        if ((backend_ == sam::Backend::Cpu && row.backend != "CPU" && row.backend != "BLAS" && row.backend != "UNASSIGNED") ||
+                (backend_ == sam::Backend::Cuda && !device && sam::internal::is_compute_node(tensor)))
+            throw std::runtime_error("cost observer saw compute outside its requested backend");
         row.output_type = ggml_type_name(tensor->type);
         if (row.backend == "CPU" && tensor->op == GGML_OP_MUL_MAT && tensor->src[0] &&
             ggml_is_quantized(tensor->src[0]->type))
@@ -231,6 +240,7 @@ private:
         }
     }
 
+    sam::Backend backend_;
     ggml_context* active_context_ = nullptr;
     ggml_cgraph* active_graph_ = nullptr;
     ggml_backend_sched_t scheduler_ = nullptr;

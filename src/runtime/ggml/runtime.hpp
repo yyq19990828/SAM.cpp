@@ -6,6 +6,7 @@
 #include "backends/cpu.hpp"
 #include "backends/metal.hpp"
 #include "backends/cuda.hpp"
+#include "backends/cuda_activation.hpp"
 #include "common/input_validation.hpp"
 #include "sam/types.hpp"
 #include "ggml-backend.h"
@@ -23,6 +24,8 @@ public:
                 FeatureCacheMode cache = FeatureCacheMode::F32) {
         validate_backend_options(options);
         feature_cache_storage_type(cache); // Reject invalid enums before device allocation.
+        if (options.activation == ActivationMode::CudaVisionQ8Rhs && (!quantized_profile || cache != FeatureCacheMode::F32))
+            throw std::invalid_argument("explicit Q8 RHS requires quantized image weights and F32 cache");
         if (options.cpu_compute == CpuComputeMode::NativeQuantized && !quantized_profile)
             throw std::invalid_argument("native quantized CPU compute requires actual quantized weights");
         cpu_compute_ = options.cpu_compute;
@@ -32,6 +35,7 @@ public:
         if (options.backend == Backend::Cuda) {
             selected_ = drivers_.size();
             drivers_.push_back(make_cuda_backend(options.cuda_device, options.cuda_compute, quantized_profile, cache));
+            if (options.activation == ActivationMode::CudaVisionQ8Rhs) activation_.initialize(options.cuda_device);
         }
         if (options.backend == Backend::Metal ||
             (!fp32 && !quantized_profile && options.backend == Backend::Auto)) {
@@ -61,6 +65,9 @@ public:
     ggml_backend_t weights_backend() const { return drivers_[selected_].handle.get(); }
     const std::vector<ggml_backend_t>& backends() const { return backends_; }
     bool promote_f16_weights() const { return drivers_[selected_].promote_f16_weights; }
+    ggml_type allocated_weight_type(ggml_type stored_type) const {
+        return stored_type == GGML_TYPE_F16 && promote_f16_weights() ? GGML_TYPE_F32 : stored_type;
+    }
     bool quantized_cpu_f32_weights() const {
         return quantized_profile_ && backend() == Backend::Cpu && cpu_compute_ == CpuComputeMode::F32;
     }
@@ -85,8 +92,12 @@ public:
     void configure_node(ggml_tensor* node) const {
         if (quantized_native_cpu()) validate_cpu_quantized_matmul(node);
         if (drivers_[selected_].configure_node) drivers_[selected_].configure_node(node);
+        activation_.configure(node);
     }
+    const CudaActivationPolicy& activation_policy() const { return activation_; }
+    const char* activation_name() const { return activation_.enabled() ? "ggml-q8-rhs" : "backend-selected"; }
     const char* arithmetic_profile() const {
+        if (activation_.enabled()) return "ggml-quantized-cuda-q8-rhs-v1";
         if (drivers_[selected_].reduced_precision)
             return quantized_profile_ ? "ggml-quantized-cuda-f16-v1" : "ggml-cuda-f16-v1";
         if (!quantized_profile_) return "";
@@ -116,6 +127,7 @@ private:
     bool quantized_native_metal_only_ = false;
     CpuComputeMode cpu_compute_ = CpuComputeMode::F32;
     std::shared_ptr<GraphObserver> observer_;
+    CudaActivationPolicy activation_;
 };
 
 } // namespace sam::internal

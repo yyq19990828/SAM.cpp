@@ -38,8 +38,8 @@ std::vector<Case> read_cases(const std::filesystem::path& path) {
 
 int main(int argc, char** argv) {
     try {
-        if (argc != 7)
-            throw std::invalid_argument("usage: sam_precision_image_probe MODEL CASES.tsv cpu|metal|cuda CACHE f32|f16|native-quantized NEW_DIR");
+        if (argc != 7 && argc != 8)
+            throw std::invalid_argument("usage: sam_precision_image_probe MODEL CASES.tsv cpu|metal|cuda CACHE f32|f16|native-quantized NEW_DIR [backend-selected|ggml-q8-rhs]");
         const std::string backend = argv[3], cache = argv[4], compute = argv[5];
         if ((backend != "cpu" && backend != "metal" && backend != "cuda") ||
             (cache != "f32" && cache != "f16" && cache != "mixed-q8_0") ||
@@ -49,6 +49,11 @@ int main(int argc, char** argv) {
         sam::BackendOptions options{backend == "cuda" ? sam::Backend::Cuda : backend == "metal" ? sam::Backend::Metal : sam::Backend::Cpu, 4};
         options.cuda_compute = compute == "f16" ? sam::CudaComputeMode::F16 : sam::CudaComputeMode::F32;
         options.cpu_compute = compute == "native-quantized" ? sam::CpuComputeMode::NativeQuantized : sam::CpuComputeMode::F32;
+        if (argc == 8) {
+            const std::string activation = argv[7];
+            if (activation != "backend-selected" && activation != "ggml-q8-rhs") throw std::invalid_argument("unknown activation mode");
+            options.activation = activation == "ggml-q8-rhs" ? sam::ActivationMode::CudaVisionQ8Rhs : sam::ActivationMode::BackendSelected;
+        }
         using sam::internal::FeatureCacheMode;
         const auto mode = cache == "f32" ? FeatureCacheMode::F32 : cache == "f16" ? FeatureCacheMode::F16 : FeatureCacheMode::Q8_0;
         if (backend != "cuda" && (mode != FeatureCacheMode::F32 || compute == "f16"))

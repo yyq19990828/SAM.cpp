@@ -250,7 +250,7 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             if quantize_modules is not None:
                 raise ValueError("mixed conversion uses module_precisions instead of --quantize-modules")
             actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, **mixed_policy},
-                                     3 if "tensor_precisions" in mixed_policy else 2)
+                                     config["schema_version"])
         else:
             actual = resolve_weights({"precision": precision, "storage_profile": storage_profile, "modules": quantize_modules})
         if task != "image" or actual != config["weights"]:
@@ -357,7 +357,11 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             original_shapes[name] = list(array.shape)
             qtype = (quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules, **policy_options)
                      if quantized else None)
-            if qtype is not None:
+            if qtype == gguf.GGMLQuantizationType.F16:
+                converted = converted_array(name, array, "f16", dtype="<f2")
+                writer.add_tensor_info(name, shape, converted.dtype, converted.nbytes, raw_dtype=qtype)
+                del converted
+            elif qtype is not None:
                 # The allocation pass records logical dimensions and packed byte size;
                 # payloads are encoded only once, in the subsequent streaming pass.
                 writer.add_tensor_info(name, shape, array.dtype, assignments[name]["bytes"], raw_dtype=qtype)
@@ -374,7 +378,11 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             array = tensor_array(name, tensor)
             qtype = (quantized_tensor_type(name, array.shape, precision, storage_profile, quantization_modules, **policy_options)
                      if quantized else None)
-            if qtype is not None:
+            if qtype == gguf.GGMLQuantizationType.F16:
+                converted = converted_array(name, array, "f16", dtype="<f2")
+                writer.write_tensor_data(converted.reshape(canonical_shape(array.shape)), tensor_endianess=gguf.GGUFEndian.LITTLE)
+                del converted
+            elif qtype is not None:
                 packed = (quantized_array(name, array, precision, storage_profile, quantization_modules, **policy_options)
                           if qtype == gguf.GGMLQuantizationType.Q8_0
                           else quantize_native_rows(name, array, qtype, quantizer_path, quant_workdir))
@@ -457,7 +465,7 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
                     item["quantization_reason"] = quantization_reason_for_tensor(
                         item["name"], original_shapes[item["name"]], precision, storage_profile,
                         quantization_modules, **policy_options)
-            if profile["schema_version"] in (5, 6):
+            if profile["schema_version"] in (5, 6, 7):
                 manifest.update({key: profile[key] for key in ("base_precision", "module_precisions", "tensor_precisions", "policy_sha256") if key in profile})
                 manifest["options"]["row_block_fallback"] = ("Q8_0" if any(
                     row["quantization_reason"] == "q8-row-fallback" for row in assignments.values()) else None)
@@ -476,7 +484,9 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
                                      "module": "gguf.quants.quantize",
                                      "ggml_quantization_version": QUANTIZATION_VERSION}
             if precision == "mixed" and not any(item["dtype"].startswith("q") for item in inventory):
-                manifest["quantizer"] = {"implementation": "none-f32-only-policy"}
+                manifest["quantizer"] = {"implementation": "none-floating-only-policy" if profile["schema_version"] == 7 else "none-f32-only-policy"}
+                if profile["schema_version"] == 7:
+                    manifest["arithmetic_profile"] = ""
             if quantizer_provenance is not None:
                 manifest["quantizer"] = {"implementation": "ggml_quantize_chunk",
                                          "fallback_implementation": "gguf-py",
@@ -485,7 +495,8 @@ def convert(checkpoint, bpe_path, precision, output, task="image", quantizer=Non
             manifest["requirements_lock_sha256"] = sha256_file(Path(__file__).resolve().parents[1] / "requirements.lock")
             for item in inventory:
                 item["output_dtype"] = item["dtype"]
-                item["conversion"] = "quantized-from-original-f32" if item["dtype"].startswith("q") else "preserved-f32"
+                item["conversion"] = ("quantized-from-original-f32" if item["dtype"].startswith("q") else
+                                      "f16-from-original-f32" if item["dtype"] == "float16" else "preserved-f32")
         if precision == "hybrid":
             manifest["storage_profile"] = HYBRID_PROFILE
             manifest["options"]["original_f32_prefixes"] = list(HYBRID_F32_PREFIXES)

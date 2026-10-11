@@ -246,19 +246,26 @@ struct MixedImageQuantizationPolicy {
     std::string base_precision, policy_sha256;
     std::vector<std::pair<std::string, std::string>> module_precisions;
     std::vector<std::pair<std::string, std::string>> tensor_precisions;
+    std::string storage_profile;
 };
 
 inline MixedImageQuantizationPolicy parse_image_mixed_policy(const std::string& base_precision,
                                                              const std::string& csv,
                                                              const std::string& policy_sha256,
-                                                             const std::string& tensor_csv = "") {
+                                                             const std::string& tensor_csv = "",
+                                                             const std::string& storage_profile = "") {
     const auto quantized_format = [](const std::string& value) {
         return modular_image_quantization_profile("image-full-linear-" + value + "-v1") != nullptr;
     };
     if (!quantized_format(base_precision)) throw std::runtime_error("invalid mixed SAM base precision");
     if (csv.size() > 256) throw std::runtime_error("mixed SAM module precision CSV exceeds its bound");
     MixedImageQuantizationPolicy result{base_precision, policy_sha256, {}};
-    std::string encoded = std::string("sam3:") + (tensor_csv.empty() ? "image-mixed-linear-v1" : "image-tensor-mixed-linear-v1") +
+    result.storage_profile = storage_profile.empty() ? (tensor_csv.empty() ? "image-mixed-linear-v1" : "image-tensor-mixed-linear-v1") : storage_profile;
+    const bool allow_f16 = result.storage_profile == "image-mixed-f16-linear-v1";
+    if (!allow_f16 && result.storage_profile != (tensor_csv.empty() ? "image-mixed-linear-v1" : "image-tensor-mixed-linear-v1"))
+        throw std::runtime_error("mixed SAM profile does not match its policy version");
+    bool requested_f16 = false;
+    std::string encoded = std::string("sam3:") + result.storage_profile +
         "\nbase=" + base_precision + "\n";
     std::size_t begin = 0;
     for (const auto* module : image_quantization_module_order()) {
@@ -267,9 +274,10 @@ inline MixedImageQuantizationPolicy parse_image_mixed_policy(const std::string& 
         const auto token = csv.substr(begin, comma == std::string::npos ? comma : comma - begin);
         const std::string prefix = std::string(module) + "=";
         const auto value = token.substr(std::min(prefix.size(), token.size()));
-        if (token.compare(0, prefix.size(), prefix) != 0 || (value != "f32" && !quantized_format(value)))
+        if (token.compare(0, prefix.size(), prefix) != 0 || (value != "f32" && !(allow_f16 && value == "f16") && !quantized_format(value)))
             throw std::runtime_error("mixed SAM module precisions must be canonical module=format CSV");
         result.module_precisions.emplace_back(module, value);
+        requested_f16 = requested_f16 || value == "f16";
         encoded += std::string(module) + "=" + value + "\n";
         begin = comma == std::string::npos ? csv.size() + 1 : comma + 1;
     }
@@ -284,7 +292,7 @@ inline MixedImageQuantizationPolicy parse_image_mixed_policy(const std::string& 
         const auto value = equal == std::string::npos ? "" : field.substr(equal + 1);
         if (name.empty() || name.size() > 127 || !std::all_of(name.begin(), name.end(), [](char c) {
                 return ascii_letter(c) || ascii_digit(c) || c == '_' || c == '.';
-            }) || (value != "f32" && !quantized_format(value)) ||
+            }) || (value != "f32" && !(allow_f16 && value == "f16") && !quantized_format(value)) ||
                 (!result.tensor_precisions.empty() && name <= result.tensor_precisions.back().first) ||
                 result.tensor_precisions.size() >= 348)
             throw std::runtime_error("invalid, duplicate or unsorted exact tensor precision override");
@@ -293,10 +301,12 @@ inline MixedImageQuantizationPolicy parse_image_mixed_policy(const std::string& 
             eligible = eligible || image_modular_linear_weight(name, module);
         if (!eligible) throw std::runtime_error("tensor override is not a SAM linear weight: " + name);
         result.tensor_precisions.emplace_back(name, value);
+        requested_f16 = requested_f16 || value == "f16";
         encoded += "tensor:" + name + "=" + value + "\n";
         if (comma == std::string::npos) break;
         begin = comma + 1;
     }
+    if (allow_f16 && !requested_f16) throw std::runtime_error("mixed F16 policy must explicitly request F16");
     if (sha256(encoded) != policy_sha256) throw std::runtime_error("mixed SAM policy SHA-256 does not match its allocation");
     return result;
 }
@@ -312,12 +322,18 @@ inline ggml_type image_mixed_quantized_tensor_type(const std::string& name,
         if (image_modular_quantized_tensor_type(name, dimensions, *q8, modules) == GGML_TYPE_F32)
             throw std::runtime_error("tensor override targets protected/ineligible storage: " + name);
         if (entry.second == "f32") return GGML_TYPE_F32;
+        if (entry.second == "f16" && policy.storage_profile == "image-mixed-f16-linear-v1") return GGML_TYPE_F16;
         const auto* profile = modular_image_quantization_profile("image-full-linear-" + entry.second + "-v1");
         if (!profile) throw std::runtime_error("invalid resolved tensor precision");
         return image_modular_quantized_tensor_type(name, dimensions, *profile, modules);
     }
     for (const auto& entry : policy.module_precisions) {
         if (entry.second == "f32" || !image_modular_linear_weight(name, entry.first)) continue;
+        if (entry.second == "f16" && policy.storage_profile == "image-mixed-f16-linear-v1") {
+            const auto* q8 = modular_image_quantization_profile("image-full-linear-q8_0-v1");
+            return image_modular_quantized_tensor_type(name, dimensions, *q8, {entry.first}) == GGML_TYPE_F32 ?
+                GGML_TYPE_F32 : GGML_TYPE_F16;
+        }
         const auto* profile = modular_image_quantization_profile("image-full-linear-" + entry.second + "-v1");
         if (!profile) throw std::runtime_error("invalid resolved mixed SAM module precision");
         return image_modular_quantized_tensor_type(name, dimensions, *profile, {entry.first});
@@ -327,20 +343,21 @@ inline ggml_type image_mixed_quantized_tensor_type(const std::string& name,
 
 inline MixedImageQuantizationPolicy read_image_mixed_policy(const GgufReader& reader) {
     const auto schema = reader.u32("sam.schema_version");
-    if ((schema != 5 && schema != 6) || reader.string("sam.storage_profile") !=
-            (schema == 5 ? "image-mixed-linear-v1" : "image-tensor-mixed-linear-v1"))
-        throw std::runtime_error("mixed SAM weights require the matching schema-5/6 profile");
+    const auto storage_profile = reader.string("sam.storage_profile");
+    if ((schema != 5 && schema != 6 && schema != 7) || storage_profile !=
+            (schema == 5 ? "image-mixed-linear-v1" : schema == 6 ? "image-tensor-mixed-linear-v1" : "image-mixed-f16-linear-v1"))
+        throw std::runtime_error("mixed SAM weights require the matching schema-5/6/7 profile");
     if (gguf_find_key(reader.metadata(), "sam.quantization.modules") >= 0)
         throw std::runtime_error("mixed SAM weights require module formats instead of a module list");
     std::string tensor_csv;
-    if (schema == 6) {
+    if (schema == 6 || (schema == 7 && gguf_find_key(reader.metadata(), "sam.quantization.tensor_precisions") >= 0)) {
         tensor_csv = reader.string("sam.quantization.tensor_precisions", 65536);
-        if (tensor_csv.empty()) throw std::runtime_error("schema-6 tensor overrides must not be empty");
+        if (tensor_csv.empty()) throw std::runtime_error("declared tensor overrides must not be empty");
     } else if (gguf_find_key(reader.metadata(), "sam.quantization.tensor_precisions") >= 0) {
-        throw std::runtime_error("tensor override metadata requires schema 6");
+        throw std::runtime_error("tensor override metadata requires schema 6/7");
     }
     auto policy = parse_image_mixed_policy(reader.string("sam.quantization.base_precision", 8),
-        reader.string("sam.quantization.module_precisions", 256), reader.string("sam.quantization.policy_sha256", 64), tensor_csv);
+        reader.string("sam.quantization.module_precisions", 256), reader.string("sam.quantization.policy_sha256", 64), tensor_csv, storage_profile);
     for (const auto& entry : policy.tensor_precisions) {
         const auto& tensors = reader.tensors();
         const auto found = std::find_if(tensors.begin(), tensors.end(), [&](const TensorInfo& tensor) { return tensor.name == entry.first; });
@@ -353,6 +370,15 @@ inline MixedImageQuantizationPolicy read_image_mixed_policy(const GgufReader& re
     if (reader.u32("general.quantization_version") != 2)
         throw std::runtime_error("unsupported GGML quantization version");
     return policy;
+}
+
+inline void validate_f16_payload(const char* payload, std::size_t size) {
+    if (size % sizeof(ggml_fp16_t)) throw std::runtime_error("invalid F16 tensor byte count");
+    for (std::size_t offset = 0; offset < size; offset += sizeof(ggml_fp16_t)) {
+        ggml_fp16_t value;
+        std::memcpy(&value, payload + offset, sizeof(value));
+        if (!std::isfinite(ggml_fp16_to_fp32(value))) throw std::runtime_error("non-finite F16 weight payload");
+    }
 }
 
 inline void validate_quantized_payload(ggml_type type, const std::vector<std::int64_t>& dimensions,
@@ -479,17 +505,17 @@ inline WeightFile inspect_weights(const std::string& path) {
     };
     require_string("general.architecture", "sam3");
     const auto schema = reader.u32("sam.schema_version");
-    if (schema != 1 && schema != 2 && schema != 3 && schema != 4 && schema != 5 && schema != 6)
+    if (schema != 1 && schema != 2 && schema != 3 && schema != 4 && schema != 5 && schema != 6 && schema != 7)
         throw std::runtime_error("unsupported SAM GGUF schema version");
     result.video = schema == 2;
-    result.quantized = schema == 3 || schema == 4 || schema == 5 || schema == 6;
+    result.quantized = schema >= 3;
     result.modular_quantized = schema == 4;
-    result.mixed_quantized = schema == 5 || schema == 6;
+    result.mixed_quantized = schema == 5 || schema == 6 || schema == 7;
     for (const auto* key : {"sam.quantization.base_precision", "sam.quantization.module_precisions", "sam.quantization.policy_sha256"})
-        if (schema != 5 && schema != 6 && gguf_find_key(metadata, key) >= 0)
-            throw std::runtime_error("mixed SAM weight metadata requires schema 5/6");
-    if (schema != 6 && gguf_find_key(metadata, "sam.quantization.tensor_precisions") >= 0)
-        throw std::runtime_error("tensor override metadata requires schema 6");
+        if (!result.mixed_quantized && gguf_find_key(metadata, key) >= 0)
+            throw std::runtime_error("mixed SAM weight metadata requires schema 5/6/7");
+    if (schema != 6 && schema != 7 && gguf_find_key(metadata, "sam.quantization.tensor_precisions") >= 0)
+        throw std::runtime_error("tensor override metadata requires schema 6/7");
     if (result.quantized && gguf_find_key(metadata, "sam.storage_profile") < 0)
         throw std::runtime_error("quantized SAM GGUF is missing its storage profile");
     require_string("sam.task", result.video ? "text_video" : "text_image");
@@ -523,9 +549,9 @@ inline WeightFile inspect_weights(const std::string& path) {
             result.tensor_precisions = mixed_policy.tensor_precisions;
             result.policy_sha256 = mixed_policy.policy_sha256;
             for (const auto& entry : mixed_policy.module_precisions) {
-                bool selected = entry.second != "f32";
+                bool selected = entry.second != "f32" && entry.second != "f16";
                 for (const auto& tensor : mixed_policy.tensor_precisions)
-                    selected = selected || (tensor.second != "f32" && image_modular_linear_weight(tensor.first, entry.first));
+                    selected = selected || (tensor.second != "f32" && tensor.second != "f16" && image_modular_linear_weight(tensor.first, entry.first));
                 if (selected) result.quantization_modules.push_back(entry.first);
             }
         } else if (result.modular_quantized) {

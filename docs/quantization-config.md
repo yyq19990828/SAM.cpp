@@ -101,9 +101,11 @@ python3 tools/quantize/quantization_config.py validate \
 
 The manifest records each tensor's requested and resolved dtype, module selector,
 protection/fallback reason and byte count. CPU conversion, format checks and small
-mixed arithmetic fixtures are validated. Complete-model quality/performance and
-mixed-policy CUDA/Metal execution have not been measured. Existing fixed-preset
-hardware results do not qualify a new mixed policy.
+mixed arithmetic fixtures are validated. A bounded schema-6 module/tensor
+allocation also has full-model CPU/CUDA reference/performance measurements; see the
+[acceptance scope](plans/20261010-193958-quantization-remaining-acceptance.md).
+Mixed Metal execution remains unmeasured. Existing fixed-preset or single-policy
+results do not qualify another mixed policy.
 
 ## Exact tensor overrides and conversion preview
 
@@ -153,6 +155,28 @@ Real conversion still checks values and provenance. Remove `--dry-run`, provide
 checkpoint/BPE and any required native encoder, and use a new `.gguf` output for
 conversion. Each K matrix is encoded once after its layout is planned.
 
+## Mixed F16 weights
+
+Configuration schema 4 adds F16 to module and optional exact tensor formats;
+see the [mixed F16 example](configs/quantization/image-mixed-f16-cpu.json).
+Use `precision=mixed`, a base Q format and at least one explicit F16 request.
+It writes GGUF schema 7, `image-mixed-f16-linear-v1`, with a separate policy hash.
+Schemas 1–3 retain their previous meaning. An exact tensor map, when present,
+must be nonempty; tensor > module > base and all existing protections still apply.
+
+Convert from the original F32 checkpoint using the example with the same conversion
+command above. F16 payloads are rounded directly from F32, with finite/overflow
+checks; they do not pass through a Q encoder. A native encoder is required only
+when an actual resolved tensor uses a K format. Previews list the F16 allocation
+and static CPU promotion bytes, which are not a peak-memory measurement.
+
+CPU promotes each stored F16 tensor to F32 when loading, while retaining packed Q.
+CUDA/Metal retain F16 storage. CPU `native-quantized` still requires actual Q
+weights; an all-F16/F32 policy does not enable quantized arithmetic. F16 storage
+does not independently select F16 activation or compute. Full-model acceptance
+is tracked in the [implementation plan](plans/20261010-213528-mixed-f16-weight-implementation.md);
+Metal hardware validation remains pending.
+
 ## Native CPU quantized matmul
 
 Select `compute.mode=native-quantized` with explicit `backend=cpu` and quantized
@@ -172,9 +196,14 @@ matmuls; it is not whole-graph INT8 activation quantization or a promise of one
 accumulator type throughout the model. RHS types are resolved from pinned CPU
 traits, not captured kernel scratch. Optional build/ISA dispatch can differ.
 Quantized matmuls are pinned to CPU even if BLAS is registered; other operations
-keep their existing placement. The runtime profile is
-`ggml-quantized-cpu-native-v1`. Small CPU fixtures validate this path; full SAM
-quality and performance under the new mode remain unmeasured.
+keep their existing placement. SAM's explicit-backend GGML patch preserves
+these assignments; caller-owned GGML must honor
+the same placement contract. CPU/BLAS coexistence has a real-backend regression
+with a floating-point BLAS positive control. The runtime profile is
+`ggml-quantized-cpu-native-v1`. Small fixtures and a bounded full-SAM CPU study
+validate this path. The study covers two images/six prompts and independent
+single-case performance, with no production-accuracy or general speedup claim;
+see [results and limits](plans/20261010-193958-quantization-remaining-acceptance.md).
 
 Use the public API or image CLI:
 
@@ -196,12 +225,38 @@ requests and unsupported operand types/layouts fail. See the
 [bounded CPU study](quantization-benchmark.md#bounded-cpu-matmul-study) for a
 correctness/performance check without loading a model.
 
+## Explicit CUDA Q8 RHS activation
+
+[Configuration schema 5](configs/quantization/image-vision-q8-rhs-cuda.json) selects
+`activation.mode=ggml-q8-rhs` with Q8_0 vision weights, CUDA, F32 compute and F32
+cache. Schemas 1–4 retain `backend-selected`; GGUF weight formats are unchanged.
+`BackendOptions::activation = ActivationMode::CudaVisionQ8Rhs` and the image CLI
+option `--activation ggml-q8-rhs` expose the same policy. Use separate baseline
+and candidate configuration files to compare activation modes on one GGUF.
+
+The four linears in each of 32 vision blocks force CUDA MMQ D4: 32-value dynamic
+Q8 blocks, F32 scales, 512-value row padding and F32 graph input/output. Attention,
+convolutions and other modules keep their existing policies. This requires the
+pinned version-1 extension and CUDA compute capability at least 8.9; unsupported
+hardware, non-Q8_0 vision linears, video, reduced compute/cache or incompatible
+shapes fail. There is no MMVQ/cuBLAS/floating fallback for selected linears.
+
+Each execution checks finite F32 inputs and requires each nonzero 32-value
+block's maximum absolute value in `[1e-30,1e30]`; zero blocks are supported.
+The range check synchronizes the CUDA stream and contributes to measured cost.
+`ModelInfo::activation_policy` reports the resolved policy. `RuntimeStats`
+records requests, actual MMQ launches and peak payload/allocation bytes; a
+successful vision encode requires exactly 128 requests and launches. Model
+policies are immutable and sessions retain their owning model; changed prompts
+and repeated predictions reuse features without adding vision launches.
+See the [implementation and acceptance scope](plans/20261010-215837-native-activation-runtime.md).
+
 ## Supported combinations
 
 | Choice | CPU | Metal | CUDA |
 | --- | --- | --- | --- |
-| Image weights | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K; module/exact tensor mixed policy | Same stored formats; mixed hardware unverified | Same stored formats; mixed hardware unverified |
-| Independent activation mode | `backend-selected` only | `backend-selected` only | `backend-selected` only |
+| Image weights | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K; module/exact tensor mixed policy | Same stored formats; mixed hardware unverified | Same stored formats; bounded mixed policies tested |
+| Independent activation mode | `backend-selected` only | `backend-selected` only | `backend-selected` / bounded `ggml-q8-rhs` |
 | Compute policy | `f32` / opt-in `native-quantized` | `f32` | `f32` / `f16` |
 | Image-feature cache | `f32` | `f32` | `f32` / `f16` / `mixed-q8_0` in private image probes |
 | Current export/performance runner | Supported path | Unavailable; inspection only | Supported path |
@@ -225,8 +280,8 @@ The following requests fail instead of falling back silently:
 
 | Request | Current result |
 | --- | --- |
-| Regex/wildcard tensor rules, protected tensor overrides or mixed F16 | Unavailable; schema 3 accepts exact eligible tensor names with F32/Q8/Q6/Q5/Q4 |
-| Explicit INT8/FP8/F16 activation mode | Not implemented; studies/probes do not enable a native mode |
+| Regex/wildcard tensor rules or protected tensor overrides | Unavailable; schema 3 accepts exact F32/Q formats; schema 4 adds mixed F16 |
+| Whole-graph INT8/FP8/F16 activation mode | Unavailable; only the bounded CUDA Q8 RHS policy above is implemented |
 | CPU/Metal F16 compute or reduced image cache | Unsupported by this configuration |
 | Native CPU mode without actual Q matrices or with another backend | Error; no silent fallback under the native profile |
 | Reduced cache through the public C++ API | Unavailable; private native image probes only |
@@ -236,7 +291,7 @@ The following requests fail instead of falling back silently:
 | Backend `auto` or unknown axes/options | Error; explicit backend and known fields are required |
 
 The public C++ `BackendOptions` selects backend/threads/device, CPU matmul policy
-and CUDA compute policy; it has no JSON loader, independent activation option or reduced
+and CUDA compute/activation policies; it has no JSON loader or reduced
 cache selector. `validate --context public-api` checks whether these settings
 can be represented there; it does not load a model or create that API.
 

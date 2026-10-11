@@ -195,7 +195,7 @@ policies and `execution_evidence`; a model name is not its whole-graph arithmeti
 | Dimension | Setting | Meaning and evidence |
 | --- | --- | --- |
 | Weights | `weights.precision` with `modules` / `storage_profile`, schema-2 `base_precision` / `module_precisions`, or schema-3 exact `tensor_precisions` | GGUF may mix protected F32, selected Q formats and Q8 fallbacks; inspect policy hash, per-type counts/bytes and assignment reasons |
-| Activations | `activation.mode=backend-selected` | No independent native INT8/FP8/F16 activation switch; kernels may transform/quantize RHS; numerical probes are not deployment modes |
+| Activations | `backend-selected` / config-schema-5 `ggml-q8-rhs` | Bounded CUDA Q8_0 vision linears force MMQ D4; reports check 128 requests/actual launches per vision encode and scratch byte counts; excludes whole-graph INT8/FP8 |
 | Compute | `compute.mode` | CPU `f32` decodes Q weights; CPU `native-quantized` keeps packed weights and permits internal Q8 RHS packing. CUDA F16 hints apply to eligible floating-point matmuls/attention; quantized matmuls retain their dispatch |
 | Cache | `cache.mode` | Image levels 0/1/2 use F32/F32/F32, F16/F16/F16 or mixed Q8_0/Q8_0/F32; this is not an LLM KV cache |
 
@@ -206,7 +206,7 @@ explicit CUDA and belong to probes. CPU loading promotes F16 weights to F32;
 the default casts Q matrices to temporary F32 operands, while native mode keeps
 Q operands. Smaller files need not reduce runtime memory proportionally.
 Exact eligible tensor overrides are supported;
-regex/wildcards, mixed F16, independent activation quantization and universal
+regex/wildcards, whole-graph activation quantization and universal
 kernel precision guarantees are not implemented.
 
 Inspect stored weights and resolved policies without inference:
@@ -244,6 +244,36 @@ API and invalid combinations. Paired `performance` accepts native CPU configs or
 `--candidate-compute native-quantized` with an explicit CPU backend; quality
 reports remain optional.
 
+## Bounded full-model application measurements
+
+One schema-6 module/tensor allocation was measured on i7-12700KF and RTX 4090,
+using two existing images, six prompts and six original-checkpoint reference
+objects. All three mixed runs had zero missing/added objects at score > 0.5:
+
+| Mixed execution | Matched mask IoU mean | Matched mask IoU minimum |
+| --- | ---: | ---: |
+| CPU F32 decode | 0.998279 | 0.996401 |
+| CPU native quantized | 0.998174 | 0.995988 |
+| CUDA F32 policy | 0.997331 | 0.994643 |
+
+Independent four-thread performance used one groceries case with paper bag/car
+prompts. CPU compared the same mixed weights, with one process pair, one warmup
+and three samples; CUDA compared dense F32 against mixed weights, with two AB/BA
+pairs, two warmups and five samples. Memory used separate processes:
+
+| Comparison | Full-image P50 baseline → candidate (ms) | Process peak baseline → candidate (decimal GB) |
+| --- | ---: | ---: |
+| CPU decode → native | 31016.381 → 20388.631 | RSS 2.387 → 2.369 |
+| CUDA F32 → mixed | 493.320 → 385.229 | GPU 4.777 → 2.477; RSS 1.011 → 1.044 |
+
+Changed-prompt P50 fell 4.6% on CPU and 5.8% on CUDA. Result-cache hits stayed
+near 11 ms. CPU RSS fell only 0.75%; CUDA host RSS increased 3.3%. These are
+descriptive results for one allocation and a small reused application set,
+without a production-accuracy, independent-holdout or general speedup claim.
+Metal and kernel-internal capture remain unmeasured. Exact configuration,
+protocols and local evidence availability are in the
+[acceptance plan](plans/20261010-193958-quantization-remaining-acceptance.md).
+
 ## Bounded CPU matmul study
 
 The following tool requires no checkpoint or images and creates a new directory:
@@ -276,9 +306,9 @@ to these shapes/build/thread settings, and do not establish full SAM speedups.
 Implementation findings and measurements are retained in the
 [plan](plans/20261010-174613-cpu-native-quantized-matmul.md).
 
-## CPU execution cost diagnostics
+## CPU and CUDA execution cost diagnostics
 
-Use `execution-cost` to inspect the cost of one image and one prompt on CPU,
+Use `execution-cost` to inspect the cost of one image and one prompt on CPU or CUDA,
 independently of quality reports and paired performance measurements. The model
 must retain its conversion manifest. For example, after building tools with
 CUDA/Metal disabled:
@@ -295,8 +325,10 @@ cmake --build build/quant-cpu --target sam_execution_cost_probe -j 2
 This explicitly runs a full image inference once, with CPU/F32 compute/F32
 cache and four threads; it is not a schema-only preview. No model weights are
 copied into the result directory. The default timeout is 1,800 seconds per child;
-set `--timeout` as needed. Validation in this delivery used bounded matrix
-fixtures, not a complete-model run or a GPU campaign.
+set `--timeout` as needed. Bounded matrix fixtures and a complete schema-6 mixed
+model have exercised both CPU modes. The complete graph observed 285 Q→F32
+casts in default mode versus 285 packed CPU matmuls and zero such casts in
+native mode; see [scope and evidence](plans/20261010-193958-quantization-remaining-acceptance.md).
 
 To diagnose native CPU compute, use
 `docs/configs/quantization/image-tensor-mixed-cpu-native.json` with a matching
@@ -323,6 +355,23 @@ individually timed. Internal RHS packing may occur inside matmul but is not
 separately measured; it and kernel arithmetic remain `NOT_COLLECTED`. These
 costs explain a path, not a speedup. Use unobserved `performance` runs for gains;
 their default behavior is unchanged.
+
+For CUDA, build the probe with `GGML_CUDA=ON` and use a CUDA configuration,
+or pass `--backend cuda --compute f32`. F32/F16 compute and F32 cache are supported.
+The nested CUDA cost format is `sam-cuda-execution-cost-v2`; CPU v1 reports retain
+their existing meaning. Every compute node must actually execute on CUDA.
+These synchronized wall times include dispatch and synchronization; they are
+not CUDA event timestamps or isolated kernel packing/arithmetic measurements.
+
+`sam_cpu_kernel_capture_probe --output NEW_DIR` is a separate bounded synthetic
+diagnostic for actual CPU dot/tiled RHS scratch and internal phase boundaries.
+It requires the pinned optional CPU extension and idle CPU graphs while its
+process-local observer is installed. Set `GGML_CPU_TILED_MM=0` for dot-only,
+or `GGML_CPU_TILED_MM=1 GGML_CPU_TILED_MM_FORCE=1` to exercise supported tiled
+K formats. Payloads, original inputs/weights/outputs and phase times are saved.
+Times include worker barriers and exclude the scratch-copy callback from the
+arithmetic interval. This probe has no checkpoint or whole-model speed claim;
+the graph cost report's kernel internals remain `NOT_COLLECTED`.
 
 ## Historical results
 

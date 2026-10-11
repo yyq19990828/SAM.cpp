@@ -56,6 +56,8 @@ struct ModelDefinition {
                                int width, int height, RuntimeStats& stats, bool video = false) const {
         const auto start = std::chrono::steady_clock::now();
         const auto& hp = weights.hparams;
+        const auto activation_before = stats.activation_mmq_launches;
+        const auto requests_before = stats.activation_requests;
         if (video && runtime.feature_cache_type() != GGML_TYPE_F32)
             throw std::invalid_argument("experimental image feature caches do not apply to video");
         ImageFeatures features;
@@ -109,6 +111,12 @@ struct ModelDefinition {
             upload(position, features.position, stats, &runtime);
             execution.compute();
             features.geometry = download(output.geo_feats, stats, &runtime);
+        }
+        if (runtime.activation_policy().enabled()) {
+            const auto expected = weights.vit.blocks.size() * 4;
+            if (stats.activation_mmq_launches - activation_before != expected ||
+                stats.activation_requests - requests_before != expected)
+                throw std::runtime_error("vision activation requests differ from actual MMQ dispatches");
         }
         ++stats.vision_encodes;
         stats.image_ms = elapsed_ms(start);

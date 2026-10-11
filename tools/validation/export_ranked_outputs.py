@@ -139,6 +139,8 @@ def export_native(args, samples, input_rows, identities, recipe):
     with (args.output / "native.log").open("x") as log:
         command = ["rtk", "proxy", str(args.binary.resolve()), str(args.model.resolve()), str(table.resolve()),
                    args.backend, args.cache, args.compute, str(raw.resolve())]
+        if recipe.get("activation", "backend-selected") != "backend-selected":
+            command.append(recipe["activation"])
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
     receipt = read_json(raw / "run.json")
     if (receipt.get("complete") is not True or receipt.get("cases") != len(entries)

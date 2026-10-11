@@ -25,6 +25,10 @@ def run_process(binary, model, recipe, case, kind, output, diagnostic=False, *, 
                recipe["feature_cache"], recipe["compute_mode"], kind, str(output)]
     if protocol is not None:
         command.extend([str(protocol[kind]["warmups"]), str(protocol[kind]["iterations"])])
+    if recipe.get("activation", "backend-selected") != "backend-selected":
+        if protocol is None:
+            raise ValueError("explicit activation performance requires an explicit measurement protocol")
+        command.append(recipe["activation"])
     gpu, memory = recipe["backend"] == "cuda", kind == "memory"
     before = cuda_processes() if gpu else []
     if before and not diagnostic:

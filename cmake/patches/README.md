@@ -1,6 +1,6 @@
 # GGML precision and window patches
 
-All three patches target official [GGML v0.26.0](https://github.com/ggml-org/ggml/commit/d7cb574130e6f01ad25b3289685489200febcd74)
+All six patches target official [GGML v0.26.0](https://github.com/ggml-org/ggml/commit/d7cb574130e6f01ad25b3289685489200febcd74)
 commit `d7cb574130e6f01ad25b3289685489200febcd74` (MIT; upstream license retained).
 SAM prepares and patches a separate build-local copy; the supplied source checkout stays read-only.
 
@@ -119,6 +119,51 @@ weight formats or tensor representations. `tests/runtime/ggml/test_cuda_copy.cpp
 logical order, raw same-type bits, conversions, padding and layout boundaries.
 
 
+## Explicit backend placement
+
+`ggml-explicit-backend.patch` preserves caller-assigned compute backends through
+the scheduler's same-buffer priority upgrade. CPU and BLAS share host buffers;
+moving an explicitly pinned packed-Q matmul to BLAS would change its arithmetic.
+Unassigned floating-point operations retain normal BLAS scheduling. The CPU/BLAS
+coexistence test requires a real BLAS positive control and checks four packed Q
+formats, QKV views, changed-RHS reuse and the 4736-wide Q8 fallback. Caller-owned
+GGML targets must also preserve explicit assignments.
+
+## CPU kernel boundary diagnostics
+
+`ggml-kernel-capture.patch` adds an optional, versioned CPU registry extension
+for synchronized dot and tiled MUL_MAT boundaries. It borrows the actual
+Q8_0/Q8_K RHS scratch after parallel packing and measures packing/arithmetic
+wall intervals including worker barriers. Installing/removing the process-local
+observer requires all CPU graphs to be idle. Callbacks cannot throw, reenter
+GGML or retain scratch pointers. Normal execution has no extra barriers; the
+diagnostic probe copies bytes only while explicitly enabled. Successful early
+LLAMAFILE or repacked-buffer paths are outside this interface; consumers must
+reject missing phase pairs rather than infer their arithmetic.
+
+The independent CPU probe verifies scratch bytes, Q8_K sums, decoded scalar
+dots, changed-RHS/QKV/strided-input execution, resident weights and callback
+removal. Its synthetic diagnostic times are not model speed measurements.
+Caller-owned GGML without the extension remains usable for ordinary inference;
+the diagnostic probe reports unsupported.
+
+## Explicit CUDA activation policy
+
+`ggml-native-activation.patch` adds optional version-1 configure/query/capture
+registry functions. Selected Q8_0-by-F32 linears on CUDA cc>=8.9 force MMQ D4;
+the default dispatcher is unchanged. Unsupported types/layouts/shapes fail.
+Every selected execution validates finite F32 RHS values and nonzero block
+maxima in `[1e-30,1e30]` before packing. Bitwise checks preserve rejection of
+subnormals under fast-math FTZ. Range validation synchronizes the stream and
+disables CUDA graph capture for selected nodes.
+
+Actual MMQ dispatches increment node-local counters with payload/allocation byte
+counts. An optional idle-installed callback borrows actual device scratch after
+packing; it cannot throw, reenter GGML or retain pool pointers. Normal forced
+execution does not install this capture. The independent CUDA regression checks
+captured D4 scales/codes/padding, scalar dots, changed RHS, range rejection and
+recovery. The extension does not promise whole-model INT8 or a speedup.
+
 ## Source verification
 
 CMake verifies every source file, the patch hashes and the resulting tree.
@@ -133,17 +178,24 @@ unchanged and the result must match the current combined tree hash.
 - Metal patch SHA-256: `86e7140e59a8eaa8c8d83eabe3102f199a83527cbb7be9c81c8aba05001f4efb`.
 - CUDA patch SHA-256: `fe72eb82724131a945eefca035e644dea76e9de25030baa61bd6bd9ca2221522`.
 - Short-dot CUDA patch SHA-256: `45401f8e17327557364a95d90d78fb0c2e103e4077c01e38e4ddc4fc17c80707`.
+- Explicit-backend patch SHA-256: `05a1f007eac27130860822c8644c82fcbeb0cd6b3afae5973b3091d93feae1c6`.
+- CPU kernel capture patch SHA-256: `7c87f99f027e8e0b709f91acc6bb6275c6af5b6558cc9c6c3f6e386f4720d109`.
+- Native activation patch SHA-256: `3610cb67714339da2bb98aaff13b70021bc4cd320a46b82946da381b69a4e8c4`.
 - Original source-tree SHA-256: `43c54450bdc1ad5d3a5dd16d69507fa2b740d2f3283cb80f9034e9d669c79fa1`.
 - Metal-only source-tree SHA-256: `026988224220506e00cfab5477f1a11c5e926e4a090eb03575d4120d29e536f4`.
 - Historical Metal/CUDA source-tree SHA-256: `37f787b8a432f2399e9ee50270f8d025378c605ae23f5efaae6a6ae9148fd5cb`.
 - Prior Metal/CUDA source-tree SHA-256: `53160f73b48567c11dd42b66b89af7776cef6b7fb42374ec00e1cec6deadbca7`.
-- Combined source-tree SHA-256: `4394cdc89f35b65c1642f45be122d6301e397480ff0d1f9a519237703dfe1d1f`.
+- Prior three-patch source-tree SHA-256: `4394cdc89f35b65c1642f45be122d6301e397480ff0d1f9a519237703dfe1d1f`.
+- Prior four-patch source-tree SHA-256: `981aa6ce7634bf00db766a0793efd76ae62f8b64a7af90e67ca759d8f8547b0c`.
+- Prior five-patch source-tree SHA-256: `15102cfbd8e2d29114c3f7645a271ce0df408fabc052ed01b0a129f01322bec9`.
+- Combined source-tree SHA-256: `36b384356d23e24a41132b5e4566d335822fdc39fc9c72a336188c525f4c1392`.
 
 The touched-file SHA-256 values below are generated from the pinned original
 and patched trees. A dash denotes a file added by the patch.
 
 | File | Base | Patched |
 | --- | --- | --- |
+| `src/ggml-backend.cpp` | `cdb79f2937aa147084a76f949adc0eb760ad1883e0ccc015bb4e0f599c89bd5f` | `d5cc77a999a65caebacc4b642e49cd67f857b675f6940f614fc07409cd1e5623` |
 | `src/ggml-metal/ggml-metal-device.cpp` | `c91ad5f2d2770e7d1d77fb65384b38e87105695487759b1d52ae259a30636866` | `11cac660b37aac9e092ea37c83182c46cc66b9117561fb102c48d8fd376958ae` |
 | `src/ggml-metal/ggml-metal-device.h` | `2ed9ef4d671222d895e312a0feb16ec640c08a0bfa500f4b09a1cc6733e088b6` | `c672a6cca575b1915a4137596e71e6ccf6dd413fa3e559b4f1b473f1430d6447` |
 | `src/ggml-metal/ggml-metal-device.m` | `3f520d505e99ece2eac65607dd7e9e670c93ca77e32b5d31c766359f57204cdd` | `e24a10f76822d8f8e57c817dad4ba2ea08e842c2aa8b79ab3c3a7a60a59ae71d` |
@@ -157,10 +209,22 @@ and patched trees. A dash denotes a file added by the patch.
 | `src/ggml-cuda/concat.cu` | `3cba4d2a26e6a70970ae9b77017f449e41d48e9b1297ba64966e18c6146e53db` | `9eca3e1c5f5ae55c01f6b718e81d002e6432064c8668fc1e82c4b1403bc45b7e` |
 | `src/ggml-cuda/cpy.cu` | `d0bee0ec1fb79f6fdbe1d39719c2a595e0bd6f51bbaea6536284848f80637341` | `306911de61305c4dd27d4a9f998bb480ff7d4d15acdded807b8abec5f33f166a` |
 | `src/ggml-cuda/fattn.cu` | `8cd53030107e6956288c2cc1f3e2dc245ef2332b0c39bc23cacadbda3a997aa9` | `e3bc0ddbfb6c56e806be478ce869df42e32386aca043f3bc20141473b4e8da24` |
-| `src/ggml-cuda/ggml-cuda.cu` | `1315f06baff63da74e085b7ec01974474dac1f8ec1074af13eb70faba4751961` | `d590be61f3089c03571d61f0d297989329324284a6fc7d023800b1800c686bd0` |
+| `src/ggml-cuda/ggml-cuda.cu` | `1315f06baff63da74e085b7ec01974474dac1f8ec1074af13eb70faba4751961` | `0f5f69ae4b3a522565964ba6851183368205f7bfef4b7853c8786ab3b679a224` |
+| `include/ggml-sam.h` | — | `10e6940cf65f1860233c392605526fd6bec27887ae74f34e4aa181f4b0243445` |
+| `src/ggml-cuda/mmq.cu` | `94111d3fbebfe82f8d36b1cf07471c477ba8d9bd287bfd7934ce97a13004bdbd` | `72043c190e091c37ff89278915f85fdc931328bcdedee92c7767b2e049c0b05c` |
+| `src/ggml-cuda/sam-q8-rhs.cuh` | — | `618f5f4c965e6be3f8c25b21c70182627de37e59fd943e2416d87e586dfdf8c5` |
 | `src/ggml-cuda/quantize.cu` | `71cd7baab62ee1f457d23ae648c381d18b9b1327ec34832f31463b14b81895b3` | `cbec7e20acde0ce44684a25a2c1fbcd038dc737186bc18497edd611371b105b9` |
 | `src/ggml-cuda/sam-precise.cu` | — | `e392279533a88500ed0aaca87f3377986deaa5f785c3c9cb23cb134bf6cc6837` |
 | `src/ggml-cuda/sam-precise.cuh` | — | `22bec48bf03f9edc53f43f65ecd6189d9f0f18e4f3e7f0aa11161b83620756e4` |
+
+CPU diagnostic boundary files:
+
+| Path | Original SHA-256 | Patched SHA-256 |
+| --- | --- | --- |
+| `include/ggml-cpu.h` | `316279e004cdeb8e6ef78599acb602bf79a8abdf897fed9fd1914808c1518c6e` | `63bde855fbbe08ce02d77cd02873fce7dbe8041ecf3ad9471a2baa1f01ca84c5` |
+| `src/ggml-cpu/ggml-cpu.c` | `45b22f8c83b2cbccabfc2f81a38ef8a5810223e1ce366b7c6f77d42faa5cc6f3` | `2db0932f97738ba36d14c9d4819e0c65d829cf2dcbd9d77c0eb2aedcb6be180f` |
+| `src/ggml-cpu/ggml-cpu.cpp` | `ccf382d3fbf126b5ddb5850a0a970656fb24e00587da4003419439277c91cd01` | `9eda462405250691f4c5f89a143707d43a48301c1e36ec49f281fecfb67fe40c` |
+| `src/ggml-cpu/tiled/tiled.cpp` | `a5d92ce8f617696778e225de6658180649143fec3792c5cfef84170641f2d06e` | `fcca494a6bb7cb819095976d7cee705a2767e507f4ab931a07a26926c96b6e54` |
 
 ## Validation status
 

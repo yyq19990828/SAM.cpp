@@ -18,8 +18,8 @@ inference; the existing separate CLI options remain available.
 
 | Dimension | Current implementation | Configuration boundary |
 | --- | --- | --- |
-| Weight storage | F32/F16 and Q8_0/Q6_K/Q5_K/Q4_K image linears; mixed F32/Q formats | Module formats use config schema 2/GGUF schema 5; exact tensor overrides use config schema 3/GGUF schema 6; protection/Q8 exceptions remain; mixed F16 is unavailable |
-| Activations | Mostly F32 graph buffers; backend kernels may stage/quantize operands internally | W8A8/FP8 tools are studies/probes, not complete deployable model profiles |
+| Weight storage | F32/F16 and Q8_0/Q6_K/Q5_K/Q4_K image linears; mixed F32/F16/Q formats | Module formats use config schema 2/GGUF schema 5; exact tensor overrides use config schema 3/GGUF schema 6; config schema 4/GGUF schema 7 adds F16; protection/Q8 exceptions remain |
+| Activations | F32 graph buffers; opt-in dynamic Q8 RHS for Q8_0 CUDA vision linears | [Config schema 5](quantization-config.md#explicit-cuda-q8-rhs-activation) forces MMQ D4 with execution counts; whole-model W8A8/FP8 remains a study |
 | Arithmetic | CPU F32 or opt-in native quantized matmul; CUDA F32/F16 policies; kernel dispatch depends on type/shape/backend | CPU native matmul can pack F32 RHS into Q8 internally; no policy guarantees one operand/accumulator dtype for the whole graph |
 | Feature cache | F32 plus experimental F16/mixed-Q8_0 image caches | Probe options on CUDA; mixed Q8 keeps the low-resolution detection feature F32; public loading retains existing cache precision |
 
@@ -181,13 +181,15 @@ retention reason. Loaded schema-4 models report the selected components through
 For different formats per module, use the [schema-2 mixed configuration](quantization-config.md#module-mixed-weights)
 and [CPU example](configs/quantization/image-mixed-cpu.json). Conversion creates
 `image-mixed-linear-v1` (SAM GGUF schema 5) directly from the original F32
-checkpoint. CPU conversion and small arithmetic fixtures are validated;
-complete-model quality/performance and mixed CUDA/Metal execution remain unmeasured.
+checkpoint. CPU conversion and small arithmetic fixtures are validated. A
+schema-6 module/tensor example additionally has bounded full-model CPU/CUDA
+reference/performance measurements; mixed Metal execution remains unmeasured.
+See the [measured allocation and limits](plans/20261010-193958-quantization-remaining-acceptance.md).
 
 Use [exact tensor configuration and preview](quantization-config.md#exact-tensor-overrides-and-conversion-preview)
 to resolve individual eligible matrices before conversion. `--dry-run` writes
 allocation/size/disk estimates without a checkpoint, encoder or backend. For
-runtime diagnosis, [CPU execution costs](quantization-benchmark.md#cpu-execution-cost-diagnostics)
+runtime diagnosis, [CPU/CUDA execution costs](quantization-benchmark.md#cpu-and-cuda-execution-cost-diagnostics)
 report observed casts, matmuls and transfers separately from performance benefits.
 
 Use `tools/validation/validate_image.py --allow-custom-quantization` for a separate
@@ -224,8 +226,9 @@ dot/tiled kernels pack F32 RHS into Q8_0 for Q8_0 weights or Q8_K for K weights;
 integer partial dots, floating-point scales/reduction and F32 outputs are distinct
 precision boundaries. Other graph activations/operations keep existing policies;
 this is not full-model INT8 activation quantization. The mode requires actual Q
-weights and pins their matmuls to CPU, even with BLAS. Small fixtures are validated;
-full-model quality/performance under this mode remain unmeasured. See
+weights and pins their matmuls to CPU, even with BLAS. Small fixtures and bounded
+full-model CPU reference/performance measurements are available. See the
+[measured allocation and limits](plans/20261010-193958-quantization-remaining-acceptance.md),
 [configuration](quantization-config.md#native-cpu-quantized-matmul) and the
 [bounded operator study](quantization-benchmark.md#bounded-cpu-matmul-study).
 

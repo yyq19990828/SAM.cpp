@@ -328,6 +328,18 @@ void test_images() {
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({static_cast<sam::Backend>(99), 4}); }, "unknown backend was accepted");
     sam::internal::validate_backend_options({sam::Backend::Cuda, 4, 2});
     sam::internal::validate_backend_options({sam::Backend::Cuda, 4, 0, sam::CudaComputeMode::F16});
+    sam::BackendOptions activation{sam::Backend::Cuda, 4};
+    activation.activation = sam::ActivationMode::CudaVisionQ8Rhs;
+    sam::internal::validate_backend_options(activation);
+    activation.cuda_compute = sam::CudaComputeMode::F16;
+    rejects<std::invalid_argument>([&] { sam::internal::validate_backend_options(activation); }, "Q8 RHS accepted F16 compute");
+    activation.cuda_compute = sam::CudaComputeMode::F32;
+    for (const auto backend : {sam::Backend::Auto, sam::Backend::Cpu, sam::Backend::Metal}) {
+        activation.backend = backend;
+        rejects<std::invalid_argument>([&] { sam::internal::validate_backend_options(activation); }, "Q8 RHS accepted a non-CUDA backend");
+    }
+    activation.activation = static_cast<sam::ActivationMode>(99);
+    rejects<std::invalid_argument>([&] { sam::internal::validate_backend_options(activation); }, "unknown activation enum accepted");
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cpu, 4, 0, sam::CudaComputeMode::F16}); }, "CUDA F16 compute was accepted for CPU");
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cuda, 4, 0, static_cast<sam::CudaComputeMode>(99)}); }, "unknown CUDA compute mode was accepted");
     rejects<std::invalid_argument>([] { sam::internal::validate_backend_options({sam::Backend::Cuda, 4, -1}); }, "negative CUDA device was accepted");

@@ -158,7 +158,14 @@ public:
         const auto observer = runtime_.graph_observer();
         if (observer) observer->computing(context, graph, scheduler_.get());
         const auto start = std::chrono::steady_clock::now();
-        const auto status = ggml_backend_sched_graph_compute(scheduler_.get(), graph);
+        ggml_status status;
+        try {
+            status = ggml_backend_sched_graph_compute(scheduler_.get(), graph);
+        } catch (...) {
+            if (observer) ggml_backend_sched_set_eval_callback(scheduler_.get(), nullptr, nullptr);
+            release();
+            throw;
+        }
         ++diagnostics_.compute_calls;
         const auto compute_ms = elapsed_ms(start);
         diagnostics_.compute_ms += compute_ms;

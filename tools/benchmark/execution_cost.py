@@ -1,4 +1,4 @@
-"""Independent, hash-bound CPU execution diagnostics; never a performance verdict."""
+"""Independent, hash-bound CPU/CUDA execution diagnostics; never a performance verdict."""
 
 import math
 from pathlib import Path
@@ -15,12 +15,14 @@ def finite_nonnegative(value, label):
 
 
 def validate_cost(value):
-    if (type(value.get("schema_version")) is not int or value["schema_version"] != 1 or value.get("kind") != "sam-cpu-execution-cost-v1"
+    cuda = value.get("backend") == "cuda"
+    if (type(value.get("schema_version")) is not int or value["schema_version"] != (2 if cuda else 1)
+            or value.get("kind") != ("sam-cuda-execution-cost-v2" if cuda else "sam-cpu-execution-cost-v1")
             or value.get("complete") is not True or value.get("diagnostic_only") is not True
-            or value.get("performance_comparable") is not False or value.get("backend") != "cpu"
+            or value.get("performance_comparable") is not False or value.get("backend") not in ("cpu", "cuda")
             or value.get("kernel_internal_rhs_packing") != "NOT_COLLECTED"
             or value.get("kernel_internal_arithmetic") != "NOT_COLLECTED"):
-        raise ValueError("cost report must declare observed CPU diagnostics and uncollected kernel internals")
+        raise ValueError("cost report must declare versioned observed diagnostics and uncollected kernel internals")
     for key in ("graph_compute_wall_ms", "graph_bind_wall_ms", "graph_arena_peak_bytes"):
         finite_nonnegative(value[key], key)
     if not value["graphs"] or not value["nodes"]:
@@ -35,7 +37,9 @@ def validate_cost(value):
     categories, node_total = {}, 0
     for node in value["nodes"]:
         if (type(node["graph"]) is not int or not 0 <= node["graph"] < len(value["graphs"])
-                or node["backend"] not in ("CPU", "BLAS", "UNASSIGNED")
+                or not isinstance(node["backend"], str)
+                or (not cuda and node["backend"] not in ("CPU", "BLAS", "UNASSIGNED"))
+                or (cuda and not node["backend"].startswith("CUDA") and node["category"] != "metadata")
                 or type(node["calls"]) is not int or node["calls"] < 0):
             raise ValueError("cost node placement or execution count is invalid")
         if node["calls"] and node["category"] != "metadata" and node["backend"] == "UNASSIGNED":
@@ -75,8 +79,9 @@ def run(args):
     from tools.maintenance.artifact_snapshot import native_snapshot
     if args.output.exists():
         raise FileExistsError("execution-cost requires a new output directory")
-    if args.backend != "cpu" or args.compute not in ("f32", "native-quantized") or args.cache != "f32":
-        raise ValueError("execution-cost supports explicit CPU F32/native-quantized compute and F32 cache only")
+    if (args.backend not in ("cpu", "cuda") or args.cache != "f32" or
+            args.compute not in ({"f32", "native-quantized"} if args.backend == "cpu" else {"f32", "f16"})):
+        raise ValueError("execution-cost supports CPU F32/native-quantized or CUDA F32/F16, with F32 cache")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError("execution-cost timeout must be finite and positive")
     recipe = native_recipe(args)
@@ -86,9 +91,13 @@ def run(args):
     verify_run_artifacts(identities)
     args.output.mkdir(parents=True)
     command = [str(args.binary.resolve()), "--model", str(args.model.resolve()), "--image", str(args.image.resolve()),
-               "--text", args.text, "--backend", "cpu", "--threads", "4", "--output", str((args.output / "probe").resolve())]
+               "--text", args.text, "--backend", args.backend, "--threads", "4", "--output", str((args.output / "probe").resolve())]
     if args.compute == "native-quantized":
         command.extend(["--cpu-compute", "native-quantized"])
+    elif args.backend == "cuda":
+        command.extend(["--cuda-compute", args.compute])
+    if recipe.get("activation", "backend-selected") != "backend-selected":
+        command.extend(["--activation", recipe["activation"]])
     try:
         process = subprocess.run(command, check=True, capture_output=True, text=True, timeout=args.timeout)
     except subprocess.TimeoutExpired as error:
@@ -103,15 +112,19 @@ def run(args):
             or raw.get("prompt") != args.text or raw.get("threads") != 4
             or raw.get("precision") != recipe["weight_precision"] or raw.get("storage_profile") != recipe["storage_profile"]
             or raw.get("arithmetic_profile") != expected_runtime_profile(recipe)
-            or (args.compute == "native-quantized" and not native_compute_policy_matches(raw, recipe))
+            or ((args.compute != "f32" or recipe.get("activation", "backend-selected") != "backend-selected")
+                and not native_compute_policy_matches(raw, recipe))
             or raw.get("quantization_modules") != recipe["quantization_modules"] or not native_weight_policy_matches(raw, recipe)):
         raise ValueError("cost probe result differs from the requested model/runtime recipe")
     validate_cost(raw["execution_cost"])
+    if raw["execution_cost"]["backend"] != args.backend:
+        raise ValueError("cost observer backend differs from requested backend")
     if args.compute == "native-quantized":
         validate_native_cpu_cost(raw["execution_cost"])
     stats = raw["runtime"]
-    if not stats["cpu_nodes"] or stats["cuda_nodes"] or stats["metal_nodes"]:
-        raise ValueError("cost inference escaped CPU placement")
+    if ((args.backend == "cpu" and (not stats["cpu_nodes"] or stats["cuda_nodes"] or stats["metal_nodes"])) or
+            (args.backend == "cuda" and (not stats["cuda_nodes"] or stats["cpu_nodes"] or stats["metal_nodes"] or stats.get("blas_nodes", 0)))):
+        raise ValueError("cost inference escaped requested backend placement")
     for direction, counter in (("upload", "host_upload_bytes"), ("download", "host_download_bytes")):
         if raw["execution_cost"]["transfer_totals"].get(direction, {}).get("bytes", 0) != stats[counter]:
             raise ValueError("cost transfers do not cover the image inference runtime counters")
@@ -124,7 +137,7 @@ def run(args):
               "artifact_sha256": identities, "raw": {"file": "probe/execution-cost.json", "sha256": sha256_file(raw_path)},
               "execution_cost": cost, "model_load_wall_ms": raw["model_load_wall_ms"],
               "rss_peak_bytes": raw["rss_peak_bytes"], "evaluator_sha256": sha256_file(Path(__file__))}
-    lines = ["# CPU execution cost diagnostics", "", "Serialized node observation changes dispatch. These times are not performance benchmark results.", "",
+    lines = [f"# {args.backend.upper()} execution cost diagnostics", "", "Serialized node observation changes dispatch. These synchronized wall times are not performance benchmark results or device timestamps.", "",
              f"Graph compute wall time: {cost['graph_compute_wall_ms']:.6g} ms. Graph bind wall time: {cost['graph_bind_wall_ms']:.6g} ms.",
              "Node times below are already included in graph time. Transfer API times exclude host allocation and weight loading.", "",
              "| Component | Calls or bytes | Wall time (ms) |", "| --- | ---: | ---: |"]
@@ -133,7 +146,7 @@ def run(args):
     lines.extend(["", "Kernel-internal RHS packing and arithmetic: NOT_COLLECTED. Run the independent performance command to measure gains.", ""])
     (args.output / "report.md").write_text("\n".join(lines))
     write_json(args.output / "report.json", report)
-    print(f"CPU execution cost diagnostics complete: {args.output}")
+    print(f"{args.backend.upper()} execution cost diagnostics complete: {args.output}")
     return report
 
 

@@ -36,6 +36,11 @@ inline void validate_backend_options(const BackendOptions& options) {
         throw std::invalid_argument("unknown CPU compute mode");
     if (options.cpu_compute != CpuComputeMode::F32 && options.backend != Backend::Cpu)
         throw std::invalid_argument("native quantized CPU compute requires an explicit CPU backend");
+    if (options.activation != ActivationMode::BackendSelected && options.activation != ActivationMode::CudaVisionQ8Rhs)
+        throw std::invalid_argument("unknown SAM activation mode");
+    if (options.activation == ActivationMode::CudaVisionQ8Rhs &&
+        (options.backend != Backend::Cuda || options.cuda_compute != CudaComputeMode::F32))
+        throw std::invalid_argument("explicit Q8 RHS requires CUDA and F32 compute");
 }
 
 inline void validate_score_threshold(float threshold) {

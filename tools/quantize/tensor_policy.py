@@ -80,7 +80,7 @@ def canonical_image_schema():
     return json.loads(path.read_text(encoding="utf-8"))["tensors"]
 
 
-def validate_tensor_precisions(value, expected=None):
+def validate_tensor_precisions(value, expected=None, *, allow_f16=False):
     if not isinstance(value, dict) or not 1 <= len(value) <= MAX_TENSOR_OVERRIDES:
         raise ValueError(f"tensor_precisions requires 1..{MAX_TENSOR_OVERRIDES} exact tensor names")
     if expected is None:
@@ -91,12 +91,13 @@ def validate_tensor_precisions(value, expected=None):
             raise ValueError(f"unknown exact tensor override: {name!r}")
         if not overridable_tensor(name, expected[name]):
             raise ValueError(f"tensor override cannot target a protected/ineligible tensor: {name}")
-        if not isinstance(precision, str) or precision not in ("f32", "q8_0", "q6_k", "q5_k", "q4_k"):
+        allowed = ("f32", "q8_0", "q6_k", "q5_k", "q4_k", "f16") if allow_f16 else ("f32", "q8_0", "q6_k", "q5_k", "q4_k")
+        if not isinstance(precision, str) or precision not in allowed:
             raise ValueError(f"{name}: tensor format must be f32/q8_0/q6_k/q5_k/q4_k; F16 is not implemented")
     return dict(sorted(value.items()))
 
 
-def parse_tensor_precisions(csv):
+def parse_tensor_precisions(csv, *, allow_f16=False):
     if not isinstance(csv, str) or not 1 <= len(csv) <= MAX_TENSOR_POLICY_CSV_LENGTH:
         raise ValueError("tensor precision CSV exceeds its bound")
     result = {}
@@ -105,7 +106,7 @@ def parse_tensor_precisions(csv):
         if not separator or name in result:
             raise ValueError("duplicate or malformed tensor precision override")
         result[name] = precision
-    resolved = validate_tensor_precisions(result)
+    resolved = validate_tensor_precisions(result, allow_f16=allow_f16)
     if csv != ",".join(f"{name}={precision}" for name, precision in resolved.items()):
         raise ValueError("tensor precision overrides must be sorted, canonical CSV")
     return resolved

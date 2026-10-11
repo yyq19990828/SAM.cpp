@@ -13,10 +13,38 @@ def mixed_weight_fields(value):
 
 
 def native_weight_policy_matches(value, recipe):
-    return recipe["weight_precision"] != "mixed" or mixed_weight_fields(value) == mixed_weight_fields(recipe)
+    policy_matches = recipe["weight_precision"] != "mixed" or mixed_weight_fields(value) == mixed_weight_fields(recipe)
+    if recipe.get("storage_profile") == "image-mixed-f16-linear-v1":
+        expected = expected_allocated_weight_bytes(recipe)
+        return policy_matches and expected is not None and type(value.get("allocated_weight_bytes")) is int and value["allocated_weight_bytes"] == expected
+    return policy_matches
+
+
+def expected_allocated_weight_bytes(recipe):
+    inventory = recipe.get("weight_inventory", {})
+    if not inventory.get("tensor_count"):
+        return None
+    return sum(item["bytes"] * (2 if recipe["backend"] == "cpu" and name == "float16" else 1)
+               for name, item in inventory["types"].items())
 
 
 def native_compute_policy_matches(value, recipe):
+    activation = recipe.get("activation", "backend-selected")
+    if value.get("activation", "backend-selected") != activation:
+        return False
+    if activation == "ggml-q8-rhs":
+        if "activation" not in value or ("activation_policy" in value and value["activation_policy"] != activation):
+            return False
+        if "runtime" in value:
+            stats = value["runtime"]
+            if any(type(stats.get(key)) is not int for key in ("vision_encodes", "activation_requests", "activation_mmq_launches",
+                    "activation_payload_peak_bytes", "activation_allocation_peak_bytes")):
+                return False
+            expected = stats.get("vision_encodes", 0) * 128
+            if (expected <= 0 or stats.get("activation_requests") != expected or stats.get("activation_mmq_launches") != expected
+                    or stats.get("activation_payload_peak_bytes", 0) <= 0
+                    or stats.get("activation_allocation_peak_bytes", 0) < stats["activation_payload_peak_bytes"]):
+                return False
     # Historical producers only wrote cuda_compute, including for CPU F32.
     if "compute_mode" not in value:
         return recipe["compute_mode"] != "native-quantized" and value.get("cuda_compute") == recipe["compute_mode"]
@@ -31,7 +59,7 @@ def has_quantized_weights(recipe):
         inventory = recipe.get("weight_inventory", {})
         if inventory.get("tensor_count", 0):
             return any(name.startswith("q") for name in inventory["types"])
-        return any(value != "f32" for value in (*recipe["module_precisions"].values(), *recipe.get("tensor_precisions", {}).values()))
+        return any(value.startswith("q") for value in (*recipe["module_precisions"].values(), *recipe.get("tensor_precisions", {}).values()))
     return recipe["weight_precision"] in WEIGHTS[2:]
 
 
@@ -90,6 +118,9 @@ def weight_inventory(manifest):
 
 def expected_runtime_profile(recipe):
     quantized = has_quantized_weights(recipe)
+    if recipe.get("activation", "backend-selected") == "ggml-q8-rhs":
+        validate_configuration(recipe["backend"], recipe["compute_mode"], recipe["feature_cache"], "ggml-q8-rhs")
+        return "ggml-quantized-cuda-q8-rhs-v1"
     if recipe["compute_mode"] == "native-quantized":
         if recipe["backend"] != "cpu" or not quantized:
             raise ValueError("native-quantized runtime profile requires CPU quantized weights")
@@ -121,6 +152,8 @@ def precision_description(manifest):
         elif compute == "native-quantized":
             compute_scope = ("CPU quantized MUL_MAT keeps packed weights and permits internal Q8 RHS; integer partial dot products and "
                              "floating-point scale/reduction in the pinned dot/tiled paths; graph output is F32; other operations retain F32 hints")
+        elif activation == "ggml-q8-rhs":
+            compute_scope = "F32 graph activations/output and accumulation hint; selected vision linears force dynamic Q8 MMQ D4 RHS"
         else:
             compute_scope = "F32 accumulation hint for MUL_MAT/attention; operand representation and kernel internals remain backend-selected"
         path = ("stored F16 weights promoted to F32 when loading on CPU" if backend == "cpu" and recipe["weight_precision"] == "f16" else
@@ -129,18 +162,31 @@ def precision_description(manifest):
                 "quantized weights cast to F32 before CPU MUL_MAT" if quantized and backend == "cpu" else
                 "native quantized CUDA dispatch may stage RHS as Q8 and use integer dot products, or decode to floating-point operands"
                 if quantized and backend == "cuda" else "floating-point operands selected by the backend")
+        inventory = manifest.get("weight_inventory", recipe.get("weight_inventory", {}))
+        if backend == "cpu" and recipe["weight_precision"] == "mixed" and "float16" in inventory.get("types", {}):
+            path += "; each stored F16 tensor is promoted to F32 on load; packed Q storage is retained"
+        if activation == "ggml-q8-rhs":
+            path = "selected Q8_0 vision linears force MMQ D4; no MMVQ/cuBLAS/floating fallback; other operations keep backend policies"
     return {"weight_storage": recipe["weight_precision"], "storage_profile": recipe["storage_profile"],
             "configuration": recipe.get("quantization_configuration"),
             "quantization_modules": recipe["quantization_modules"], "backend": backend,
             "requested": {"weight_storage": recipe["weight_precision"], "activation": activation,
                           "compute": compute, "image_feature_cache": cache},
             "weights": {"inventory": manifest.get("weight_inventory", recipe.get("weight_inventory", {"evidence": "NOT_COLLECTED"})),
+                        "expected_allocated_payload_bytes": expected_allocated_weight_bytes(recipe),
                         **mixed_weight_fields(recipe),
                         "uniform_dtype_guarantee": False,
                         "note": "preset names do not describe every tensor; protected tensors stay F32 and K-block exceptions can use Q8_0"},
-            "activation_policy": "backend-selected; no independent native activation setting",
-            "activation": {"independent_setting_supported": False, "policy": "backend-selected",
+            "activation_policy": activation,
+            "activation": {"independent_setting_supported": activation == "ggml-q8-rhs", "policy": activation,
                            "scope": "operator tensor types and temporary kernel RHS representations can differ",
+                           "cuda_vision_q8_rhs": ({"contract": "ggml-cuda-q8-mmq-d4-v1", "graph_input_output": "f32",
+                               "weight_type": "q8_0", "block_width": 32, "padding": 512,
+                               "range": "finite F32; each nonzero 32-value block maximum in [1e-30,1e30]",
+                               "actual_execution": "runtime request/actual MMQ counts must equal 128 per vision encode; no fallback",
+                               "scope": "four linears in each of 32 vision blocks; excludes attention, convolutions and other modules",
+                               "validation_cost": "GPU range check and stream synchronization on every selected matmul"}
+                              if activation == "ggml-q8-rhs" else None),
                            "cpu_native_rhs": ({"graph_input": "f32", "q8_0_weights": "q8_0", "q6_k_q5_k_q4_k_weights": "q8_k",
                                                "evidence": "source-resolved pinned CPU traits; not runtime kernel capture",
                                                "packing": "dynamic per MUL_MAT; included in matmul wall time",

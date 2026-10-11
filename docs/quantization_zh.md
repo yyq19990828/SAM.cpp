@@ -15,8 +15,8 @@
 
 | 维度 | 当前实现 | 配置边界 |
 | --- | --- | --- |
-| 权重存储 | F32/F16 及 Q8_0/Q6_K/Q5_K/Q4_K 图像线性权重；混合 F32/Q 格式 | 模块格式用配置 schema 2／GGUF schema 5；精确张量覆盖用配置 schema 3／GGUF schema 6；保留保护／Q8 例外，混合 F16 未开放 |
-| 激活 | 图缓冲主要为 F32，后端 kernel 可能内部转换或量化操作数 | W8A8/FP8 工具仍是研究／probe，不是可部署的完整模型配置 |
+| 权重存储 | F32/F16 及 Q8_0/Q6_K/Q5_K/Q4_K 图像线性权重；混合 F32/F16/Q 格式 | 模块格式用配置 schema 2／GGUF schema 5；精确张量覆盖用配置 schema 3／GGUF schema 6；配置 schema 4／GGUF schema 7 加入 F16，保留保护／Q8 例外 |
+| 激活 | F32 图缓冲；可显式选择 Q8_0 CUDA vision linear 的动态 Q8 RHS | [配置 schema 5](quantization-config_zh.md#显式-cuda-q8-rhs-激活)强制 MMQ D4 并检查实际分派计数；完整模型 W8A8/FP8 仍属研究 |
 | 算术 | CPU F32 或显式原生量化矩阵乘；CUDA F32/F16 策略；kernel 根据类型、形状和后端分派 | CPU 原生矩阵乘可在内部将 F32 RHS 打包为 Q8；策略名称不保证整图统一的操作数／累加类型 |
 | 特征缓存 | F32 及实验 F16/mixed-Q8_0 图像缓存 | CUDA probe 可选；混合 Q8 保留 F32 低分辨率检测特征，公共加载保持现有缓存选项 |
 
@@ -130,8 +130,9 @@ cmake --build build/quant-cpu --target sam_quantize_rows --parallel
 
 需要为不同模块选择不同格式时，使用[配置 schema 2 的混合策略](quantization-config_zh.md#模块级混合权重)
 与 [CPU 示例](configs/quantization/image-mixed-cpu.json)。转换从原始 F32 checkpoint 生成
-`image-mixed-linear-v1`（SAM GGUF schema 5）。CPU 转换与小型矩阵运算已验证；完整模型
-质量／性能以及混合策略 CUDA/Metal 执行尚未测量。
+`image-mixed-linear-v1`（SAM GGUF schema 5）。CPU 转换与小型矩阵运算已验证；另一个
+schema-6 模块／张量示例已有有界完整模型 CPU/CUDA 参考对照与性能测量，混合 Metal 执行
+仍未测量，见[实测分配与限制](plans/20261010-193958-quantization-remaining-acceptance.md)。
 
 使用[精确张量配置与预览](quantization-config_zh.md#逐张量覆盖与转换预览)，可以先检查单个
 合资格矩阵的最终分配。`--dry-run` 无需 checkpoint、编码器或 backend 即可输出分配、
@@ -166,7 +167,8 @@ GGUF 精度说明权重的存储方式，不等同于端到端算术精度。默
 RHS 打包为 Q8_0（Q8_0 权重）或 Q8_K（K 权重）；整数局部点积、浮点缩放／归约及
 F32 输出属于不同精度边界。其余图激活／运算保留现有策略，不代表完整模型 INT8
 激活量化。此模式要求实际 Q 权重，并将相应矩阵乘固定到 CPU，即使注册了 BLAS。
-小型 fixture 已验证，新模式完整模型的质量／性能尚未测量。
+小型 fixture 与有界完整模型 CPU 参考对照／性能测量均已完成，
+见[实测分配与限制](plans/20261010-193958-quantization-remaining-acceptance.md)。
 用法见[配置](quantization-config_zh.md#cpu-原生量化矩阵乘)和[有界算子试验](quantization-benchmark_zh.md#有界-cpu-矩阵乘试验)。
 
 Metal 使用带 half staging 的原生量化 kernel，并报告 `ggml-quantized-native-v1`。

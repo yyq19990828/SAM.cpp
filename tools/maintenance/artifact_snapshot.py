@@ -51,7 +51,7 @@ def source_snapshot():
                     "third_party/stb/*.h",
                     "include/**/*.hpp",
                     "src/**/*.cpp", "src/**/*.hpp", "src/**/*.cu", "src/**/CMakeLists.txt",
-                    "tests/**/*.py", "tests/**/*.hpp", "tests/**/*.json", "tests/**/*.txt",
+                    "tests/**/*.py", "tests/**/*.cpp", "tests/**/*.hpp", "tests/**/*.json", "tests/**/*.txt",
                     "tests/**/*.inc", "tests/**/*.cmake", "tests/**/CMakeLists.txt",
                     "cmake/**/*.cmake", "cmake/**/*.in", "cmake/**/*.patch"):
         paths.update(root.glob(pattern))

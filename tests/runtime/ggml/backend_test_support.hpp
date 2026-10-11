@@ -13,6 +13,12 @@ inline bool cuda_available() {
     return registration && ggml_backend_reg_dev_count(registration) > 0;
 }
 
+inline bool metal_available() {
+    ggml_backend_load_all();
+    auto* registration = ggml_backend_reg_by_name("MTL");
+    return registration && ggml_backend_reg_dev_count(registration) > 0;
+}
+
 inline bool cuda_requested(int argc, char** argv) {
     if (argc == 1) return false;
     if (argc == 2 && std::string(argv[1]) == "cuda") return true;

@@ -167,7 +167,7 @@ CUDA 使用可见设备 0，可通过 `CUDA_VISIBLE_DEVICES` 选择物理设备�
 | 维度 | 配置 | 实际含义与证据 |
 | --- | --- | --- |
 | 权重 | `weights.precision` 及 `modules` / `storage_profile`、schema 2 的 `base_precision` / `module_precisions` 或 schema 3 的精确 `tensor_precisions` | GGUF 可同时有受保护的 F32、各 Q 格式和 Q8 回退；检查策略哈希、逐类型张量数量／字节数及保留原因 |
-| 激活 | `activation.mode=backend-selected` | 原生暂不支持独立 INT8/FP8/F16 激活开关；后端可内部转换或量化 RHS，研究 probe 不等于可部署配置 |
+| 激活 | `backend-selected` / 配置 schema 5 的 `ggml-q8-rhs` | 有界 CUDA Q8_0 vision linear 强制 MMQ D4；报告检查每次 vision 编码 128 个请求／实际分派及 scratch 字节；不含全图 INT8/FP8 |
 | 计算 | `compute.mode` | CPU `f32` 解码 Q 权重；CPU `native-quantized` 保留 packed 权重并允许内部 Q8 RHS 打包。CUDA F16 只给符合条件的浮点矩阵／attention 设置提示，量化矩阵保留自己的分派 |
 | 缓存 | `cache.mode` | 图像特征 0/1/2：F32 为 F32/F32/F32，F16 为 F16/F16/F16，mixed-Q8_0 为 Q8_0/Q8_0/F32；不是 LLM KV cache |
 
@@ -176,7 +176,7 @@ CUDA 使用可见设备 0，可通过 `CUDA_VISIBLE_DEVICES` 选择物理设备�
 属于 probe 选项。CPU 加载 F16 权重会提升到 F32；默认量化矩阵乘先生成临时 F32
 操作数，原生模式保留 Q 操作数。文件变小不保证运行内存同比变小。
 合资格张量的精确名称覆盖已支持；正则／
-通配符、混合 F16、独立激活量化及统一内核计算精度承诺尚未实现。
+通配符、全图激活量化及统一内核计算精度承诺尚未实现。混合 F16 使用配置 schema 4／GGUF schema 7。
 
 无需推理即可检查 GGUF 的存储和策略：
 
@@ -205,6 +205,33 @@ RHS 动态打包为 Q8_0（Q8_0 权重）或 Q8_K（K 权重），使用整数�
 配对 `performance` 接受原生 CPU 配置，或显式 CPU 下的
 `--candidate-compute native-quantized`；质量报告仍为可选。
 
+## 有界完整模型应用测量
+
+一个 schema-6 模块／张量混合分配在 i7-12700KF 与 RTX 4090 上完成测量，覆盖两张
+已有图片、六提示及原始 checkpoint 的六个参考对象。三种混合执行在 score > 0.5 时
+均无对象缺失／新增：
+
+| 混合执行 | 匹配掩码 IoU 均值 | 匹配掩码 IoU 最小值 |
+| --- | ---: | ---: |
+| CPU F32 decode | 0.998279 | 0.996401 |
+| CPU native quantized | 0.998174 | 0.995988 |
+| CUDA F32 policy | 0.997331 | 0.994643 |
+
+独立四线程性能使用一个 groceries 案例，提示为 paper bag/car。CPU 比较同一混合
+权重，一组进程配对、一次预热、三个样本；CUDA 比较 dense F32 与混合权重，两组
+AB/BA 配对、两次预热、五个样本。内存另起进程测量：
+
+| 比较 | 完整图像 P50 基线 → 候选 (ms) | 进程峰值基线 → 候选（十进制 GB） |
+| --- | ---: | ---: |
+| CPU decode → native | 31016.381 → 20388.631 | RSS 2.387 → 2.369 |
+| CUDA F32 → mixed | 493.320 → 385.229 | GPU 4.777 → 2.477; RSS 1.011 → 1.044 |
+
+换提示词 P50 在 CPU 下降 4.6%、CUDA 下降 5.8%；结果缓存命中仍约 11 ms。
+CPU RSS 仅下降 0.75%，CUDA 主机 RSS 增加 3.3%。这些是单一分配及少量复用应用
+图片的描述性结果，不代表生产准确率、独立留出集或普遍加速。Metal 与 kernel 内部
+抓取仍未测量。精确配置、协议与本地证据可用性见
+[验收计划](plans/20261010-193958-quantization-remaining-acceptance.md)。
+
 ## 有界 CPU 矩阵乘试验
 
 无需 checkpoint 或图片，输出目录必须不存在：
@@ -230,9 +257,9 @@ packed 载荷与 scheduler arena 字节。arena 不等于 RSS，不含常驻权�
 不能从矩阵乘耗时中相减。结论仅适用于实测形状／构建／线程，不能据此宣称完整 SAM
 提速。实现发现和测量保存在[计划](plans/20261010-174613-cpu-native-quantized-matmul.md)。
 
-## CPU 执行开销诊断
+## CPU/CUDA 执行开销诊断
 
-`execution-cost` 独立观察 CPU 上一张图、一个提示词的执行成本，不依赖质量报告或
+`execution-cost` 独立观察 CPU 或 CUDA 上一张图、一个提示词的执行成本，不依赖质量报告或
 配对性能测量。模型须保留转换 manifest。先在关闭 CUDA/Metal 的构建中编译工具，
 再显式运行：
 
@@ -247,7 +274,9 @@ cmake --build build/quant-cpu --target sam_execution_cost_probe -j 2
 
 此命令会真正运行一次完整图像推理，使用 CPU/F32 计算/F32 缓存及 4 线程，区别于
 只读转换预览。不会把模型复制到结果目录。子进程默认超时 1,800 秒，可用 `--timeout`
-调整。本轮仅用小型矩阵 fixture 验证实现，没有运行完整模型或 GPU campaign。
+调整。小型矩阵 fixture 与完整 schema-6 混合模型均已实际运行两种 CPU 模式。
+完整图中默认路径观察到 285 次 Q→F32 cast；原生路径为 285 次 packed CPU matmul、
+零此类 cast，见[范围与证据](plans/20261010-193958-quantization-remaining-acceptance.md)。
 
 要诊断原生 CPU 计算，可对匹配的模型使用
 `docs/configs/quantization/image-tensor-mixed-cpu-native.json`。实际 packed 矩阵乘
@@ -268,6 +297,21 @@ cmake --build build/quant-cpu --target sam_execution_cost_probe -j 2
 单独计时。内核 RHS 打包可能发生在矩阵乘内部，但未独立测量，和内核算术一样保留
 `NOT_COLLECTED`。成本用于解释执行路径；收益仍用不带 observer 的 `performance`
 测量，其默认行为不变。
+
+CUDA 构建启用 `GGML_CUDA=ON`，使用 CUDA 配置或显式传入
+`--backend cuda --compute f32`。支持 F32/F16 compute 和 F32 cache。
+嵌套 CUDA 成本格式为 `sam-cuda-execution-cost-v2`；CPU v1 的含义不变。
+全部 compute 节点必须实际位于 CUDA。同步 wall time 包含分派和同步成本，
+不能当作 CUDA event timestamp 或内核 packing/arithmetic 分项。
+
+`sam_cpu_kernel_capture_probe --output NEW_DIR` 是独立的小型合成 CPU 诊断，
+在真实 dot/tiled kernel 边界抓取 Q8_0/Q8_K RHS scratch 及内部阶段时间。
+需要固定 CPU 扩展；进程局部 observer 安装／移除时，全部 CPU 图须空闲。
+`GGML_CPU_TILED_MM=0` 运行 dot；
+`GGML_CPU_TILED_MM=1 GGML_CPU_TILED_MM_FORCE=1` 可执行支持的 K-format tiled。
+保存 payload、原始输入／权重／输出及阶段时间；时间包含 worker barrier，算术区间
+排除 scratch-copy callback。该工具不加载 checkpoint，也不提供完整模型收益结论。
+图成本报告内尚未采集的 kernel 项仍保持 `NOT_COLLECTED`。
 
 ## 历史结果
 

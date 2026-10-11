@@ -71,7 +71,7 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
         }
         if (name != "--model" && name != "--image" && name != "--text" &&
             name != "--output" && name != "--backend" && name != "--threads" &&
-            name != "--cuda-device" && name != "--cuda-compute" && name != "--cpu-compute" &&
+            name != "--cuda-device" && name != "--cuda-compute" && name != "--cpu-compute" && name != "--activation" &&
             name != "--score-threshold" && (name != "--repeat" || !allow_repeat)) {
             throw std::invalid_argument("Unknown argument: " + name);
         }
@@ -101,6 +101,11 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
             else if (value == "native-quantized") options.backend.cpu_compute = sam::CpuComputeMode::NativeQuantized;
             else throw std::invalid_argument("--cpu-compute must be f32 or native-quantized");
         }
+        else if (name == "--activation") {
+            if (value == "backend-selected") options.backend.activation = sam::ActivationMode::BackendSelected;
+            else if (value == "ggml-q8-rhs") options.backend.activation = sam::ActivationMode::CudaVisionQ8Rhs;
+            else throw std::invalid_argument("--activation must be backend-selected or ggml-q8-rhs");
+        }
         else if (name == "--repeat") options.repeat = positive_integer(value, name);
         else if (name == "--backend") {
             if (value == "auto") options.backend.backend = sam::Backend::Auto;
@@ -125,6 +130,9 @@ inline Options parse_options(int argc, char** argv, bool allow_repeat = true) {
         throw std::invalid_argument("--cuda-compute requires --backend cuda");
     if (seen.count("--cpu-compute") && options.backend.backend != sam::Backend::Cpu)
         throw std::invalid_argument("--cpu-compute requires --backend cpu");
+    if (options.backend.activation == sam::ActivationMode::CudaVisionQ8Rhs &&
+        (options.backend.backend != sam::Backend::Cuda || options.backend.cuda_compute != sam::CudaComputeMode::F32))
+        throw std::invalid_argument("ggml-q8-rhs requires --backend cuda and F32 compute");
     for (const char* name : {"--model", "--image", "--text", "--output"}) {
         if (!seen.count(name)) {
             throw std::invalid_argument(std::string("Required argument: ") + name);
@@ -147,7 +155,8 @@ inline void write_compute_policy(std::ostream& stream, const sam::BackendOptions
     const std::string cpu = options.cpu_compute == sam::CpuComputeMode::NativeQuantized ? "native-quantized" : "f32";
     const std::string cuda = options.cuda_compute == sam::CudaComputeMode::F16 ? "f16" : "f32";
     stream << ",\"compute_mode\":\"" << (options.backend == sam::Backend::Cuda ? cuda : cpu)
-           << "\",\"cpu_compute\":\"" << cpu << "\",\"cuda_compute\":\"" << cuda << '"';
+           << "\",\"cpu_compute\":\"" << cpu << "\",\"cuda_compute\":\"" << cuda << '"'
+           << ",\"activation\":\"" << (options.activation == sam::ActivationMode::CudaVisionQ8Rhs ? "ggml-q8-rhs" : "backend-selected") << '"';
 }
 
 inline std::string json_string(std::string_view value) {
@@ -168,8 +177,10 @@ inline std::string json_string(std::string_view value) {
 
 inline void write_model_profile(std::ostream& stream, const sam::ModelInfo& info) {
     stream << ",\"precision\":" << json_string(info.precision)
+           << ",\"allocated_weight_bytes\":" << info.weight_bytes
            << ",\"storage_profile\":" << json_string(info.storage_profile)
            << ",\"arithmetic_profile\":" << json_string(info.arithmetic_profile)
+           << ",\"activation_policy\":" << json_string(info.activation_policy)
            << ",\"quantization_modules\":[";
     for (std::size_t i = 0; i < info.quantization_modules.size(); ++i) {
         if (i) stream << ',';
@@ -291,6 +302,10 @@ inline void write_runtime_stats(std::ostream& stream, const sam::RuntimeStats& s
            << ",\"cpu_nodes\":" << stats.cpu_nodes << ",\"metal_nodes\":" << stats.metal_nodes
            << ",\"blas_nodes\":" << stats.blas_nodes
            << ",\"cuda_nodes\":" << stats.cuda_nodes
+           << ",\"activation_requests\":" << stats.activation_requests
+           << ",\"activation_mmq_launches\":" << stats.activation_mmq_launches
+           << ",\"activation_payload_peak_bytes\":" << stats.activation_payload_peak_bytes
+           << ",\"activation_allocation_peak_bytes\":" << stats.activation_allocation_peak_bytes
            << ",\"graph_partitions\":" << stats.graph_partitions
            << ",\"host_upload_bytes\":" << stats.host_upload_bytes
            << ",\"host_download_bytes\":" << stats.host_download_bytes

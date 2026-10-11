@@ -6,7 +6,7 @@ this project's SAM 3 model contract. Schema 1 covers image F32 and mixed-F16
 weights, schema 2 covers video weights and explicit state/transport metadata,
 schema 3 identifies the legacy versioned quantized image profiles, schema
 4 adds explicit component selection, schema 5 assigns weight formats per module,
-and schema 6 adds exact tensor overrides. Container support
+schema 6 adds exact tensor overrides, and schema 7 adds mixed F16/Q linear weights. Container support
 does not itself imply that a model, task or backend is supported. See the
 [Model Zoo](../MODEL_ZOO.md) and [quantization guide](quantization.md) for
 current usage scope. Other model families need their own metadata and tensor
@@ -22,10 +22,10 @@ reader limits, but does not change model behavior.
 | --- | --- | --- |
 | `general.architecture` | STRING | `sam3` |
 | `general.name` | STRING | Optional human-readable name |
-| `general.file_type` | UINT32 | Schema 1/2: `0` for F32 or `1` for mixed F16. Schema 3/4: profile-specific values below. Schema 5/6: declared base Q format. |
+| `general.file_type` | UINT32 | Schema 1/2: `0` for F32 or `1` for mixed F16. Schema 3/4: profile-specific values below. Schema 5/6/7: declared base Q format. |
 | `general.alignment` | UINT32 | `32` when present |
-| `sam.schema_version` | UINT32 | `1` for image F32/F16, `2` for video, `3` for legacy quantized image, `4` for modular quantized image, `5` for module mixed weights, `6` for exact tensor overrides |
-| `sam.task` | STRING | `text_image` for schema 1/3/4/5/6; `text_video` for schema 2 |
+| `sam.schema_version` | UINT32 | `1` for image F32/F16, `2` for video, `3` for legacy quantized image, `4` for modular quantized image, `5` for module mixed weights, `6` for exact tensor overrides, `7` for mixed F16/Q |
+| `sam.task` | STRING | `text_image` for schema 1/3/4/5/6/7; `text_video` for schema 2 |
 | `sam.source.checkpoint_sha256` | STRING | 64 lowercase hexadecimal characters identifying the actual input checkpoint |
 | `sam.source.code_revision` | STRING | `2345a4ad109ac29c569da749c91d84f10dc08c40` |
 | `sam.tokenizer.sha256` | STRING | `924691ac288e54409236115652ad4aa250f48203de50a9e4722a6ecd48d6804a` |
@@ -308,6 +308,34 @@ Schemas 1–5 reject the reserved tensor field and keep their prior interpretati
 older loaders reject schema 6. Reconversion from original F32 is required to
 change the allocation. CPU fixture checks establish format and small arithmetic
 correctness; whole-model quality/performance and CUDA/Metal execution are unmeasured.
+
+## Mixed F16 image weights (schema 7)
+
+Schema 7 uses `sam.storage_profile=image-mixed-f16-linear-v1`, the same canonical
+image inventory, base/module metadata, bounds and eligibility rules as schemas
+5/6. Module and exact tensor formats also accept lowercase `f16`. At least one
+policy entry must explicitly request F16. The tensor CSV is optional; when
+present it has the same nonempty, sorted, exact-name contract as schema 6.
+Protected tensors remain F32, and K requests retain the fixed 4736-row Q8 fallback.
+
+The ASCII hash encoding follows schema 6 with first line
+`sam3:image-mixed-f16-linear-v1`; append sorted `tensor:name=format` lines only
+when tensor overrides are present. Base remains a Q format, and `general.file_type`
+identifies that base rather than actual storage. `general.quantization_version`
+remains 2. `sam.quantization.modules` is forbidden. The sidecar/runtime
+`quantization_modules` array lists Q module choices or Q exact overrides; F16
+choices alone do not select a quantized module. Actual stored types determine
+whether runtime quantized arithmetic applies.
+
+F16 payloads use IEEE binary16 rounded directly from original F32 values, with
+finite/overflow validation. The loader validates policy/name/shape/type/range
+before allocating weights, then applies backend storage policy per actual tensor:
+CPU promotes F16 to F32 and preserves packed Q; CUDA/Metal retain F16. Loading
+also rejects non-finite F16 payloads. ModelInfo weight bytes describe allocated
+storage; manifest/preview bytes describe file storage. Earlier schema/hash
+interpretations are unchanged and earlier loaders reject schema 7. See
+[mixed F16 usage](quantization-config.md#mixed-f16-weights) and the
+[acceptance plan](plans/20261010-213528-mixed-f16-weight-implementation.md).
 
 ## Full video profile (schema 2)
 

@@ -89,8 +89,9 @@ python3 tools/quantize/quantization_config.py validate \
 ```
 
 manifest 逐张量记录请求／实际 dtype、模块选择器、保护或回退原因和字节数。本轮验证了
-CPU 转换、格式校验和小型混合矩阵运算，尚未测量完整模型质量／性能，以及混合策略的
-CUDA/Metal 执行。已有固定预设的硬件结果不能替代新混合策略的测量。
+CPU 转换、格式校验和小型混合矩阵运算；一个 schema-6 模块／张量混合配置还完成了
+完整模型 CPU/CUDA 参考对照与性能测量，见[验收范围](plans/20261010-193958-quantization-remaining-acceptance.md)。
+混合策略的 Metal 执行仍未测量。已有固定预设或单一策略的结果不能替代另一混合策略的测量。
 
 ## 逐张量覆盖与转换预览
 
@@ -133,6 +134,22 @@ schema 6、`image-tensor-mixed-linear-v1` 及独立版本化哈希，见[格式�
 权重加载。真正转换仍检查数值和来源。去掉 `--dry-run`，提供 checkpoint/BPE、所需
 原生编码器并改用新的 `.gguf` 输出即可转换；K 矩阵在布局确定后只编码一次。
 
+## 混合 F16 权重
+
+配置 schema 4 为模块和可选精确张量格式加入 F16，参见[混合 F16 示例](configs/quantization/image-mixed-f16-cpu.json)。
+填写 `precision=mixed`、基础 Q 格式，并明确请求至少一个 F16 格式；输出 GGUF schema 7、
+`image-mixed-f16-linear-v1` 和独立策略哈希。旧配置 schema 1–3 含义不变。
+精确张量映射若出现则必须非空，继续按 tensor > module > base 解析并遵守全部保护规则。
+
+沿用前面的转换命令，替换为此配置，从原始 F32 checkpoint 直接舍入生成 F16 payload；
+检查非有限值和 F16 溢出，不将 F16 送入 Q 编码器。仅实际分配到 K 格式的张量需要 native encoder。
+预览列出 F16 分配及 CPU 提升的静态新增字节，不是峰值内存测量。
+
+CPU 加载时逐张量将 F16 提升到 F32，同时保留 packed Q；CUDA/Metal 保留 F16 存储。
+CPU `native-quantized` 仍要求实际存在 Q 权重，全 F16/F32 策略不启用量化算术。
+F16 存储本身不选择 F16 激活或计算模式。完整模型验收记录在[实施计划](plans/20261010-213528-mixed-f16-weight-implementation.md)，
+Metal 实机验收仍待完成。
+
 ## CPU 原生量化矩阵乘
 
 显式 `backend=cpu`、模型含量化权重时，可选择 `compute.mode=native-quantized`。
@@ -149,8 +166,11 @@ schema 6、`image-tensor-mixed-linear-v1` 及独立版本化哈希，见[格式�
 内部的激活舍入，不代表全图 INT8 激活量化，也不保证全模型只有一种累加类型。
 RHS 类型来自固定 CPU traits 的源码解析，不是 kernel 暂存抓取；可选构建／ISA 分派
 可能不同。量化矩阵乘固定在 CPU 执行，即使注册了 BLAS；其他算子保留现有调度。
-算术 profile 为 `ggml-quantized-cpu-native-v1`。小型 CPU fixture 已验证该路径，
-新模式的完整 SAM 质量与性能尚未测量。
+SAM 的显式 backend GGML 补丁保留该放置要求；外部提供的 GGML 也必须遵循。
+CPU／BLAS 共存回归包含实际执行于 BLAS 的浮点正控制及四种 Q 格式。
+算术 profile 为 `ggml-quantized-cpu-native-v1`。小型 fixture 和有界完整 SAM CPU
+试验已验证该路径：覆盖两图片／六提示，另有单案例独立性能测量，不代表生产准确率
+或普遍加速，见[结果与限制](plans/20261010-193958-quantization-remaining-acceptance.md)。
 
 公共 API 和图像 CLI 用法：
 
@@ -170,12 +190,34 @@ build/quant-cpu/examples/sam_image --backend cpu --cpu-compute native-quantized 
 Auto/Metal/CUDA、全浮点模型、独立 INT8 激活请求及不支持的操作数类型／布局均报错。
 无需加载模型的正确性与性能检查见[有界 CPU 矩阵乘试验](quantization-benchmark_zh.md#有界-cpu-矩阵乘试验)。
 
+## 显式 CUDA Q8 RHS 激活
+
+[配置 schema 5](configs/quantization/image-vision-q8-rhs-cuda.json)用
+`activation.mode=ggml-q8-rhs` 选择 Q8_0 vision 权重、CUDA、F32 compute/cache。
+schema 1–4 继续使用 `backend-selected`，GGUF 权重格式不变。公共 API 的
+`BackendOptions::activation = ActivationMode::CudaVisionQ8Rhs` 和图像 CLI 的
+`--activation ggml-q8-rhs` 选择同一策略。性能比较可对同一 GGUF 提供不同的
+baseline/candidate 配置文件。
+
+32 个 vision block 各四个线性层强制使用 CUDA MMQ D4：32 元素动态 Q8 块、
+F32 scale、512 元素行 padding，图输入／输出仍为 F32。attention、卷积及其余
+模块保留原策略。要求固定版本的 v1 扩展和 CUDA compute capability ≥8.9；
+不支持的硬件、非 Q8_0 vision linear、视频、低精度 compute/cache 或不兼容形状
+均报错。选中线性层不能回退到 MMVQ、cuBLAS 或浮点解码。
+
+每次执行校验实际 F32 输入：必须有限，每个非零 32 元素块的最大绝对值在
+`[1e-30,1e30]`，支持全零。范围校验会同步 CUDA stream，其成本计入测量。
+`ModelInfo::activation_policy` 报告解析后的策略；`RuntimeStats` 记录请求数、
+实际 MMQ 分派数及 payload／allocation 峰值字节，每次成功 vision 编码须为
+128 个请求和分派。模型策略不可变，会话保留所属模型；换提示和重复结果复用
+图像特征，不新增 vision 分派。范围和验收见[实施计划](plans/20261010-215837-native-activation-runtime.md)。
+
 ## 可用组合
 
 | 选择 | CPU | Metal | CUDA |
 | --- | --- | --- | --- |
-| 图像权重 | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K；模块／精确张量混合策略 | 相同存储格式；混合策略硬件未验证 | 相同存储格式；混合策略硬件未验证 |
-| 独立激活模式 | 仅 `backend-selected` | 仅 `backend-selected` | 仅 `backend-selected` |
+| 图像权重 | F32/F16/Q8_0/Q6_K/Q5_K/Q4_K；模块／精确张量混合策略 | 相同存储格式；混合策略硬件未验证 | 相同存储格式；已验证有界混合分配 |
+| 独立激活模式 | 仅 `backend-selected` | 仅 `backend-selected` | `backend-selected` / 有界 `ggml-q8-rhs` |
 | 计算策略 | `f32` / 显式 `native-quantized` | `f32` | `f32` / `f16` |
 | 图像特征缓存 | `f32` | `f32` | 私有图像 probe 可用 `f32` / `f16` / `mixed-q8_0` |
 | 当前导出／性能 runner | 有对应路径 | 不支持，仅可检查配置 | 有对应路径 |
@@ -195,8 +237,8 @@ GGUF 改变计算／缓存策略；改变权重精度或模块范围需要从原
 
 | 请求 | 当前结果 |
 | --- | --- |
-| 正则／通配符规则、覆盖保护张量或混合 F16 | 不支持；schema 3 支持按精确合资格张量名选择 F32/Q8/Q6/Q5/Q4 |
-| 指定 INT8/FP8/F16 激活模式 | 尚未实现；研究工具不等于原生运行模式 |
+| 正则／通配符规则或覆盖保护张量 | 不支持；schema 3 支持精确 F32/Q 格式，schema 4 加入混合 F16 |
+| 全图 INT8/FP8/F16 激活模式 | 未实现；目前仅支持上述有界 CUDA Q8 RHS 策略 |
 | CPU/Metal F16 计算或低精度图像缓存 | 此配置不支持 |
 | 无实际 Q 矩阵或其他 backend 使用原生 CPU 模式 | 报错，不会保留原生标签而静默回退 |
 | 公共 C++ API 使用低精度缓存 | 未开放，仅限私有原生图像 probe |
@@ -205,8 +247,8 @@ GGUF 改变计算／缓存策略；改变权重精度或模块范围需要从原
 | 配置的权重分配与现有 GGUF 不同 | 推理前报错，重新转换或选择匹配配置 |
 | `auto` 后端、未知维度或选项 | 报错，必须使用明确后端和已知字段 |
 
-公共 C++ `BackendOptions` 配置后端、线程、设备、CPU 矩阵乘和 CUDA 计算策略，没有 JSON 加载器、
-独立激活选项或低精度缓存入口。`validate --context public-api` 只检查这些配置是否可
+公共 C++ `BackendOptions` 配置后端、线程、设备、CPU 矩阵乘及 CUDA 计算／激活策略，没有 JSON 加载器
+或低精度缓存入口。`validate --context public-api` 只检查这些配置是否可
 映射到现有 API，不会加载模型或新增 API。
 
 ## 校验与使用

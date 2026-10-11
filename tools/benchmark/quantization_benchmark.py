@@ -98,7 +98,7 @@ def export(args):
                 "cases_sha256": identities[str(args.cases.resolve())],
                 "input_images": {name: row["sha256"] for name, row in input_rows.items()},
                 "inputs": input_rows, "outputs": outputs, "recipe": recipe, "recipe_sha256": canonical_hash(recipe),
-                "activation_policy": "backend-selected; no independent activation setting",
+                "activation_policy": recipe.get("activation", "backend-selected"),
                 "kernel_precision_evidence": "NOT_COLLECTED", "artifact_sha256": identities,
                 "archived_sources": archived, **metadata})
     # Publish completion only after validating the entire provisional bundle.
@@ -163,6 +163,14 @@ def load_bundle(directory, *, manifest_name="manifest.json"):
         paths.add(path)
         payload = read_json(path)
         validate_output(payload)
+        if manifest["recipe"].get("activation", "backend-selected") == "ggml-q8-rhs":
+            from tools.benchmark.precision_reporting import native_compute_policy_matches, expected_runtime_profile
+            recipe = manifest["recipe"]
+            stats = payload.get("runtime", {})
+            if (not native_compute_policy_matches(payload, recipe) or
+                payload.get("arithmetic_profile") != expected_runtime_profile(recipe) or
+                stats.get("cuda_nodes", 0) <= 0 or any(stats.get(key, 0) for key in ("cpu_nodes", "metal_nodes", "blas_nodes"))):
+                raise ValueError("native activation payload differs from requested policy or actual execution")
         if payload["prompt"] != row["prompt"]:
             raise ValueError("output prompt differs from the case manifest")
         if manifest["kind"] == RUN_KIND:
@@ -321,7 +329,7 @@ def main(argv=None):
     run.add_argument("--backend", choices=("cpu", "cuda"))
     run.add_argument("--compute", choices=("f32", "f16", "native-quantized"))
     run.add_argument("--cache", choices=("f32", "f16", "mixed-q8_0"))
-    run.add_argument("--activation", help="native mode: only backend-selected is implemented")
+    run.add_argument("--activation", help="backend-selected or ggml-q8-rhs (CUDA Q8_0 vision, F32 compute/cache)")
     measure = commands.add_parser("compare", help="compare bundles; optional limits are advisory")
     for name in ("reference", "candidate", "output"):
         measure.add_argument("--" + name, type=Path, required=True)
@@ -332,7 +340,7 @@ def main(argv=None):
     for name in ("cases", "input-root", "binary", "baseline-model", "candidate-model", "output"):
         performance.add_argument("--" + name, type=Path, required=True)
     performance.add_argument("--backend", choices=("cpu", "cuda"))
-    performance.add_argument("--activation", help="only backend-selected is implemented")
+    performance.add_argument("--activation", help="shared activation mode; use two configuration files to compare modes")
     for variant in ("baseline", "candidate"):
         performance.add_argument("--" + variant + "-config", type=Path, help="shared configuration; supply both baseline and candidate files")
         performance.add_argument("--" + variant + "-compute", choices=("f32", "f16", "native-quantized"))
@@ -356,12 +364,16 @@ def main(argv=None):
     inspect.add_argument("--backend", choices=("cpu", "metal", "cuda"))
     inspect.add_argument("--compute", choices=("f32", "f16", "native-quantized"))
     inspect.add_argument("--cache", choices=("f32", "f16", "mixed-q8_0"))
-    inspect.add_argument("--activation", help="only backend-selected is implemented")
-    costs = commands.add_parser("execution-cost", help="one CPU inference with serialized node diagnostics; not a speed benchmark")
+    inspect.add_argument("--activation", help="backend-selected or ggml-q8-rhs")
+    costs = commands.add_parser("execution-cost", help="one CPU/CUDA inference with synchronized node diagnostics; not a speed benchmark")
     for name in ("model", "image", "binary", "output"):
         costs.add_argument("--" + name, type=Path, required=True)
     costs.add_argument("--text", required=True)
     costs.add_argument("--quantization-config", type=Path)
+    costs.add_argument("--backend", choices=("cpu", "cuda"))
+    costs.add_argument("--compute", choices=("f32", "f16", "native-quantized"))
+    costs.add_argument("--cache", choices=("f32",))
+    costs.add_argument("--activation")
     costs.add_argument("--timeout", type=float, default=1800)
     args = parser.parse_args(argv)
     try:
@@ -370,7 +382,7 @@ def main(argv=None):
         elif args.command == "performance":
             resolve_performance_arguments(args)
         elif args.command == "execution-cost":
-            if args.quantization_config is None:
+            if args.quantization_config is None and args.backend is None:
                 args.backend = "cpu"
             resolve_runtime_arguments(args)
         if args.command == "export":

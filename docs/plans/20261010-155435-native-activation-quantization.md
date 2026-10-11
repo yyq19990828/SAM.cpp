@@ -2,11 +2,12 @@
 
 ## Status and scope
 
-Planned, not implemented. The unified image configuration currently accepts
-only `activation.mode=backend-selected`. Explicit INT8/FP8/F16 activation
-settings are rejected. CUDA quantized kernels may already stage RHS values as
-Q8 internally; that is backend behavior, not a user-controlled activation policy
-or evidence of full-model W8A8 execution.
+The original design below has progressed through A1–A4 in the
+[implementation plan](20261010-215837-native-activation-runtime.md). The bounded
+CUDA Q8_0 vision MMQ D4 mode now has explicit native controls, model integration,
+public options and configuration schema 5; bounded acceptance is complete.
+Default `backend-selected` and earlier schemas keep their meaning.
+Full-model INT8/FP8/F16 activation settings remain outside this mode.
 
 The first native activation feature will expose a narrowly scoped dynamic Q8
 RHS policy for eligible vision linear operations on CUDA with Q8_0 stored
@@ -15,7 +16,7 @@ activations, full-model INT8/FP8, other quantized weight formats and video memor
 are later extensions. Do not run large GPU acceptance as part of this planning
 or configuration work.
 
-## Existing evidence and gaps
+## Initial evidence and gaps
 
 - `export_calibration.py` and `study_activation_quantization.py` provide vision
   statistics and offline numerical comparisons. `runtime_quantization.py`
@@ -101,5 +102,6 @@ name or floating-point simulation exists.
 
 ## Results
 
-Plan written. No native activation mode, forced Q8 execution path, public API
-extension or new hardware qualification has been added in this turn.
+The initial turn wrote the design only. Subsequent authorized implementation and
+actual CUDA checks are recorded in the linked implementation plan; this design
+does not itself certify execution or performance.
